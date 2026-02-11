@@ -3,6 +3,7 @@ import { themes, ThemeCtx } from './theme.jsx'
 import PeopleFlowModule from './modules/PeopleFlow.jsx'
 import PaperFlowModule from './modules/PaperFlow.jsx'
 import AdminPanel from './modules/AdminPanel.jsx'
+import ScanFlowModule from './ScanFlowModule.jsx'
 
 export default function App({ user, orgCtx, onLogout }) {
   const [theme, setTheme] = useState(() => {
@@ -26,7 +27,7 @@ export default function App({ user, orgCtx, onLogout }) {
   const allModules = [
     { id: 'peopleflow', label: 'PeopleFlow', icon: '👥', desc: 'HR & Team' },
     { id: 'paperflow', label: 'PaperFlow', icon: '📄', desc: 'Contracts & Policies' },
-    { id: 'scanflow', label: 'ScanFlow', icon: '📦', desc: 'Job Tracking', future: true },
+    { id: 'scanflow', label: 'ScanFlow', icon: '📦', desc: 'Job Tracking' },
   ]
 
   return (
@@ -115,12 +116,8 @@ export default function App({ user, orgCtx, onLogout }) {
             <PaperFlowModule orgId={orgId} C={C} user={user} />
           )}
 
-          {orgId && activeModule === 'scanflow' && (
-            <div style={{ textAlign: 'center', padding: '60px 20px', color: C.g }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
-              <h2 style={{ color: C.go, marginBottom: 8 }}>ScanFlow</h2>
-              <p>Job tracking with barcode scanning. Coming soon.</p>
-            </div>
+          {orgId && activeModule === 'scanflow' && enabledModules.includes('scanflow') && (
+            <ScanFlowModule darkMode={theme === 'brown'} orgId={orgId} />
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

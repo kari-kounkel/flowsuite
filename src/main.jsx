@@ -54,7 +54,33 @@ function Root() {
           allModules: modules || []
         })
       } else {
-        // No org membership — still let them in (setup needed)
+        // ── AUTO-LINK: match auth email → employees table → create org_users row ──
+        const { data: { user } } = await supabase.auth.getUser()
+        const authEmail = user?.email?.toLowerCase()
+        if (authEmail) {
+          const { data: empMatch } = await supabase
+            .from('employees')
+            .select('first_name, last_name, org_id')
+            .ilike('email', authEmail)
+            .limit(1)
+            .single()
+          if (empMatch) {
+            const orgId = empMatch.org_id || 'minuteman'
+            const displayName = `${empMatch.first_name} ${empMatch.last_name}`.trim()
+            // Auto-create org_users row
+            await supabase.from('org_users').insert({
+              org_id: orgId,
+              user_id: userId,
+              role: 'employee',
+              display_name: displayName,
+              email: authEmail
+            })
+            console.log(`Auto-linked ${authEmail} → ${orgId} as ${displayName}`)
+            // Reload context now that the row exists
+            return loadOrgContext(userId)
+          }
+        }
+        // No employee match either — still let them in (setup needed)
         setOrgCtx({ orgId: null, orgName: 'Setup Required', role: 'viewer', displayName: '', modules: [], allModules: [] })
       }
     } catch (err) {

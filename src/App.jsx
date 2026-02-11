@@ -117,7 +117,7 @@ export default function App({ user, orgCtx, onLogout }) {
           )}
 
           {orgId && activeModule === 'scanflow' && enabledModules.includes('scanflow') && (
-            <ScanFlowModule darkMode={theme === 'brown'} orgId={orgId} />
+            <ScanFlowModule darkMode={theme === 'brown'} orgId={orgId} userRole={role} />
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

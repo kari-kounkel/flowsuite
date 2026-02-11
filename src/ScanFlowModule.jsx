@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase.js';
 
 // ─── SCAN FORM COMPONENT ───────────────────────────────
-export function ScanFlowModule({ darkMode, orgId = 'minuteman' }) {
+export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'employee' }) {
   const [activeTab, setActiveTab] = useState('scan');
   
   const tabs = [
@@ -46,7 +46,7 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman' }) {
         ))}
       </div>
 
-      {activeTab === 'scan' && <ScanForm darkMode={darkMode} orgId={orgId} accent={accent} cardBg={cardBg} text={text} border={border} mutedText={mutedText} />}
+      {activeTab === 'scan' && <ScanForm darkMode={darkMode} orgId={orgId} accent={accent} cardBg={cardBg} text={text} border={border} mutedText={mutedText} userRole={userRole} />}
       {activeTab === 'dashboard' && <JobDashboard darkMode={darkMode} orgId={orgId} accent={accent} cardBg={cardBg} text={text} border={border} mutedText={mutedText} />}
       {activeTab === 'jobs' && <JobManager darkMode={darkMode} orgId={orgId} accent={accent} cardBg={cardBg} text={text} border={border} mutedText={mutedText} />}
       {activeTab === 'stations' && <StationManager darkMode={darkMode} orgId={orgId} accent={accent} cardBg={cardBg} text={text} border={border} mutedText={mutedText} />}
@@ -56,8 +56,9 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman' }) {
 }
 
 // ─── THE SCAN FORM ─────────────────────────────────────
-function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) {
+function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText, userRole }) {
   const [step, setStep] = useState(0); // 0=employee, 1=job, 2=dept, 3=station, 4=action, 5=reason, 6=waste, 7=confirm
+  const [scanMode, setScanMode] = useState(null); // 'intake' or 'production' — set after badge scan
   const [scanData, setScanData] = useState({
     employee_id: '', employee_name: '',
     job_id: '', job_info: '',
@@ -86,7 +87,7 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
 
   // Auto-focus scan input
   useEffect(() => {
-    if (inputRef.current && step < 4) inputRef.current.focus();
+    if (inputRef.current && typeof step === 'number' && step < 4) inputRef.current.focus();
   }, [step]);
 
   async function loadReasons() {
@@ -114,27 +115,50 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
     setScanInput('');
 
     if (step === 0) {
-      // Scan EMPLOYEE
+      // Scan EMPLOYEE — determine intake vs production mode
       if (!code.startsWith('EMP')) { setError('Scan your EMPLOYEE badge first'); return; }
-      const { data } = await supabase.from('employees').select('id, first_name, last_name, emp_code').eq('emp_code', code).single();
+      const { data } = await supabase.from('employees').select('id, first_name, last_name, emp_code, department').eq('emp_code', code).single();
       if (!data) { setError(`Employee ${code} not found`); return; }
       setScanData(prev => ({ ...prev, employee_id: data.emp_code, employee_name: `${data.first_name} ${data.last_name}` }));
+      
+      // Determine scan mode: CS dept (DEPT0011) OR manager/admin role → intake mode
+      const deptText = (data.department || '').toLowerCase();
+      const isCS = deptText.includes('customer service') || deptText.includes('operations/cs') || deptText.includes('cs');
+      const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || userRole === 'org_admin' || userRole === 'super_admin';
+      
+      if (isCS || isManagerOrAdmin) {
+        setScanMode('intake');
+      } else {
+        setScanMode('production');
+      }
       setStep(1);
     } else if (step === 1) {
-      // Scan JOB
+      // Scan JOB — behavior differs by scan mode
       if (!code.startsWith('JOB')) { setError('Scan the JOB jacket'); return; }
-      let { data } = await supabase.from('job_sleeves').select('*').eq('id', code).single();
-      if (!data) {
-        // Auto-create job sleeve if new
-        const { data: newJob, error: err } = await supabase.from('job_sleeves')
-          .insert({ id: code, status: 'active', org_id: orgId })
-          .select().single();
-        if (err) { setError(`Could not create job ${code}`); return; }
-        data = newJob;
+      
+      if (scanMode === 'production') {
+        // Production employees: job MUST already exist (started by CS)
+        const { data } = await supabase.from('job_sleeves').select('*').eq('id', code).single();
+        if (!data) {
+          setError("This sleeve hasn't been started yet — have Customer Service scan it in first.");
+          return;
+        }
+        const info = data.customer_name ? `${data.flex_job_number || code} — ${data.customer_name}` : code;
+        setScanData(prev => ({ ...prev, job_id: code, job_info: info }));
+        setStep(2);
+      } else {
+        // Intake mode (CS / manager / admin): can create new job sleeves
+        let { data } = await supabase.from('job_sleeves').select('*').eq('id', code).single();
+        if (!data) {
+          // Launch intake sub-flow: collect Flex # and customer name
+          setScanData(prev => ({ ...prev, job_id: code }));
+          setStep('intake_details');
+          return;
+        }
+        const info = data.customer_name ? `${data.flex_job_number || code} — ${data.customer_name}` : code;
+        setScanData(prev => ({ ...prev, job_id: code, job_info: info }));
+        setStep(2);
       }
-      const info = data.customer_name ? `${data.flex_job_number || code} — ${data.customer_name}` : code;
-      setScanData(prev => ({ ...prev, job_id: code, job_info: info }));
-      setStep(2);
     } else if (step === 2) {
       // Scan DEPARTMENT
       if (!code.startsWith('DEPT')) { setError('Scan the DEPARTMENT barcode'); return; }
@@ -261,6 +285,7 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
       maintenance_scope: '',
       waste_sheets: 0, waste_notes: ''
     });
+    setScanMode(null);
     setStep(0);
     setError('');
     loadRecentScans();
@@ -268,7 +293,7 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
 
   const stepLabels = [
     '📱 Scan Employee Badge',
-    '📋 Scan Job Jacket',
+    scanMode === 'intake' ? '📥 Scan Job Sleeve (Intake)' : '📋 Scan Job Jacket',
     '🏭 Scan Department',
     '🔧 Scan Station (or Skip)',
     '⚡ Pick Action',
@@ -306,13 +331,14 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
 
       {/* Current Step Label */}
       <div style={{ textAlign: 'center', marginBottom: 16, fontSize: 18, fontWeight: 700, fontFamily: "'SF Mono', monospace" }}>
-        {step <= 7 ? stepLabels[Math.floor(step)] : 'Complete'}
+        {step === 'intake_details' ? '📥 New Job Intake' : step <= 7 ? stepLabels[Math.floor(step)] : 'Complete'}
       </div>
 
       {/* Accumulated Scan Data */}
-      {step > 0 && (
+      {(step > 0 || step === 'intake_details') && (
         <div style={{ ...cardStyle, padding: 16, opacity: 0.85 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {scanMode && <span style={{ background: scanMode === 'intake' ? '#00695C' : '#37474F', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>{scanMode}</span>}
             {scanData.employee_name && <span style={{ background: accent, color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>👤 {scanData.employee_name}</span>}
             {scanData.job_id && <span style={{ background: '#2E7D32', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>📋 {scanData.job_info || scanData.job_id}</span>}
             {scanData.department_name && <span style={{ background: '#1565C0', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>🏭 {scanData.department_name}</span>}
@@ -328,7 +354,7 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
       {success && <div style={{ background: '#2E7D32', color: '#fff', padding: 16, borderRadius: 8, marginBottom: 12, fontWeight: 700, fontSize: 18, textAlign: 'center' }}>{success}</div>}
 
       {/* SCAN INPUT (steps 0-3) */}
-      {step >= 0 && step <= 3 && !success && (
+      {typeof step === 'number' && step >= 0 && step <= 3 && !success && (
         <div style={cardStyle}>
           <input
             ref={inputRef}
@@ -352,6 +378,63 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
               Skip Station →
             </button>
           )}
+        </div>
+      )}
+
+      {/* INTAKE DETAILS — CS/Manager new job sub-flow */}
+      {step === 'intake_details' && !success && (
+        <div style={cardStyle}>
+          <p style={{ fontWeight: 700, fontSize: 16, marginBottom: 4, textAlign: 'center' }}>📥 New Job Intake</p>
+          <p style={{ color: mutedText, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>Sleeve: {scanData.job_id}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <input
+              id="intake-flex"
+              placeholder="Flex Job # (from EFI)"
+              style={{
+                padding: 14, fontSize: 16, fontWeight: 600, textAlign: 'center',
+                background: darkMode ? '#1a1410' : '#f5f0e8', color: text,
+                border: `2px solid ${border}`, borderRadius: 10,
+                fontFamily: "'SF Mono', monospace", outline: 'none'
+              }}
+            />
+            <input
+              id="intake-customer"
+              placeholder="Customer name"
+              style={{
+                padding: 14, fontSize: 16, fontWeight: 600, textAlign: 'center',
+                background: darkMode ? '#1a1410' : '#f5f0e8', color: text,
+                border: `2px solid ${border}`, borderRadius: 10,
+                fontFamily: "'SF Mono', monospace", outline: 'none'
+              }}
+            />
+            <button onClick={async () => {
+              const flexNum = document.getElementById('intake-flex')?.value?.trim() || '';
+              const customerName = document.getElementById('intake-customer')?.value?.trim() || '';
+              if (!customerName) { setError('Customer name required'); return; }
+              setError('');
+              const { data: newJob, error: err } = await supabase.from('job_sleeves')
+                .insert({
+                  id: scanData.job_id,
+                  flex_job_number: flexNum || null,
+                  customer_name: customerName,
+                  status: 'active',
+                  org_id: orgId,
+                  current_department_id: 'DEPT0012'
+                })
+                .select().single();
+              if (err) { setError(`Could not create job: ${err.message}`); return; }
+              const info = `${flexNum || scanData.job_id} — ${customerName}`;
+              setScanData(prev => ({
+                ...prev, job_info: info,
+                department_id: 'DEPT0012',
+                department_name: departments.find(d => d.id === 'DEPT0012')?.name || 'Design/Graphics'
+              }));
+              // Skip dept scan (defaulted to Design/Graphics), go to station
+              setStep(3);
+            }} style={{ ...bigButtonStyle(true), width: '100%' }}>
+              Start Job → Route to Design/Graphics
+            </button>
+          </div>
         </div>
       )}
 
@@ -498,7 +581,7 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
       )}
 
       {/* RESET BUTTON (always visible during scan) */}
-      {step > 0 && step <= 7 && !success && (
+      {((typeof step === 'number' && step > 0 && step <= 7) || step === 'intake_details') && !success && (
         <button onClick={resetScan} style={{
           display: 'block', margin: '12px auto', padding: '8px 20px',
           background: 'transparent', border: `1px solid ${border}`, borderRadius: 6,

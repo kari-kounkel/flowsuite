@@ -116,9 +116,9 @@ function ScanForm({ darkMode, orgId, accent, cardBg, text, border, mutedText }) 
     if (step === 0) {
       // Scan EMPLOYEE
       if (!code.startsWith('EMP')) { setError('Scan your EMPLOYEE badge first'); return; }
-      const { data } = await supabase.from('employees').select('id, fn, ln').eq('id', code).single();
+      const { data } = await supabase.from('employees').select('id, first_name, last_name, emp_code').eq('emp_code', code).single();
       if (!data) { setError(`Employee ${code} not found`); return; }
-      setScanData(prev => ({ ...prev, employee_id: code, employee_name: `${data.fn} ${data.ln}` }));
+      setScanData(prev => ({ ...prev, employee_id: data.emp_code, employee_name: `${data.first_name} ${data.last_name}` }));
       setStep(1);
     } else if (step === 1) {
       // Scan JOB

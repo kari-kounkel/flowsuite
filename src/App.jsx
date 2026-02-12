@@ -3,7 +3,7 @@ import { themes, ThemeCtx } from './theme.jsx'
 import PeopleFlowModule from './modules/PeopleFlow.jsx'
 import PaperFlowModule from './modules/PaperFlow.jsx'
 import AdminPanel from './modules/AdminPanel.jsx'
-import ScanFlowModule from './ScanFlowModule.jsx'
+import ScanFlowModule from './scanflow/index.jsx'
 
 export default function App({ user, orgCtx, onLogout }) {
   const [theme, setTheme] = useState(() => {

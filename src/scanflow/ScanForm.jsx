@@ -67,11 +67,11 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
 
     if (step === 0) {
       if (!code.startsWith('EMP')) { setError('Scan your EMPLOYEE badge first'); return; }
-      const { data } = await supabase.from('employees').select('id, first_name, last_name, emp_code, department').eq('emp_code', code).single();
+      const { data } = await supabase.from('employees').select('id, first_name, last_name, emp_code, dept').eq('emp_code', code).single();
       if (!data) { setError(`Employee ${code} not found`); return; }
       setScanData(prev => ({ ...prev, employee_id: data.emp_code, employee_name: `${data.first_name} ${data.last_name}` }));
 
-      const deptText = (data.department || '').toLowerCase();
+      const deptText = (data.dept || '').toLowerCase();
       const isCS = deptText.includes('customer service') || deptText.includes('operations/cs') || deptText.includes('cs');
       const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || userRole === 'org_admin' || userRole === 'super_admin';
 

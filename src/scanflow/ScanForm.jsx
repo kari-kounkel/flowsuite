@@ -86,7 +86,10 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
           setError("This sleeve hasn't been started yet — have Customer Service scan it in first.");
           return;
         }
-        const info = data.customer_name ? `${data.flex_job_number || code} — ${data.customer_name}` : code;
+        // Show Flex # as primary, not the internal JOB code
+        const info = data.flex_job_number
+          ? `${data.flex_job_number}${data.customer_name ? ' — ' + data.customer_name : ''}`
+          : code;
         setScanData(prev => ({ ...prev, job_id: code, job_info: info }));
         setStep(2);
       } else {
@@ -96,7 +99,9 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
           setStep('intake_details');
           return;
         }
-        const info = data.customer_name ? `${data.flex_job_number || code} — ${data.customer_name}` : code;
+        const info = data.flex_job_number
+          ? `${data.flex_job_number}${data.customer_name ? ' — ' + data.customer_name : ''}`
+          : code;
         setScanData(prev => ({ ...prev, job_id: code, job_info: info }));
         setStep(2);
       }
@@ -164,10 +169,11 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
 
       if (scanErr) throw scanErr;
 
-      if (scanData.action === 'IN' || scanData.action === 'OUT') {
+      // START/STOP update job location
+      if (scanData.action === 'START' || scanData.action === 'STOP') {
         await supabase.from('job_sleeves').update({
-          current_department_id: scanData.action === 'OUT' ? null : scanData.department_id,
-          current_station_id: scanData.action === 'OUT' ? null : (scanData.station_id || null),
+          current_department_id: scanData.action === 'STOP' ? null : scanData.department_id,
+          current_station_id: scanData.action === 'STOP' ? null : (scanData.station_id || null),
           entered_current_at: new Date().toISOString(),
           status: 'active'
         }).eq('id', scanData.job_id);
@@ -220,6 +226,17 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
     loadRecentScans();
   }
 
+  // ─── ACTION DISPLAY HELPERS ───
+  function actionLabel(action) {
+    const map = { 'START': '▶ START', 'STOP': '⏹ STOP', 'BLOCKER': '🚫 BLOCKER', 'WASTE_STOP': '🛑 STOP — WASTE', 'MAINTENANCE': '🔧 MAINTENANCE' };
+    return map[action] || action;
+  }
+
+  function actionColor(action) {
+    const map = { 'START': '#2E7D32', 'STOP': '#1565C0', 'BLOCKER': '#C62828', 'WASTE_STOP': '#E65100', 'MAINTENANCE': '#6A1B9A' };
+    return map[action] || theme.accent;
+  }
+
   const stepLabels = [
     '📱 Scan Employee Badge',
     scanMode === 'intake' ? '📥 Scan Job Sleeve (Intake)' : '📋 Scan Job Jacket',
@@ -258,7 +275,7 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
             {scanData.job_id && <span style={{ background: '#2E7D32', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>📋 {scanData.job_info || scanData.job_id}</span>}
             {scanData.department_name && <span style={{ background: '#1565C0', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>🏭 {scanData.department_name}</span>}
             {scanData.station_name && <span style={{ background: '#6A1B9A', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>🔧 {scanData.station_name}</span>}
-            {scanData.action && <span style={{ background: '#C62828', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>⚡ {scanData.action}</span>}
+            {scanData.action && <span style={{ background: actionColor(scanData.action), color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>⚡ {scanData.action}</span>}
             {scanData.reason_name && <span style={{ background: '#E65100', color: '#fff', padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>❓ {scanData.reason_name}</span>}
           </div>
         </div>
@@ -352,12 +369,12 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
         </div>
       )}
 
-      {/* ACTION PICKER (step 4) */}
+      {/* ACTION PICKER (step 4) — START/STOP instead of IN/OUT */}
       {step === 4 && !success && (
         <div style={cardSt}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <button onClick={() => selectAction('IN')} style={bigBtn(false, '#2E7D32')}>📥 IN</button>
-            <button onClick={() => selectAction('OUT')} style={bigBtn(false, '#1565C0')}>📤 OUT</button>
+            <button onClick={() => selectAction('START')} style={bigBtn(false, '#2E7D32')}>▶ START</button>
+            <button onClick={() => selectAction('STOP')} style={bigBtn(false, '#1565C0')}>⏹ STOP</button>
             <button onClick={() => selectAction('BLOCKER')} style={bigBtn(false, '#C62828')}>🚫 BLOCKER</button>
             <button onClick={() => selectAction('WASTE_STOP')} style={bigBtn(false, '#E65100')}>🛑 STOP — WASTE</button>
           </div>
@@ -460,7 +477,7 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
               <tr><td style={{ padding: 6, color: theme.mutedText }}>Job</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.job_info || scanData.job_id}</td></tr>
               <tr><td style={{ padding: 6, color: theme.mutedText }}>Department</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.department_name}</td></tr>
               {scanData.station_name && <tr><td style={{ padding: 6, color: theme.mutedText }}>Station</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.station_name}</td></tr>}
-              <tr><td style={{ padding: 6, color: theme.mutedText }}>Action</td><td style={{ padding: 6, fontWeight: 700, color: scanData.action === 'IN' ? '#2E7D32' : scanData.action === 'OUT' ? '#1565C0' : '#C62828' }}>{scanData.action}</td></tr>
+              <tr><td style={{ padding: 6, color: theme.mutedText }}>Action</td><td style={{ padding: 6, fontWeight: 700, color: actionColor(scanData.action) }}>{actionLabel(scanData.action)}</td></tr>
               {scanData.reason_name && <tr><td style={{ padding: 6, color: theme.mutedText }}>Reason</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.reason_name}</td></tr>}
               {scanData.return_to_dept_name && <tr><td style={{ padding: 6, color: theme.mutedText }}>Return To</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.return_to_dept_name}</td></tr>}
               {scanData.maintenance_scope && <tr><td style={{ padding: 6, color: theme.mutedText }}>Maintenance</td><td style={{ padding: 6, fontWeight: 600 }}>{scanData.maintenance_scope === 'station' ? 'This Station' : 'Entire Department'}</td></tr>}
@@ -485,7 +502,7 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
         </button>
       )}
 
-      {/* RECENT SCANS */}
+      {/* RECENT SCANS — shows Flex # not internal JOB code, START/STOP labels */}
       <div style={{ ...cardSt, marginTop: 24 }}>
         <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, fontFamily: "'SF Mono', monospace" }}>Recent Scans</h3>
         {recentScans.length === 0 ? (
@@ -495,10 +512,10 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
             {recentScans.map(s => (
               <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${theme.border}`, fontSize: 12 }}>
                 <span style={{ fontWeight: 600 }}>{s.employee_id}</span>
-                <span>{s.job_id}</span>
+                <span>{s.job_sleeves?.flex_job_number || s.job_id}</span>
                 <span style={{
                   padding: '2px 8px', borderRadius: 4, fontWeight: 700, fontSize: 11,
-                  background: s.action === 'IN' ? '#2E7D32' : s.action === 'OUT' ? '#1565C0' : '#C62828',
+                  background: actionColor(s.action),
                   color: '#fff'
                 }}>{s.action}</span>
                 <span style={{ color: theme.mutedText }}>{new Date(s.scanned_at).toLocaleTimeString()}</span>

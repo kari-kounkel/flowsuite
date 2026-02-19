@@ -37,6 +37,8 @@ const EMP_FIELDS = [
   ['reports_to','Reports To'],['emp_code','Emp Code'],['notes','Notes']
 ]
 
+const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
+
 export default function PeopleFlowModule({ orgId, C }) {
   const [emps, setEmps] = useState([])
   const [disc, setDisc] = useState([])
@@ -47,9 +49,37 @@ export default function PeopleFlowModule({ orgId, C }) {
   const [sel, setSel] = useState(null)
   const [mod, setMod] = useState(null)
   const [toast, setToast] = useState('')
+  const [userEmail, setUserEmail] = useState('')
+  const [userEmpRecord, setUserEmpRecord] = useState(null)
+
+  const isAdmin = ADMIN_EMAILS.includes(userEmail.toLowerCase())
+  const isManager = userEmpRecord?.role === 'Manager' || userEmpRecord?.role === 'C-Level'
+
+  // Build lookup: UUID → display name
+  const empNameMap = {}
+  emps.forEach(e => { empNameMap[e.id] = `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim() })
+  const resolveReportsTo = (val) => { if (!val) return '—'; return empNameMap[val] || val }
+
+  // Get managers/C-Level for dropdown
+  const managerOptions = emps.filter(e => e.role === 'Manager' || e.role === 'C-Level')
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const go = v => { setView(v); setSel(null); setMod(null) }
+
+  // Get current user email on mount
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.email) setUserEmail(data.user.email)
+    })
+  }, [])
+
+  // Set user's own employee record once emps + email are loaded
+  useEffect(() => {
+    if (userEmail && emps.length > 0) {
+      const me = emps.find(e => e.email?.toLowerCase() === userEmail.toLowerCase())
+      setUserEmpRecord(me || null)
+    }
+  }, [userEmail, emps])
 
   useEffect(() => {
     if (!orgId) return
@@ -122,7 +152,15 @@ export default function PeopleFlowModule({ orgId, C }) {
   disc.filter(d=>(d.status||d.st)==='open').forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
   if(sts.pP>0)alerts.push({t:'Payroll',m:`${sts.pP} pending items`,c:C.rd})
 
-  const tabs=[{k:'dashboard',l:'Home',i:'◆'},{k:'employees',l:'Team',i:'◉'},{k:'orgchart',l:'Org',i:'⊞'},{k:'discipline',l:'Disc',i:'⚡'},{k:'onboard',l:'Onb',i:'★'},{k:'union',l:'Union',i:'⊕'},{k:'payroll',l:'PR',i:'$'},{k:'documents',l:'Docs',i:'▤'},{k:'resources',l:'Resources',i:'◇'},{k:'reports',l:'Rpt',i:'◧'}]
+  const ADMIN_TABS = ['discipline','onboard','payroll','documents','reports']
+  const MANAGER_TABS = ['discipline','onboard']
+  const allTabs=[{k:'dashboard',l:'Home',i:'◆'},{k:'employees',l:'Team',i:'◉'},{k:'orgchart',l:'Org',i:'⊞'},{k:'discipline',l:'Disc',i:'⚡'},{k:'onboard',l:'Onb',i:'★'},{k:'union',l:'Union',i:'⊕'},{k:'payroll',l:'PR',i:'$'},{k:'documents',l:'Docs',i:'▤'},{k:'resources',l:'Resources',i:'◇'},{k:'reports',l:'Rpt',i:'◧'}]
+  const tabs = allTabs.filter(t => {
+    if (isAdmin) return true
+    if (isManager && MANAGER_TABS.includes(t.k)) return true
+    if (ADMIN_TABS.includes(t.k)) return false
+    return true
+  })
 
   const gn=(e)=>`${e.preferred_name||e.first_name||''} ${e.last_name||''}`
 
@@ -140,11 +178,11 @@ export default function PeopleFlowModule({ orgId, C }) {
       </div>
       {alerts.length>0&&<Card C={C} style={{marginBottom:16}}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>⚠ Alerts</h3>
         {alerts.map((a,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none'}}><span style={{fontSize:12,color:C.w}}>{a.m}</span><Tag c={a.c}>{a.t}</Tag></div>)}</Card>}
-      <Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Quick Links</h3><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn small onClick={()=>go('employees')} C={C}>+ Employee</Btn><Btn small onClick={()=>go('discipline')} C={C}>+ Discipline</Btn><Btn small onClick={()=>go('payroll')} C={C}>Run Payroll</Btn></div></Card>
+      {isAdmin&&<Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Quick Links</h3><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn small onClick={()=>go('employees')} C={C}>+ Employee</Btn><Btn small onClick={()=>go('discipline')} C={C}>+ Discipline</Btn><Btn small onClick={()=>go('payroll')} C={C}>Run Payroll</Btn></div></Card>}
     </div>}
 
     {/* TEAM */}
-    {view==='employees'&&<TeamView emps={emps} ac={ac} gn={gn} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C}/>}
+    {view==='employees'&&<TeamView emps={emps} ac={ac} gn={gn} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
 
     {/* ORG CHART */}
     {view==='orgchart'&&<div><h2 style={{fontSize:18,marginTop:0}}>Org Chart</h2>
@@ -189,22 +227,29 @@ export default function PeopleFlowModule({ orgId, C }) {
 
 // ── Sub-components ──
 
-function TeamView({emps,ac,gn,sel,setSel,mod,setMod,saveEmp,C}){
+function TeamView({emps,ac,gn,sel,setSel,mod,setMod,saveEmp,C,isAdmin,resolveReportsTo,managerOptions}){
   const[filter,setFilter]=useState('')
   const filtered=emps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
   return(<div>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({ac.length})</h2><Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn></div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({ac.length})</h2>{isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}</div>
     <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>
-    {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:'pointer',padding:'10px 14px'}}>
-      <div onClick={()=>{setSel(e);setMod('emp')}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+    {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:isAdmin?'pointer':'default',padding:'10px 14px'}}>
+      <div onClick={()=>{if(isAdmin){setSel(e);setMod('emp')}else{setSel(sel?.id===e.id?null:e)}}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.role||'—'} • {e.dept||e.department||'—'}</div></div>
         <div style={{textAlign:'right'}}><Tag c={e.status==='Active'?C.gr:e.status==='Terminated'?C.rd:C.am}>{e.status||'Active'}</Tag><div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union_status||'—'}</div></div>
-      </div></Card>)}
-    {mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C}/>}
+      </div>
+      {/* Read-only detail for non-admin when card is selected */}
+      {!isAdmin&&sel?.id===e.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+        {[['dept','Department'],['hire_date','Hire Date'],['role','Classification'],['union_status','Union Status'],['email','Email'],['phone','Phone'],['ec_name','Emergency Contact'],['ec_phone','Emergency Phone'],['reports_to','Reports To']].map(([k,l])=>
+          <div key={k} style={{fontSize:11}}><span style={{color:C.g,textTransform:'uppercase',fontSize:9}}>{l}</span><div style={{color:C.w}}>{k==='reports_to'?resolveReportsTo(e[k]):(e[k]||'—')}</div></div>
+        )}
+      </div>}
+    </Card>)}
+    {isAdmin&&mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} gn={gn}/>}
   </div>)
 }
 
-function EmpModal({emp,onSave,onClose,C}){
+function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions,gn}){
   const[f,setF]=useState(emp||{status:'Active'})
   const up=(k,v)=>setF(p=>({...p,[k]:v}))
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}}>
@@ -217,6 +262,11 @@ function EmpModal({emp,onSave,onClose,C}){
             {['active','on_leave','probation','terminated','inactive'].map(s=><option key={s}>{s}</option>)}</select>
           :k==='union_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             {['','Union Active','Non-Union','1099','Probation'].map(s=><option key={s}>{s}</option>)}</select>
+          :k==='reports_to'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+            <option value="">— None —</option>
+            {managerOptions.map(m=><option key={m.id} value={m.id}>{gn(m)} ({m.role})</option>)}
+          </select>
+          :k==='emp_code'?<input value={f[k]||''} readOnly style={{width:'100%',padding:'6px 8px',background:C.nL,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.g,fontSize:12,boxSizing:'border-box',fontFamily:'inherit',cursor:'not-allowed'}}/>
           :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
         </div>)}
       </div>

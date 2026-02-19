@@ -29,10 +29,12 @@ const DISC_TYPES = [
   {v:'coaching',l:'Coaching',c:'#3B82F6'},{v:'commendation',l:'Commendation',c:'#22C55E'}
 ]
 const EMP_FIELDS = [
-  ['pn','Preferred Name'],['ln','Last Name'],['first_name','Legal First'],['title','Title'],
-  ['dept','Department'],['hire','Hire Date'],['status','Status'],['union','Union'],
-  ['rate','Pay Rate'],['email','Email'],['phone','Phone'],['address','Address'],
-  ['emergency_name','Emergency Contact'],['emergency_phone','Emergency Phone']
+  ['preferred_name','Preferred Name'],['last_name','Last Name'],['first_name','Legal First'],
+  ['role','Classification'],['dept','Department'],['hire_date','Hire Date'],
+  ['status','Status'],['union_status','Union Status'],
+  ['rate','Pay Rate'],['email','Email'],['phone','Phone'],['zip','Zip Code'],
+  ['ec_name','Emergency Contact'],['ec_relationship','EC Relationship'],['ec_phone','Emergency Phone'],
+  ['reports_to','Reports To'],['emp_code','Emp Code'],['notes','Notes']
 ]
 
 export default function PeopleFlowModule({ orgId, C }) {
@@ -59,7 +61,7 @@ export default function PeopleFlowModule({ orgId, C }) {
         supabase.from('documents').select('*').eq('org_id', orgId),
         supabase.from('payroll_items').select('*').eq('org_id', orgId)
       ])
-      setEmps((eR.data||[]).map(e=>({...e,...(e.data||{})})))
+      setEmps(eR.data||[])
       setDisc(dR.data||[])
       const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]=r.completed}); setOnb(om)
       const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]=r.received}); setDocs(dm)
@@ -68,12 +70,12 @@ export default function PeopleFlowModule({ orgId, C }) {
     load()
   }, [orgId])
 
-  const ac = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive')
+  const ac = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
 
   const saveEmp = async(emp)=>{
     const{id,...rest}=emp
-    if(id){await supabase.from('employees').update({data:rest,org_id:orgId}).eq('id',id);setEmps(p=>p.map(e=>e.id===id?{...e,...rest}:e))}
-    else{const{data}=await supabase.from('employees').insert({data:rest,org_id:orgId}).select().single();if(data)setEmps(p=>[...p,{...data,...rest}])}
+    if(id){await supabase.from('employees').update({...rest,org_id:orgId}).eq('id',id);setEmps(p=>p.map(e=>e.id===id?{...e,...rest}:e))}
+    else{const{data}=await supabase.from('employees').insert({...rest,org_id:orgId}).select().single();if(data)setEmps(p=>[...p,data])}
     sh('Employee saved ✓')
   }
   const saveDisc = async(d)=>{
@@ -110,19 +112,19 @@ export default function PeopleFlowModule({ orgId, C }) {
 
   const sts={
     total:emps.length,active:ac.length,
-    union:ac.filter(e=>e.union&&e.union!=='Non-Union'&&e.union!=='1099').length,
+    union:ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length,
     disc:disc.filter(d=>(d.status||d.st)==='open').length,
-    newHires:ac.filter(e=>dbt(e.hire||e.hire_date||td,td)<=90).length,
+    newHires:ac.filter(e=>dbt(e.hire_date||td,td)<=90).length,
     pP:pay.filter(p=>p.status==='pending').length
   }
   const alerts=[]
-  ac.filter(e=>dbt(e.hire||e.hire_date||td,td)<=90).forEach(e=>alerts.push({t:'New Hire',m:`${e.pn||e.preferred_name||e.first_name} ${e.ln||e.last_name} — Day ${dbt(e.hire||e.hire_date||td,td)}`,c:C.bl}))
+  ac.filter(e=>dbt(e.hire_date||td,td)<=90).forEach(e=>alerts.push({t:'New Hire',m:`${gn(e)} — Day ${dbt(e.hire_date||td,td)}`,c:C.bl}))
   disc.filter(d=>(d.status||d.st)==='open').forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
   if(sts.pP>0)alerts.push({t:'Payroll',m:`${sts.pP} pending items`,c:C.rd})
 
   const tabs=[{k:'dashboard',l:'Home',i:'◆'},{k:'employees',l:'Team',i:'◉'},{k:'orgchart',l:'Org',i:'⊞'},{k:'discipline',l:'Disc',i:'⚡'},{k:'onboard',l:'Onb',i:'★'},{k:'union',l:'Union',i:'⊕'},{k:'payroll',l:'PR',i:'$'},{k:'documents',l:'Docs',i:'▤'},{k:'resources',l:'Resources',i:'◇'},{k:'reports',l:'Rpt',i:'◧'}]
 
-  const gn=(e)=>`${e.pn||e.preferred_name||e.first_name||''} ${e.ln||e.last_name||''}`
+  const gn=(e)=>`${e.preferred_name||e.first_name||''} ${e.last_name||''}`
 
   return(<div>
     {/* Tab Nav */}
@@ -146,10 +148,10 @@ export default function PeopleFlowModule({ orgId, C }) {
 
     {/* ORG CHART */}
     {view==='orgchart'&&<div><h2 style={{fontSize:18,marginTop:0}}>Org Chart</h2>
-      {[...new Set(ac.map(e=>e.dept||e.department||'Unassigned'))].map(d=><Card key={d} C={C} style={{marginBottom:10}}>
+      {[...new Set(ac.map(e=>e.dept||'Unassigned'))].map(d=><Card key={d} C={C} style={{marginBottom:10}}>
         <h3 style={{margin:'0 0 8px',fontSize:14,color:C.go}}>{d}</h3>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:6}}>
-          {ac.filter(e=>(e.dept||e.department||'Unassigned')===d).map(e=><div key={e.id} style={{padding:'6px 10px',background:C.ch,borderRadius:6,fontSize:12}}><div style={{fontWeight:600}}>{gn(e)}</div><div style={{fontSize:10,color:C.g}}>{e.title||e.job_title||'—'}</div></div>)}
+          {ac.filter(e=>(e.dept||'Unassigned')===d).map(e=><div key={e.id} style={{padding:'6px 10px',background:C.ch,borderRadius:6,fontSize:12}}><div style={{fontWeight:600}}>{gn(e)}</div><div style={{fontSize:10,color:C.g}}>{e.role||'—'}</div></div>)}
         </div></Card>)}</div>}
 
     {/* DISCIPLINE */}
@@ -159,13 +161,13 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='onboard'&&<OnbView ac={ac} onb={onb} toggleOnb={toggleOnb} gn={gn} C={C}/>}
 
     {/* UNION */}
-    {view==='union'&&<div><h2 style={{fontSize:18,marginTop:0}}>Union Members ({ac.filter(e=>e.union&&e.union!=='Non-Union'&&e.union!=='1099'&&e.union!=='Management').length})</h2>
+    {view==='union'&&<div><h2 style={{fontSize:18,marginTop:0}}>Union Members ({ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099'&&e.union_status!=='Management').length})</h2>
       <Card C={C}><table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}><thead><tr style={{borderBottom:`1px solid ${C.bdr}`}}>
         {['Name','Local','Hire Date','Seniority','Status'].map(h=><th key={h} style={{textAlign:'left',padding:'6px 8px',color:C.g,fontSize:10,textTransform:'uppercase'}}>{h}</th>)}</tr></thead>
-        <tbody>{ac.filter(e=>e.union&&e.union!=='Non-Union'&&e.union!=='1099'&&e.union!=='Management').map(e=><tr key={e.id} style={{borderBottom:`1px solid ${C.bdr}`}}>
-          <td style={{padding:'6px 8px',fontWeight:500}}>{gn(e)}</td><td style={{padding:'6px 8px'}}>{e.union}</td>
-          <td style={{padding:'6px 8px',color:C.g}}>{fm(e.hire||e.hire_date)}</td>
-          <td style={{padding:'6px 8px',color:C.g}}>{Math.round(dbt(e.hire||e.hire_date||td,td)/365*10)/10} yrs</td>
+        <tbody>{ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099'&&e.union_status!=='Management').map(e=><tr key={e.id} style={{borderBottom:`1px solid ${C.bdr}`}}>
+          <td style={{padding:'6px 8px',fontWeight:500}}>{gn(e)}</td><td style={{padding:'6px 8px'}}>{e.union_status}</td>
+          <td style={{padding:'6px 8px',color:C.g}}>{fm(e.hire_date)}</td>
+          <td style={{padding:'6px 8px',color:C.g}}>{Math.round(dbt(e.hire_date||td,td)/365*10)/10} yrs</td>
           <td style={{padding:'6px 8px'}}><Tag c={e.status==='Active'?C.gr:C.am}>{e.status}</Tag></td>
         </tr>)}</tbody></table></Card></div>}
 
@@ -195,8 +197,8 @@ function TeamView({emps,ac,gn,sel,setSel,mod,setMod,saveEmp,C}){
     <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>
     {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:'pointer',padding:'10px 14px'}}>
       <div onClick={()=>{setSel(e);setMod('emp')}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.title||e.job_title||'—'} • {e.dept||e.department||'—'}</div></div>
-        <div style={{textAlign:'right'}}><Tag c={e.status==='Active'?C.gr:e.status==='Terminated'?C.rd:C.am}>{e.status||'Active'}</Tag><div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union||'—'}</div></div>
+        <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.role||'—'} • {e.dept||e.department||'—'}</div></div>
+        <div style={{textAlign:'right'}}><Tag c={e.status==='Active'?C.gr:e.status==='Terminated'?C.rd:C.am}>{e.status||'Active'}</Tag><div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union_status||'—'}</div></div>
       </div></Card>)}
     {mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C}/>}
   </div>)
@@ -210,11 +212,12 @@ function EmpModal({emp,onSave,onClose,C}){
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h3 style={{margin:0,fontSize:16}}>{emp?'Edit':'New'} Employee</h3><button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button></div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
         {EMP_FIELDS.map(([k,l])=><div key={k}><label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{l}</label>
-          {k==='status'?<select value={f[k]||'Active'} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
-            {['Active','On Leave','Probation','Terminated','Inactive'].map(s=><option key={s}>{s}</option>)}</select>
-          :k==='union'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
-            {['','Local 1-B','Non-Union','1099','Management'].map(s=><option key={s}>{s}</option>)}</select>
-          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={k==='hire'?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
+          {k==='role'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{['','C-Level','Manager','Lead','Staff'].map(s=><option key={s}>{s}</option>)}</select>
+          :k==='status'?<select value={f[k]||'Active'} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+            {['active','on_leave','probation','terminated','inactive'].map(s=><option key={s}>{s}</option>)}</select>
+          :k==='union_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+            {['','Union Active','Non-Union','1099','Probation'].map(s=><option key={s}>{s}</option>)}</select>
+          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
         </div>)}
       </div>
       <div style={{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}}><Btn ghost small onClick={onClose} C={C}>Cancel</Btn><Btn gold small onClick={()=>{onSave(f);onClose()}} C={C}>Save</Btn></div>
@@ -251,12 +254,12 @@ function DiscModal({onSave,onClose,C,emps,gn}){
 }
 
 function OnbView({ac,onb,toggleOnb,gn,C}){
-  const recent=ac.filter(e=>dbt(e.hire||e.hire_date||td,td)<=180&&e.union!=='Non-Union'&&e.union!=='1099').sort((a,b)=>new Date(b.hire||b.hire_date)-new Date(a.hire||a.hire_date))
+  const recent=ac.filter(e=>dbt(e.hire_date||td,td)<=180&&e.union_status!=='Non-Union'&&e.union_status!=='1099').sort((a,b)=>new Date(b.hire_date)-new Date(a.hire_date))
   const phs=[...new Set(OBS.map(s=>s.p))]
   return(<div><h2 style={{fontSize:18,marginTop:0}}>Onboarding</h2>
     {recent.length===0?<Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>No recent hires.</Card>:
       recent.map(e=>{const ed=onb[e.id]||{};const dn=OBS.filter(s=>ed[s.id]).length;const pc=Math.round(dn/OBS.length*100);return<Card key={e.id} C={C} style={{marginBottom:10}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div><h3 style={{margin:0,fontSize:14}}>{gn(e)}</h3><div style={{fontSize:11,color:C.g}}>{fm(e.hire||e.hire_date)} • Day {dbt(e.hire||e.hire_date||td,td)}</div></div><div style={{fontSize:18,fontWeight:700,color:pc===100?C.gr:C.go}}>{pc}%</div></div>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div><h3 style={{margin:0,fontSize:14}}>{gn(e)}</h3><div style={{fontSize:11,color:C.g}}>{fm(e.hire_date)} • Day {dbt(e.hire_date||td,td)}</div></div><div style={{fontSize:18,fontWeight:700,color:pc===100?C.gr:C.go}}>{pc}%</div></div>
         <div style={{height:3,background:C.nL,borderRadius:99,marginBottom:8,overflow:'hidden'}}><div style={{height:'100%',width:`${pc}%`,background:pc===100?C.gr:C.go,borderRadius:99}}/></div>
         {phs.map(ph=><div key={ph} style={{marginBottom:6}}><div style={{fontSize:9,color:C.go,textTransform:'uppercase',marginBottom:2}}>{ph}</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>{OBS.filter(s=>s.p===ph).map(s=><label key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',fontSize:10,textDecoration:ed[s.id]?'line-through':'none',color:ed[s.id]?C.g:C.w}}>{ed[s.id]?'✓':'○'} {s.l}</label>)}</div></div>)}</Card>})}</div>)
@@ -301,8 +304,8 @@ function DocsView({ac,docs,toggleDoc,gn,C}){
 }
 
 function RptView({emps,ac,disc,pay,C}){
-  const uC=ac.filter(e=>e.union&&e.union!=='Non-Union'&&e.union!=='1099').length
-  const dC={};ac.forEach(e=>{const d=e.dept||e.department||'Unassigned';dC[d]=(dC[d]||0)+1})
+  const uC=ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length
+  const dC={};ac.forEach(e=>{const d=e.dept||'Unassigned';dC[d]=(dC[d]||0)+1})
   return(<div><h2 style={{fontSize:18,marginTop:0}}>Reports</h2>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
       <Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Headcount</h3><div style={{fontSize:12}}>

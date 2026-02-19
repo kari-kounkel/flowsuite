@@ -182,7 +182,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     </div>}
 
     {/* TEAM */}
-    {view==='employees'&&<TeamView emps={emps} ac={ac} gn={gn} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
+    {view==='employees'&&<TeamView emps={emps} ac={ac} gn={gn} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
 
     {/* ORG CHART */}
     {view==='orgchart'&&<div><h2 style={{fontSize:18,marginTop:0}}>Org Chart</h2>
@@ -216,7 +216,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='documents'&&<DocsView ac={ac} docs={docs} toggleDoc={toggleDoc} gn={gn} C={C}/>}
 
     {/* EMPLOYEE RESOURCES */}
-    {view==='resources'&&<ResourcesView C={C}/>}
+    {view==='resources'&&<ResourcesView C={C} isAdmin={isAdmin} isManager={isManager}/>}
 
     {/* REPORTS */}
     {view==='reports'&&<RptView emps={emps} ac={ac} disc={disc} pay={pay} C={C}/>}
@@ -227,11 +227,37 @@ export default function PeopleFlowModule({ orgId, C }) {
 
 // ── Sub-components ──
 
-function TeamView({emps,ac,gn,sel,setSel,mod,setMod,saveEmp,C,isAdmin,resolveReportsTo,managerOptions}){
+function TeamView({emps,ac,gn,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,userEmpRecord,resolveReportsTo,managerOptions}){
   const[filter,setFilter]=useState('')
-  const filtered=emps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
+
+  // Build full downline: recursively find everyone who reports to this person, and their reports, etc.
+  const getDownline = (managerId) => {
+    const directs = emps.filter(e => e.reports_to === managerId)
+    let all = [...directs]
+    directs.forEach(d => { all = all.concat(getDownline(d.id)) })
+    return all
+  }
+
+  // Determine visible employees based on role
+  let visibleEmps = emps
+  if (!isAdmin) {
+    if (isManager && userEmpRecord) {
+      // Manager sees themselves + full downline chain
+      const downline = getDownline(userEmpRecord.id)
+      const downlineIds = new Set(downline.map(e => e.id))
+      downlineIds.add(userEmpRecord.id)
+      visibleEmps = emps.filter(e => downlineIds.has(e.id))
+    } else if (userEmpRecord) {
+      // Staff sees only themselves
+      visibleEmps = emps.filter(e => e.id === userEmpRecord.id)
+    }
+  }
+
+  const filtered=visibleEmps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
+  const activeVisible = filtered.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
+
   return(<div>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({ac.length})</h2>{isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}</div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({activeVisible.length})</h2>{isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}</div>
     <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>
     {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:isAdmin?'pointer':'default',padding:'10px 14px'}}>
       <div onClick={()=>{if(isAdmin){setSel(e);setMod('emp')}else{setSel(sel?.id===e.id?null:e)}}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -370,7 +396,21 @@ function RptView({emps,ac,disc,pay,C}){
     </div></div>)
 }
 
-function ResourcesView({C}){
+function ResourcesView({C,isAdmin,isManager}){
+  const [activeForm, setActiveForm] = useState(null)
+  const canManage = isAdmin || isManager
+
+  const FORMS = [
+    {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',icon:'$',url:'https://form.jotform.com/260085486550056',access:'all',flow:'employee'},
+    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance — deducted from next check',icon:'↑',url:'https://form.jotform.com/260495386436063',access:'all',flow:'employee'},
+    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Send to employee to sign after reimbursement is issued',icon:'✓',url:'https://form.jotform.com/260085845634058',access:'manage',flow:'management'},
+    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions — send to employee for signature',icon:'§',url:'https://form.jotform.com/260084859075061',access:'manage',flow:'management'},
+  ]
+
+  const visibleForms = FORMS.filter(f => f.access === 'all' || canManage)
+  const empForms = visibleForms.filter(f => f.flow === 'employee')
+  const mgtForms = visibleForms.filter(f => f.flow === 'management')
+
   const LINKS = [
     {cat:'Payroll & Time',items:[
       {l:'QuickBooks Online',url:'https://qbo.intuit.com',desc:'Clock in/out, view pay stubs, W-2s',icon:'$'},
@@ -414,6 +454,58 @@ function ResourcesView({C}){
     <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>Employee Resources</h2>
     <div style={{fontSize:11,color:C.g,marginBottom:16}}>Quick access to forms, links, policies, and benefits information.</div>
 
+    {/* ── FORMS SECTION ── */}
+    <div style={{marginBottom:20}}>
+      <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>Forms & Requests</h3>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8,marginBottom:8}}>
+        {empForms.map(f=>(
+          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?`2px solid ${C.go}`:`1px solid ${C.bdr}`}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+              <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.go:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.go,flexShrink:0,fontWeight:700}}>{f.icon}</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.go:C.w,marginBottom:2}}>{f.l}</div>
+                <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {canManage && mgtForms.length > 0 && <>
+        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:6,marginTop:12}}>Management Forms — Send to Employee</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
+          {mgtForms.map(f=>(
+            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?`2px solid ${C.am}`:`1px solid ${C.bdr}`}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.am:C.aD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.am,flexShrink:0,fontWeight:700}}>{f.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.am:C.w,marginBottom:2}}>{f.l}</div>
+                  <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </>}
+
+      {/* Embedded Form */}
+      {activeForm && (()=>{
+        const form = FORMS.find(f=>f.id===activeForm)
+        if(!form) return null
+        return <Card C={C} style={{marginTop:12,padding:0,overflow:'hidden'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:`1px solid ${C.bdr}`}}>
+            <div style={{fontWeight:600,fontSize:13,color:C.go}}>{form.l}</div>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+              <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>Open in new tab ↗</a>
+              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16}}>✕</button>
+            </div>
+          </div>
+          <iframe src={form.url} style={{width:'100%',height:600,border:'none',background:C.bg2}} title={form.l} allow="camera;microphone"/>
+        </Card>
+      })()}
+    </div>
+
+    {/* ── EXISTING RESOURCE LINKS ── */}
     {LINKS.map(cat=>(
       <div key={cat.cat} style={{marginBottom:16}}>
         <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>{cat.cat}</h3>

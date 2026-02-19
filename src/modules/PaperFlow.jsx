@@ -4,8 +4,7 @@ import { Card, Tag, Btn, fm, td } from '../theme.jsx'
 
 const DOC_TYPES = [
   { k: 'contract', l: 'Union Contract', i: '§', desc: 'Local 1-B CBA — Jan 2024–Dec 2026' },
-  { k: 'handbook', l: 'Employee Handbook', i: '📋', desc: 'Minuteman Press Uptown — Jan 2024' },
-  { k: 'policy', l: 'Attendance & Discipline', i: '⚡', desc: 'Progressive Discipline Policy' }
+  { k: 'handbook', l: 'Employee Handbook', i: '📋', desc: 'Policies, Conduct & Attendance — Jan 2024' }
 ]
 
 export default function PaperFlowModule({ orgId, C, user }) {
@@ -197,7 +196,7 @@ function NegotiateView({ sections, notes, saveNote, C }) {
   const sectionNotes = selId ? notes.filter(n => n.section_id === selId) : []
   const sel = sections.find(s => s.id === selId)
   const typeColors = { general: C.g, negotiation: C.am, question: C.bl, proposed_change: C.rd, management_note: C.gr }
-  const dtIcon = (s) => { const dt = s?.doc_type || 'contract'; return dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '⚡' }
+  const dtIcon = (s) => { const dt = s?.doc_type || 'contract'; return dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '§' }
 
   return (<div>
     <h2 style={{ fontSize: 18, marginTop: 0 }}>Negotiation Notes</h2>
@@ -281,7 +280,7 @@ function PushView({ sections, ac, gn, pushSection, pushes, acks, C }) {
         {Object.entries(grouped).map(([dt, secs]) => (
           <optgroup key={dt} label={DOC_TYPES.find(d => d.k === dt)?.l || dt}>
             {secs.map(s => <option key={s.id} value={s.id}>
-              {dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '⚡'}{s.section_number} — {s.title}
+              {dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '§'}{s.section_number} — {s.title}
             </option>)}
           </optgroup>
         ))}
@@ -334,7 +333,7 @@ function AcksView({ pushes, acks, sections, acknowledge, C }) {
   const pending = acks.filter(a => a.status === 'pending')
   const acknowledged = acks.filter(a => a.status === 'acknowledged')
   const getSection = pushId => { const push = pushes.find(p => p.id === pushId); return push ? sections.find(s => s.id === push.section_id) : null }
-  const ico = sec => { if (!sec) return '§'; const dt = sec.doc_type || 'contract'; return dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '⚡' }
+  const ico = sec => { if (!sec) return '§'; const dt = sec.doc_type || 'contract'; return dt === 'contract' ? '§' : dt === 'handbook' ? '◈' : '§' }
 
   return (<div>
     <h2 style={{ fontSize: 18, marginTop: 0 }}>Acknowledgments</h2>

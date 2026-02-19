@@ -120,7 +120,7 @@ export default function PeopleFlowModule({ orgId, C }) {
   disc.filter(d=>(d.status||d.st)==='open').forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
   if(sts.pP>0)alerts.push({t:'Payroll',m:`${sts.pP} pending items`,c:C.rd})
 
-  const tabs=[{k:'dashboard',l:'Home',i:'◆'},{k:'employees',l:'Team',i:'◉'},{k:'orgchart',l:'Org',i:'⊞'},{k:'discipline',l:'Disc',i:'⚡'},{k:'onboard',l:'Onb',i:'★'},{k:'union',l:'Union',i:'⊕'},{k:'payroll',l:'PR',i:'$'},{k:'documents',l:'Docs',i:'▤'},{k:'reports',l:'Rpt',i:'◧'}]
+  const tabs=[{k:'dashboard',l:'Home',i:'◆'},{k:'employees',l:'Team',i:'◉'},{k:'orgchart',l:'Org',i:'⊞'},{k:'discipline',l:'Disc',i:'⚡'},{k:'onboard',l:'Onb',i:'★'},{k:'union',l:'Union',i:'⊕'},{k:'payroll',l:'PR',i:'$'},{k:'documents',l:'Docs',i:'▤'},{k:'resources',l:'Resources',i:'◇'},{k:'reports',l:'Rpt',i:'◧'}]
 
   const gn=(e)=>`${e.pn||e.preferred_name||e.first_name||''} ${e.ln||e.last_name||''}`
 
@@ -174,6 +174,9 @@ export default function PeopleFlowModule({ orgId, C }) {
 
     {/* DOCUMENTS */}
     {view==='documents'&&<DocsView ac={ac} docs={docs} toggleDoc={toggleDoc} gn={gn} C={C}/>}
+
+    {/* EMPLOYEE RESOURCES */}
+    {view==='resources'&&<ResourcesView C={C}/>}
 
     {/* REPORTS */}
     {view==='reports'&&<RptView emps={emps} ac={ac} disc={disc} pay={pay} C={C}/>}
@@ -312,4 +315,81 @@ function RptView({emps,ac,disc,pay,C}){
         <div>Pending: <b style={{color:C.am}}>{pay.filter(p=>p.status==='pending').length}</b></div>
         <div>Total: <b style={{color:C.go}}>${pay.reduce((s,p)=>s+parseFloat(p.amount||0),0).toFixed(2)}</b></div></div></Card>
     </div></div>)
+}
+
+function ResourcesView({C}){
+  const LINKS = [
+    {cat:'Payroll & Time',items:[
+      {l:'QuickBooks Online',url:'https://qbo.intuit.com',desc:'Clock in/out, view pay stubs, W-2s',icon:'$'},
+      {l:'QBO Workforce (Pay Stubs)',url:'https://workforce.intuit.com',desc:'View and print pay stubs and tax forms',icon:'◈'},
+      {l:'Direct Deposit Form',url:null,desc:'See HR for paper form or update in QBO',icon:'▤'}
+    ]},
+    {cat:'Tax Forms',items:[
+      {l:'W-4 Federal Withholding',url:'https://www.irs.gov/pub/irs-pdf/fw4.pdf',desc:'Federal tax withholding certificate',icon:'§'},
+      {l:'W-4MN State Withholding',url:'https://www.revenue.state.mn.us/sites/default/files/2023-12/w-4mn_0.pdf',desc:'Minnesota state withholding',icon:'§'},
+      {l:'I-9 Employment Verification',url:'https://www.uscis.gov/sites/default/files/document/forms/i-9-paper-version.pdf',desc:'Employment eligibility verification',icon:'§'},
+      {l:'W-2 (Year-End)',url:'https://workforce.intuit.com',desc:'Available in QBO Workforce after Jan 31',icon:'◈'}
+    ]},
+    {cat:'Benefits & Retirement',items:[
+      {l:'Health Insurance Info',url:null,desc:'Company pays 80% of medical premium. See HR for plan details and enrollment.',icon:'♥'},
+      {l:'Dental Insurance',url:null,desc:'Available to eligible employees. See HR for details.',icon:'♥'},
+      {l:'Vision Insurance',url:null,desc:'Available to eligible employees. See HR for details.',icon:'♥'},
+      {l:'401(k) Enrollment',url:null,desc:'Eligible employees may participate. See HR for plan documents.',icon:'◆'},
+      {l:'TMRP Pension (Union)',url:null,desc:'Local 1-B Pension Fund — 6% of earnings. See union rep or HR.',icon:'⊕'}
+    ]},
+    {cat:'Policies & Handbook',items:[
+      {l:'Employee Handbook',url:null,desc:'Minuteman Press Uptown — January 2024. Available in PaperFlow.',icon:'📋'},
+      {l:'Union Contract (CBA)',url:null,desc:'Local 1-B, Jan 2024–Dec 2026. Available in PaperFlow.',icon:'§'},
+      {l:'Attendance & Discipline Policy',url:null,desc:'Progressive discipline, points system, no-call/no-show. Available in PaperFlow.',icon:'⚡'},
+      {l:'Safety Policy',url:null,desc:'See HR or PaperFlow for current safety documentation.',icon:'▲'}
+    ]},
+    {cat:'Union Information',items:[
+      {l:'Local 1-B Contact',url:null,desc:'Packaging & Production Workers Union of North America, Twin Cities',icon:'⊕'},
+      {l:'Shop Steward',url:null,desc:'Contact your Shop Steward for grievances, questions, or representation.',icon:'◉'},
+      {l:'Union Reps: Ruth & Marty',url:null,desc:'Ruth (contact) and Marty Hallberg (President). For onboarding notifications and union card.',icon:'◉'}
+    ]},
+    {cat:'New Hire Essentials',items:[
+      {l:'Probation Period',url:null,desc:'First 90 calendar days. 30-day extension possible for just cause. No PTO accrual during probation.',icon:'★'},
+      {l:'Seniority Timeline',url:null,desc:'Placed on Seniority List after 30 successive shifts or 30 days worked in a 60-day window.',icon:'★'},
+      {l:'PTO Accrual (Year 1)',url:null,desc:'1 hour per 30 hours worked. Max 48 hrs/year. Cap 80 hrs. Starts after 90-day probation.',icon:'★'},
+      {l:'Sick & Safe Time (MN ESSL)',url:null,desc:'Accrues from hire date at 1hr/30hrs worked. Available after 80 hrs worked. Max 48 hrs/year.',icon:'♥'},
+      {l:'Union Enrollment',url:null,desc:'Union notified within 30 days of hire. No dues deducted during first 30 days worked.',icon:'⊕'}
+    ]}
+  ]
+
+  return(<div>
+    <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>Employee Resources</h2>
+    <div style={{fontSize:11,color:C.g,marginBottom:16}}>Quick access to forms, links, policies, and benefits information.</div>
+
+    {LINKS.map(cat=>(
+      <div key={cat.cat} style={{marginBottom:16}}>
+        <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>{cat.cat}</h3>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
+          {cat.items.map(item=>(
+            <Card key={item.l} C={C} style={{padding:'12px 14px'}}>
+              {item.url ? (
+                <a href={item.url} target="_blank" rel="noopener noreferrer" style={{textDecoration:'none',color:'inherit',display:'block'}}>
+                  <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                    <div style={{width:28,height:28,borderRadius:6,background:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:C.go,flexShrink:0}}>{item.icon}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:13,color:C.go,marginBottom:2}}>{item.l} ↗</div>
+                      <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{item.desc}</div>
+                    </div>
+                  </div>
+                </a>
+              ) : (
+                <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                  <div style={{width:28,height:28,borderRadius:6,background:C.ch,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:C.g,flexShrink:0}}>{item.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{item.l}</div>
+                    <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{item.desc}</div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>)
 }

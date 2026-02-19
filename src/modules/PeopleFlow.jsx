@@ -61,7 +61,7 @@ export default function PeopleFlowModule({ orgId, C }) {
   const resolveReportsTo = (val) => { if (!val) return '—'; return empNameMap[val] || val }
 
   // Get managers/C-Level for dropdown
-  const managerOptions = emps.filter(e => e.role === 'Manager' || e.role === 'C-Level')
+  const managerOptions = emps.filter(e => e.role === 'Manager' || e.role === 'C-Level' || e.role === 'Lead')
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
   const go = v => { setView(v); setSel(null); setMod(null) }

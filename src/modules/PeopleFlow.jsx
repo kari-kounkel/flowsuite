@@ -33,6 +33,8 @@ const DISC_TYPES = [
   {v:'final_written',l:'Final Written Warning',c:'#DC2626'},
   {v:'suspension',l:'Suspension',c:'#B91C1C'},
   {v:'termination',l:'Termination',c:'#991B1B'},
+  {v:'layoff',l:'Layoff — Lack of Work',c:'#6366F1'},
+  {v:'separation',l:'Separation',c:'#78716C'},
   {v:'coaching',l:'Coaching',c:'#3B82F6'},
   {v:'commendation',l:'Commendation',c:'#22C55E'}
 ]
@@ -57,23 +59,56 @@ const REPORT_STATUSES = [
 ]
 
 const ROLE_COLORS = {
-  'C-Level':  {bg:'#FEF3C7',text:'#92400E',border:'#F59E0B'},
-  'Manager':  {bg:'#DBEAFE',text:'#1E40AF',border:'#3B82F6'},
-  'Lead':     {bg:'#FEF3C7',text:'#92400E',border:'#D97706'},
-  'Staff':    {bg:'#F3F4F6',text:'#4B5563',border:'#9CA3AF'}
+  'C-Level':  {bg:'#FFF7ED',text:'#C2410C',border:'#EA580C'},
+  'Manager':  {bg:'#F0FDF4',text:'#166534',border:'#16A34A'},
+  'Lead':     {bg:'#FFF7ED',text:'#9A3412',border:'#C2410C'},
+  'Staff':    {bg:'#F1F5F9',text:'#475569',border:'#64748B'}
 }
 
 const EMP_FIELDS = [
   ['preferred_name','Preferred Name'],['last_name','Last Name'],['first_name','Legal First'],
   ['role','Classification'],['dept','Department'],['hire_date','Hire Date'],
   ['status','Status'],['union_status','Union Status'],
-  ['rate','Pay Rate'],['email','Email'],['phone','Phone'],['zip','Zip Code'],
+  ['rate','Pay Rate'],['email','Email'],['phone','Phone'],
+  ['address','Address'],['city','City'],['state','State'],['zip','Zip Code'],
+  ['badge_code','Badge Code'],
+  ['layoff_date','Layoff Date'],['expected_recall_date','Expected Recall Date'],
   ['ec_name','Emergency Contact'],['ec_relationship','EC Relationship'],['ec_phone','Emergency Phone'],
   ['reports_to','Reports To'],['emp_code','Emp Code'],['notes','Notes']
 ]
 
+const DEPARTMENTS = ['Digital Production','Wide Format','Operations/CS','Executive','Shipping/Receiving','Sales','Admin']
+
 // ── Helpers ──
 const gn = (e) => `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
+
+// Progressive Discipline — auto-calculated status + next-level suggestion
+const PROGRESSION_CHAIN = ['verbal','written','final_written','suspension','termination']
+
+const isDiscActive = (d) => {
+  const discDate = d.date || d.created_at
+  if (!discDate) return true
+  const daysSince = Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24))
+  return daysSince < 365
+}
+
+const getDiscStatus = (d) => isDiscActive(d) ? 'Active' : 'Retired'
+
+// Get active progressive records for an employee (excludes coaching/commendation)
+const getActiveProgressive = (empId, allDisc) => {
+  return allDisc
+    .filter(d => d.employee_id === empId && isDiscActive(d) && PROGRESSION_CHAIN.includes(d.type))
+    .sort((a,b) => PROGRESSION_CHAIN.indexOf(b.type) - PROGRESSION_CHAIN.indexOf(a.type))
+}
+
+// Suggest next discipline level based on active progressive records
+const suggestNextLevel = (empId, allDisc) => {
+  const active = getActiveProgressive(empId, allDisc)
+  if (active.length === 0) return 'verbal'
+  const highest = active[0].type
+  const idx = PROGRESSION_CHAIN.indexOf(highest)
+  return idx < PROGRESSION_CHAIN.length - 1 ? PROGRESSION_CHAIN[idx + 1] : 'termination'
+}
 
 // Walk up reports_to chain to find first Manager or C-Level
 const findManager = (employeeId, emps) => {
@@ -165,7 +200,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     load()
   }, [orgId])
 
-  const ac = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
+  const ac = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='laid_off')
 
   const saveEmp = async(emp)=>{
     const{id,...rest}=emp
@@ -227,10 +262,11 @@ export default function PeopleFlowModule({ orgId, C }) {
   const sts={
     total:emps.length,active:ac.length,
     union:ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length,
-    disc:disc.filter(d=>(d.status||d.st)==='open').length,
+    disc:disc.filter(d=>(d.status||d.st)==='open'&&isDiscActive(d)).length,
     newHires:ac.filter(e=>dbt(e.hire_date||td,td)<=90).length,
     pP:pay.filter(p=>p.status==='pending').length,
-    openReports:reports.filter(r=>r.status!=='closed').length
+    openReports:reports.filter(r=>r.status!=='closed').length,
+    laidOff:emps.filter(e=>e.status==='laid_off').length
   }
 
   // Role-filtered dashboard cards
@@ -243,6 +279,7 @@ export default function PeopleFlowModule({ orgId, C }) {
       cards.push({l:'New Hires',v:sts.newHires,c:C.am,k:'newhires'})
       cards.push({l:'Open Disc',v:sts.disc,c:C.rd,k:'disc'})
       cards.push({l:'Reports',v:sts.openReports,c:'#8B5CF6',k:'reports'})
+      if (sts.laidOff > 0) cards.push({l:'Laid Off',v:sts.laidOff,c:'#6366F1',k:'laidoff'})
     }
     if (isAdmin) {
       cards.push({l:'Payroll',v:sts.pP,c:C.go,k:'payroll'})
@@ -253,7 +290,16 @@ export default function PeopleFlowModule({ orgId, C }) {
   const alerts=[]
   if (canManage) {
     ac.filter(e=>dbt(e.hire_date||td,td)<=90).forEach(e=>alerts.push({t:'New Hire',m:`${gn(e)} — Day ${dbt(e.hire_date||td,td)}`,c:C.bl}))
-    disc.filter(d=>(d.status||d.st)==='open').forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
+    disc.filter(d=>(d.status||d.st)==='open'&&isDiscActive(d)).forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
+    emps.filter(e=>e.status==='laid_off').forEach(e=>{
+      const recallDate = e.expected_recall_date
+      if (recallDate) {
+        const daysUntil = Math.floor((new Date(recallDate) - new Date()) / (1000*60*60*24))
+        alerts.push({t:'Recall Due',m:`${gn(e)} — ${daysUntil <= 0 ? 'PAST DUE' : daysUntil + ' days'}`,c:'#6366F1'})
+      } else {
+        alerts.push({t:'Laid Off',m:`${gn(e)} — no recall date set`,c:'#6366F1'})
+      }
+    })
   }
   if (isAdmin && sts.pP>0) alerts.push({t:'Payroll',m:`${sts.pP} pending items`,c:C.rd})
 
@@ -297,7 +343,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     </div>}
 
     {/* TEAM */}
-    {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
+    {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} disc={disc}/>}
 
     {/* ORG CHART */}
     {view==='orgchart'&&<OrgChartView emps={ac} C={C}/>}
@@ -336,7 +382,7 @@ export default function PeopleFlowModule({ orgId, C }) {
 // ═══════════════════════════════════════════
 // ── TEAM VIEW ──
 // ═══════════════════════════════════════════
-function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isHR,userEmpRecord,resolveReportsTo,managerOptions}){
+function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isHR,userEmpRecord,resolveReportsTo,managerOptions,disc}){
   const[filter,setFilter]=useState('')
 
   // Determine visible employees based on role
@@ -368,13 +414,36 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
     {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:isAdmin?'pointer':'default',padding:'10px 14px'}}>
       <div onClick={()=>{if(isAdmin){setSel(e);setMod('emp')}else{setSel(sel?.id===e.id?null:e)}}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.role||'—'} • {e.dept||e.department||'—'}</div></div>
-        <div style={{textAlign:'right'}}><Tag c={e.status==='Active'?C.gr:e.status==='Terminated'?C.rd:C.am}>{e.status||'Active'}</Tag><div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union_status||'—'}</div></div>
+        <div style={{textAlign:'right'}}><Tag c={e.status==='Active'||e.status==='active'?C.gr:e.status==='Terminated'||e.status==='terminated'?C.rd:e.status==='laid_off'?'#6366F1':C.am}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>
+          {e.status==='laid_off'&&e.expected_recall_date&&<div style={{fontSize:9,color:'#6366F1',marginTop:1}}>Recall: {fm(e.expected_recall_date)}</div>}
+          <div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union_status||'—'}</div></div>
       </div>
       {/* Read-only detail for non-admin when card is selected */}
       {!isAdmin&&sel?.id===e.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
         {readOnlyFields.map(([k,l])=>
           <div key={k} style={{fontSize:11}}><span style={{color:C.g,textTransform:'uppercase',fontSize:9}}>{l}</span><div style={{color:C.w}}>{k==='reports_to'?resolveReportsTo(e[k]):(e[k]||'—')}</div></div>
         )}
+        {/* Discipline History (HR/Manager only) */}
+        {(isHR || isManager) && (() => {
+          const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+          const activeCount = empDisc.filter(d => isDiscActive(d) && PROGRESSION_CHAIN.includes(d.type)).length
+          if (empDisc.length === 0) return null
+          return <div style={{gridColumn:'1/-1',marginTop:6,paddingTop:8,borderTop:`1px solid ${C.bdr}`}}>
+            <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Discipline History ({empDisc.length}) · {activeCount} active progressive</div>
+            {empDisc.map((d,i) => {
+              const pdt = DISC_TYPES.find(t=>t.v===d.type)
+              const active = isDiscActive(d)
+              const isProgressive = PROGRESSION_CHAIN.includes(d.type)
+              return <div key={i} style={{fontSize:10,padding:'2px 0',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:active||!isProgressive?1:0.5}}>
+                <span style={{display:'flex',alignItems:'center',gap:3}}>
+                  <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
+                  {isProgressive && <span style={{fontSize:7,padding:'1px 4px',borderRadius:99,fontWeight:700,background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',color:active?'#22C55E':'#6B7280'}}>{active?'Active':'Retired'}</span>}
+                </span>
+                <span style={{color:C.g,fontSize:9}}>{fm(d.date||d.created_at)}</span>
+              </div>
+            })}
+          </div>
+        })()}
       </div>}
     </Card>)}
     {isAdmin&&mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
@@ -390,8 +459,9 @@ function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
         {EMP_FIELDS.map(([k,l])=><div key={k}><label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{l}</label>
           {k==='role'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{['','C-Level','Manager','Lead','Staff'].map(s=><option key={s}>{s}</option>)}</select>
+          :k==='dept'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{[''].concat(DEPARTMENTS).map(s=><option key={s}>{s}</option>)}</select>
           :k==='status'?<select value={f[k]||'Active'} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
-            {['active','on_leave','probation','terminated','inactive'].map(s=><option key={s}>{s}</option>)}</select>
+            {['active','laid_off','on_leave','probation','terminated','inactive'].map(s=><option key={s}>{s}</option>)}</select>
           :k==='union_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             {['','Union Active','Non-Union','1099','Probation'].map(s=><option key={s}>{s}</option>)}</select>
           :k==='reports_to'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
@@ -399,7 +469,7 @@ function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){
             {managerOptions.map(m=><option key={m.id} value={m.id}>{gn(m)} ({m.role})</option>)}
           </select>
           :k==='emp_code'?<input value={f[k]||''} readOnly style={{width:'100%',padding:'6px 8px',background:C.nL,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.g,fontSize:12,boxSizing:'border-box',fontFamily:'inherit',cursor:'not-allowed'}}/>
-          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
+          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date','layoff_date','expected_recall_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
         </div>)}
       </div>
       <div style={{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}}><Btn ghost small onClick={onClose} C={C}>Cancel</Btn><Btn gold small onClick={()=>{onSave(f);onClose()}} C={C}>Save</Btn></div>
@@ -707,12 +777,22 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
 
     {sorted.map(d=>{
       const dt=DISC_TYPES.find(t=>t.v===d.type)
+      const active = isDiscActive(d)
+      const discDate = d.date || d.created_at
+      const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
+      const daysRemaining = Math.max(0, 365 - daysSince)
+      const isProgressive = PROGRESSION_CHAIN.includes(d.type)
       return <div key={d.id} onClick={()=>setViewRecord(d)} style={{cursor:'pointer'}}>
         <Card C={C} style={{marginBottom:6,padding:'10px 14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
             <b style={{fontSize:13}}>{d.employee_name||'—'}</b>{' '}
             <Tag c={dt?dt.c:C.g}>{dt?dt.l:d.type}</Tag>
+            {isProgressive && <span style={{
+              display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
+              background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+              color:active?'#22C55E':'#6B7280',border:`1px solid ${active?'#22C55E':'#6B7280'}`
+            }}>{active ? `Active · ${daysRemaining}d left` : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
@@ -789,6 +869,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       <div class="field"><div class="label">Today's Date</div>${r.date||'—'}</div>
       <div class="field"><div class="label">Type of Report</div>${dt?.l||r.type||'—'}</div>
       <div class="field"><div class="label">Prepared By</div>${r.prepared_by||'—'}</div>
+      <div class="field"><div class="label">Progressive Status</div>${PROGRESSION_CHAIN.includes(r.type) ? (isDiscActive(r) ? 'ACTIVE — ' + Math.max(0, 365 - Math.floor((new Date() - new Date(r.date || r.created_at)) / (1000*60*60*24))) + ' days remaining' : 'RETIRED (1yr+)') : 'N/A'}</div>
     </div>
     <h2>Nature of Incident</h2>
     <div class="natures">${INCIDENT_NATURES.map(n=>`<span class="nature-tag ${natures.includes(n)?'checked':''}">${natures.includes(n)?'☑':'☐'} ${n}</span>`).join('')}</div>
@@ -848,7 +929,18 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
         <div><div style={slbl}>Date</div><div style={{fontSize:13,color:C.w}}>{fm(r.date)}</div></div>
         <div><div style={slbl}>Type</div><Tag c={dt?.c||C.g}>{dt?.l||r.type||'—'}</Tag></div>
         <div><div style={slbl}>Prepared By</div><div style={{fontSize:12,color:C.w}}>{r.prepared_by||'—'}</div></div>
-        <div><div style={slbl}>Status</div><Tag c={(r.status||r.st)==='open'?C.am:C.gr}>{r.status||r.st||'open'}</Tag></div>
+        <div><div style={slbl}>Progressive Status</div>
+          {PROGRESSION_CHAIN.includes(r.type) ? (() => {
+            const active = isDiscActive(r)
+            const discDate = r.date || r.created_at
+            const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
+            const daysLeft = Math.max(0, 365 - daysSince)
+            return <span style={{display:'inline-block',padding:'2px 8px',borderRadius:99,fontSize:10,fontWeight:700,
+              background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+              color:active?'#22C55E':'#6B7280',border:`1px solid ${active?'#22C55E':'#6B7280'}`
+            }}>{active ? `Active · ${daysLeft} days remaining` : 'Retired (1yr+)'}</span>
+          })() : <span style={{fontSize:11,color:C.g}}>N/A — {r.type==='coaching'?'Coaching':'Commendation'}</span>}
+        </div>
       </div>
 
       {/* Natures */}
@@ -930,8 +1022,16 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
         <Card C={C} style={{padding:'8px 12px',marginTop:4}}>
           {priorDisc.map((d,i)=>{
             const pdt=DISC_TYPES.find(t=>t.v===d.type)
-            return <div key={i} style={{fontSize:11,padding:'2px 0',display:'flex',justifyContent:'space-between'}}>
-              <span><Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag> {d.natures||d.category||'—'}</span>
+            const active = isDiscActive(d)
+            const isProgressive = PROGRESSION_CHAIN.includes(d.type)
+            return <div key={i} style={{fontSize:11,padding:'3px 0',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:active||!isProgressive?1:0.5}}>
+              <span style={{display:'flex',alignItems:'center',gap:4}}>
+                <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag> {d.natures||d.category||'—'}
+                {isProgressive && <span style={{fontSize:8,padding:'1px 5px',borderRadius:99,fontWeight:700,
+                  background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+                  color:active?'#22C55E':'#6B7280'
+                }}>{active?'Active':'Retired'}</span>}
+              </span>
               <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
             </div>
           })}
@@ -1164,9 +1264,15 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
     const emp = emps.find(e=>e.id===empId)
     up('employee_id', empId)
     up('employee_name', emp ? gn(emp) : '')
-    const prior = disc.filter(d => d.employee_id === empId || d.employee_name === gn(emp))
+    // Get ALL prior records for this employee (active + retired)
+    const allPrior = disc.filter(d => d.employee_id === empId || d.employee_name === gn(emp))
       .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
-    setPriorDisc(prior)
+    setPriorDisc(allPrior)
+    // Auto-suggest next progressive level based on ACTIVE records only
+    if (empId) {
+      const suggested = suggestNextLevel(empId, disc)
+      up('type', suggested)
+    }
   }
 
   const toggleNature = (n) => {
@@ -1300,17 +1406,46 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
         </div>
       </div>
 
-      {/* ── Prior History ── */}
-      {priorDisc.length > 0 && <Card C={C} style={{marginBottom:12,padding:'8px 12px',background:C.aD,border:`1px solid ${C.am}`}}>
-        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Prior Discipline ({priorDisc.length})</div>
-        {priorDisc.map((d,i)=>{
-          const pdt=DISC_TYPES.find(t=>t.v===d.type)
-          return <div key={i} style={{fontSize:11,padding:'2px 0',display:'flex',justifyContent:'space-between'}}>
-            <span><Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag> {d.natures||d.category||'—'}</span>
-            <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
+      {/* ── Prior History + Progression Suggestion ── */}
+      {priorDisc.length > 0 && <>
+        {/* Progression suggestion banner */}
+        {f.employee_id && (() => {
+          const activeRecs = getActiveProgressive(f.employee_id, disc)
+          const suggested = suggestNextLevel(f.employee_id, disc)
+          const sugDt = DISC_TYPES.find(t=>t.v===suggested)
+          return <div style={{background:'rgba(59,130,246,0.1)',border:'1px solid #3B82F6',borderRadius:8,padding:'10px 14px',marginBottom:8}}>
+            <div style={{fontSize:10,color:'#3B82F6',textTransform:'uppercase',fontWeight:700,marginBottom:3}}>Progressive Discipline Recommendation</div>
+            <div style={{fontSize:12,color:C.w}}>
+              {activeRecs.length === 0
+                ? <span>No active progressive records — starting fresh at <b style={{color:sugDt?.c||'#3B82F6'}}>{sugDt?.l||suggested}</b></span>
+                : <span>{activeRecs.length} active progressive record{activeRecs.length>1?'s':''} — suggested next step: <b style={{color:sugDt?.c||'#3B82F6'}}>{sugDt?.l||suggested}</b></span>
+              }
+            </div>
+            <div style={{fontSize:9,color:C.g,marginTop:3}}>Records retire after 1 year from date. Only active progressive records count toward escalation.</div>
           </div>
-        })}
-      </Card>}
+        })()}
+        <Card C={C} style={{marginBottom:12,padding:'8px 12px',background:C.aD,border:`1px solid ${C.am}`}}>
+          <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Prior Discipline ({priorDisc.length})</div>
+          {priorDisc.map((d,i)=>{
+            const pdt=DISC_TYPES.find(t=>t.v===d.type)
+            const active = isDiscActive(d)
+            const discDate = d.date || d.created_at
+            const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
+            const daysLeft = Math.max(0, 365 - daysSince)
+            return <div key={i} style={{fontSize:11,padding:'3px 0',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:active?1:0.5}}>
+              <span style={{display:'flex',alignItems:'center',gap:4}}>
+                <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
+                {d.natures||d.category||'—'}
+                <span style={{fontSize:8,padding:'1px 5px',borderRadius:99,fontWeight:700,
+                  background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+                  color:active?'#22C55E':'#6B7280'
+                }}>{active?`Active · ${daysLeft}d`:'Retired'}</span>
+              </span>
+              <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
+            </div>
+          })}
+        </Card>
+      </>}
 
       {/* ── Nature of Incident ── */}
       <label style={{...lbl,marginBottom:6}}>Nature of Incident <span style={{fontWeight:400,textTransform:'none'}}>(check all that apply)</span></label>
@@ -1332,6 +1467,98 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       {/* ── Current Action ── */}
       <label style={lbl}>Current Disciplinary Action</label>
       <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} placeholder="e.g., Verbal Warning" style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      {/* ── Layoff-Specific Fields ── */}
+      {(f.type==='layoff'||f.type==='separation') && <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid #6366F1',borderRadius:8,padding:'12px 16px',marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#6366F1',marginBottom:8}}>Layoff / Separation Details</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          <div>
+            <label style={{...lbl,color:'#6366F1'}}>Effective Date</label>
+            <input type="date" value={f.layoff_effective_date||f.date||''} onChange={e=>up('layoff_effective_date',e.target.value)} style={inp}/>
+          </div>
+          <div>
+            <label style={{...lbl,color:'#6366F1'}}>Expected Recall Date</label>
+            <input type="date" value={f.expected_recall_date||''} onChange={e=>up('expected_recall_date',e.target.value)} style={inp}/>
+          </div>
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{...lbl,color:'#6366F1'}}>Reason for Layoff</label>
+            <select value={f.layoff_reason||''} onChange={e=>up('layoff_reason',e.target.value)} style={inp}>
+              <option value="">Select Reason</option>
+              <option value="lack_of_work">Lack of Work</option>
+              <option value="reduction_in_force">Reduction in Force</option>
+              <option value="seasonal">Seasonal Reduction</option>
+              <option value="restructuring">Restructuring</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          {f.type==='layoff' && <div style={{gridColumn:'1/-1'}}>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#6366F1',fontWeight:600,cursor:'pointer',marginTop:4}}>
+              <input type="checkbox" checked={f.union_notified||false} onChange={e=>up('union_notified',e.target.checked)} style={{width:16,height:16,accentColor:'#6366F1'}}/>
+              Union notified (Ruth & Marty)
+            </label>
+          </div>}
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{...lbl,color:'#6366F1'}}>Additional Notes</label>
+            <textarea value={f.layoff_notes||''} onChange={e=>up('layoff_notes',e.target.value)} rows={2} placeholder="Benefits continuation, equipment return, etc." style={{...inp,resize:'vertical'}}/>
+          </div>
+        </div>
+        {f.employee_name && f.layoff_effective_date && <button onClick={()=>{
+          const reasonLabels = {lack_of_work:'lack of work',reduction_in_force:'a reduction in force',seasonal:'seasonal reduction',restructuring:'restructuring',other:'business reasons'}
+          const reason = reasonLabels[f.layoff_reason] || 'lack of work'
+          const recallStr = f.expected_recall_date ? `Your expected recall date is approximately <b>${new Date(f.expected_recall_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>. You will be notified in advance when work becomes available.` : 'You will be notified when work becomes available and a recall date is determined.'
+          const html = `<!DOCTYPE html><html><head><title>Layoff Notice — ${f.employee_name}</title>
+          <style>
+            body{font-family:Arial,sans-serif;margin:50px;color:#111;font-size:13px;line-height:1.8;max-width:700px}
+            h1{font-size:16px;text-align:center;margin-bottom:4px}
+            .header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px}
+            .subhead{font-size:11px;color:#666;text-align:center}
+            .field{margin-bottom:16px}
+            .label{font-weight:bold;color:#333}
+            .sig-line{border-bottom:1px solid #333;width:250px;display:inline-block;margin:0 10px}
+            .sig-section{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;gap:30px}
+            .notice{background:#F5F3FF;border:1px solid #6366F1;border-radius:6px;padding:14px;margin:20px 0;font-size:12px}
+            @media print{body{margin:30px}.notice{background:#F5F3FF !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+          </style></head><body>
+          <div class="header">
+            <h1>NOTICE OF TEMPORARY LAYOFF</h1>
+            <div class="subhead">Minuteman Press Uptown — Confidential</div>
+          </div>
+          <p><b>Date:</b> ${new Date(f.layoff_effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
+          <p><b>To:</b> ${f.employee_name}</p>
+          <p><b>From:</b> ${f.prepared_by || 'Management'}</p>
+          <p><b>Re:</b> Temporary Layoff — ${reason.charAt(0).toUpperCase()+reason.slice(1)}</p>
+          <hr style="border:none;border-top:1px solid #ccc;margin:20px 0"/>
+          <p>Dear ${f.employee_name.split(' ')[0]||f.employee_name},</p>
+          <p>This letter is to inform you that, due to ${reason}, your position at Minuteman Press Uptown will be temporarily laid off effective <b>${new Date(f.layoff_effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>.</p>
+          <p>${recallStr}</p>
+          <div class="notice">
+            <b>Important Information:</b><br/>
+            • Your seniority and hire date are preserved during this temporary layoff.<br/>
+            • Union membership status remains active per the Collective Bargaining Agreement.<br/>
+            • Please file for unemployment benefits promptly. Your employer will not contest your claim.<br/>
+            • Health insurance continuation information will be provided separately (COBRA/state continuation if applicable).<br/>
+            ${f.layoff_notes?'• '+f.layoff_notes.replace(/\n/g,'<br/>• ')+'<br/>':''}
+          </div>
+          <p>We value your contributions to our team and look forward to your return. If you have questions about your layoff status, benefits, or recall, please contact ${f.prepared_by || 'HR'}.</p>
+          <p>The union has been notified of this action per the Collective Bargaining Agreement.</p>
+          <div class="sig-section">
+            <div>
+              <p><span class="sig-line"></span><br/><b>Employee Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p>
+            </div>
+            <div>
+              <p><span class="sig-line"></span><br/><b>Management Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p>
+            </div>
+          </div>
+          <div style="margin-top:30px;text-align:center;color:#999;font-size:9px">Generated by FlowSuite PeopleFlow — ${new Date().toLocaleString()}</div>
+          </body></html>`
+          const win = window.open('','_blank')
+          win.document.write(html)
+          win.document.close()
+          setTimeout(()=>win.print(), 500)
+        }} style={{marginTop:10,background:'#6366F1',color:'#fff',border:'none',padding:'8px 16px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600,width:'100%'}}>
+          🖨 Generate Layoff Notice Letter
+        </button>}
+      </div>}
 
       {/* ── Employee Comments ── */}
       <label style={lbl}>Employee's Comments</label>

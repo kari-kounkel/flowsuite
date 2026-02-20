@@ -175,7 +175,15 @@ export default function PeopleFlowModule({ orgId, C }) {
   }
   const saveDisc = async(d)=>{
     if(d.id){await supabase.from('disciplines').update(d).eq('id',d.id);setDisc(p=>p.map(x=>x.id===d.id?d:x))}
-    else{const{data}=await supabase.from('disciplines').insert({...d,org_id:orgId}).select().single();if(data)setDisc(p=>[...p,data])}
+    else{
+      const payload = {...d,org_id:orgId}
+      delete payload.org_id_undefined
+      console.log('DISCIPLINE INSERT PAYLOAD:', JSON.stringify(payload, null, 2))
+      const{data,error}=await supabase.from('disciplines').insert(payload).select().single()
+      console.log('DISCIPLINE INSERT RESULT:', {data, error})
+      if(error){sh('ERROR: '+error.message);return}
+      if(data)setDisc(p=>[...p,data])
+    }
     sh('Record saved ✓')
   }
   const saveReport = async(r)=>{
@@ -777,6 +785,7 @@ function DisciplineViewModal({record,onClose,C,disc}){
     <h2>Current Disciplinary Action</h2>
     <div class="field">${(r.current_action||'—').replace(/\n/g,'<br>')}</div>
     ${r.employee_comments?`<h2>Employee's Comments</h2><div class="field">${r.employee_comments.replace(/\n/g,'<br>')}</div>`:''}
+    ${(()=>{ let atts=[]; try{atts=typeof r.attachments==='string'?JSON.parse(r.attachments):(r.attachments||[])}catch(e){} return atts.length>0?`<h2>Attachments (${atts.length})</h2><div class="field">${atts.map(a=>`<div>📎 ${a.name||'File'}</div>`).join('')}</div>`:'' })()}
     <h2>Future Action if Unsatisfactory Performance Recurs</h2>
     <div class="field">${r.future_action||'If Performance doesn\'t improve, it may result in further disciplinary action, up to and including termination of employment.'}</div>
     <div style="font-weight:bold;font-style:italic;margin:12px 0">My signature below signifies that I have read and understand the above report.</div>
@@ -852,6 +861,26 @@ function DisciplineViewModal({record,onClose,C,disc}){
       {/* Employee Comments */}
       {r.employee_comments && <div style={sec}><div style={slbl}>Employee's Comments</div><div style={{fontSize:12,color:C.w,whiteSpace:'pre-wrap'}}>{r.employee_comments}</div></div>}
 
+      {/* Attachments */}
+      {(()=>{
+        let atts = []
+        try { atts = typeof r.attachments === 'string' ? JSON.parse(r.attachments) : (r.attachments || []) } catch(e){}
+        if (!atts || atts.length === 0) return null
+        return <div style={sec}>
+          <div style={slbl}>Attachments ({atts.length})</div>
+          <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:4}}>
+            {atts.map((att,i) => (
+              <a key={i} href={att.url || '#'} target="_blank" rel="noopener noreferrer" style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:C.nL,borderRadius:4,border:`1px solid ${C.bdr}`,textDecoration:'none',color:C.w,fontSize:11}}>
+                <span>📎</span>
+                <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</span>
+                <span style={{fontSize:9,color:C.g,flexShrink:0}}>{att.size ? (att.size/1024).toFixed(0)+'KB' : ''}</span>
+                <span style={{fontSize:9,color:C.go,flexShrink:0}}>View ↗</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      })()}
+
       {/* Future Action */}
       <div style={{...sec,background:C.nL,borderRadius:6,padding:'8px 12px',border:`1px solid ${C.bdr}`}}>
         <div style={slbl}>Future Action Warning</div>
@@ -909,6 +938,8 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   const [priorDisc, setPriorDisc] = useState([])
   const [sigMode, setSigMode] = useState(null)
   const [sigName, setSigName] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
   const handleEmpChange = (empId) => {
@@ -933,10 +964,36 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
     setSigName(''); setSigMode(null)
   }
 
-  const handleSave = () => {
-    const record = { ...f, natures: selNatures.join(', '), created_at: new Date().toISOString(), org_id: undefined }
-    onSave(record)
-    onClose()
+  const handleFileAdd = (e) => {
+    const files = Array.from(e.target.files)
+    if (attachments.length + files.length > 7) { alert('Maximum 7 attachments'); return }
+    setAttachments(prev => [...prev, ...files].slice(0, 7))
+    e.target.value = ''
+  }
+
+  const removeFile = (idx) => {
+    setAttachments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSave = async () => {
+    setUploading(true)
+    try {
+      // Upload attachments to Supabase Storage
+      const uploaded = []
+      for (const file of attachments) {
+        const ts = Date.now()
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+        const path = `discipline/${f.employee_id || 'unknown'}/${ts}_${safeName}`
+        const { data: upData, error: upErr } = await supabase.storage.from('flowsuite-files').upload(path, file)
+        if (upErr) { console.error('Upload error:', upErr); continue }
+        const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(path)
+        uploaded.push({ name: file.name, path, url: urlData?.publicUrl || path, size: file.size, type: file.type, uploaded_at: new Date().toISOString() })
+      }
+      const record = { ...f, natures: selNatures.join(', '), attachments: uploaded.length > 0 ? JSON.stringify(uploaded) : null, org_id: undefined }
+      onSave(record)
+      onClose()
+    } catch (err) { console.error('Save error:', err) }
+    setUploading(false)
   }
 
   const fmSigTs = (iso) => {
@@ -1062,6 +1119,27 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       <label style={lbl}>Employee's Comments</label>
       <textarea value={f.employee_comments||''} onChange={e=>up('employee_comments',e.target.value)} rows={2} placeholder="Employee's response or comments..." style={{...inp,resize:'vertical',marginBottom:10}}/>
 
+      {/* ── Attachments (up to 7) ── */}
+      <label style={{...lbl,marginBottom:6}}>Attachments <span style={{fontWeight:400,textTransform:'none'}}>({attachments.length}/7 — emails, documents, photos)</span></label>
+      <div style={{border:`1px dashed ${C.bdr}`,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
+        {attachments.length > 0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
+          {attachments.map((file,i) => (
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:`1px solid ${C.bdr}`}}>
+              <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
+                <span style={{fontSize:12}}>📎</span>
+                <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span>
+                <span style={{fontSize:9,color:C.g,flexShrink:0}}>{(file.size/1024).toFixed(0)}KB</span>
+              </div>
+              <button onClick={()=>removeFile(i)} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,padding:'0 4px',flexShrink:0}}>×</button>
+            </div>
+          ))}
+        </div>}
+        {attachments.length < 7 && <label style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 0',cursor:'pointer',color:C.go,fontSize:11,fontWeight:600}}>
+          <span>+ Add File{attachments.length > 0 ? 's' : ''}</span>
+          <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.xlsx,.xls,.csv" onChange={handleFileAdd} style={{display:'none'}}/>
+        </label>}
+      </div>
+
       {/* ── Future Action Warning ── */}
       <label style={lbl}>Future Action if Unsatisfactory Performance Recurs</label>
       <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:`1px solid ${C.bdr}`}}>
@@ -1101,7 +1179,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
-        <Btn gold small onClick={handleSave} C={C}>Save Record</Btn>
+        <Btn gold small onClick={handleSave} C={C}>{uploading ? 'Saving...' : 'Save Record'}</Btn>
       </div>
     </div>
   </div>)

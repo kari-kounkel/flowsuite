@@ -417,17 +417,28 @@ export default function PeopleFlowModule({ orgId, C }) {
     {k:'resources',l:'Resources',i:'◇'},
     {k:'reports',l:'Rpt',i:'◧'}
   ]
-  const tabs = allTabs.filter(t => {
+  const canAccessTab = (tabKey) => {
     if (isAdmin) return true
-    if (isManager && MANAGER_TABS.includes(t.k)) return true
-    if (ADMIN_TABS.includes(t.k)) return false
+    if (isManager && MANAGER_TABS.includes(tabKey)) return true
+    if (ADMIN_TABS.includes(tabKey)) return false
     return true
-  })
+  }
 
   return(<div>
     {/* Tab Nav */}
     <div style={{display:'flex',gap:2,flexWrap:'wrap',alignItems:'center',marginBottom:12,padding:'8px 0',borderBottom:`1px solid ${C.bdr}`}}>
-      {tabs.map(t=><button key={t.k} onClick={()=>go(t.k)} style={{background:view===t.k?C.gD:'transparent',border:`1px solid ${view===t.k?C.go:C.bdrF}`,color:view===t.k?C.go:C.g,padding:'4px 8px',borderRadius:6,cursor:'pointer',fontSize:10,fontWeight:500,display:'flex',alignItems:'center',gap:2,fontFamily:'inherit'}}>{t.i} {t.l}{t.k==='payroll'&&sts.pP>0&&<span style={{background:C.rd,color:'#fff',borderRadius:99,padding:'0 4px',fontSize:8,marginLeft:1}}>{sts.pP}</span>}</button>)}
+      {allTabs.map(t=>{
+        const allowed = canAccessTab(t.k)
+        return <button key={t.k} onClick={()=>{if(allowed)go(t.k)}} style={{
+          background:view===t.k&&allowed?C.gD:'transparent',
+          border:`1px solid ${view===t.k&&allowed?C.go:C.bdrF}`,
+          color:view===t.k&&allowed?C.go:allowed?C.g:'rgba(128,128,128,0.3)',
+          padding:'4px 8px',borderRadius:6,
+          cursor:allowed?'pointer':'not-allowed',
+          fontSize:10,fontWeight:500,display:'flex',alignItems:'center',gap:2,fontFamily:'inherit',
+          opacity:allowed?1:0.4
+        }}>{t.i} {t.l}{t.k==='payroll'&&sts.pP>0&&allowed&&<span style={{background:C.rd,color:'#fff',borderRadius:99,padding:'0 4px',fontSize:8,marginLeft:1}}>{sts.pP}</span>}</button>
+      })}
     </div>
 
     {/* DASHBOARD */}
@@ -510,8 +521,12 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
 
   return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({activeVisible.length})</h2>{isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}</div>
-    <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>
-    {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:isAdmin?'pointer':'default',padding:'10px 14px'}}>
+    {visibleEmps.length === 0 && !isAdmin && <Card C={C} style={{padding:20,textAlign:'center',color:C.g}}>
+      <div style={{fontSize:13,marginBottom:4}}>Your account isn't linked to an employee record yet.</div>
+      <div style={{fontSize:11}}>Ask HR to make sure your login email matches your employee record.</div>
+    </Card>}
+    {visibleEmps.length > 0 && <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
+    {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:'pointer',padding:'10px 14px'}}>
       <div onClick={()=>{if(isAdmin){setSel(e);setMod('emp')}else{setSel(sel?.id===e.id?null:e)}}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.role||'—'} • {e.dept||e.department||'—'}</div></div>
         <div style={{textAlign:'right'}}><Tag c={e.status==='Active'||e.status==='active'?C.gr:e.status==='Terminated'||e.status==='terminated'?C.rd:e.status==='laid_off'?'#6366F1':C.am}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>

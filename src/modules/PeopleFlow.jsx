@@ -33,10 +33,28 @@ const DISC_TYPES = [
   {v:'final_written',l:'Final Written Warning',c:'#DC2626'},
   {v:'suspension',l:'Suspension',c:'#B91C1C'},
   {v:'termination',l:'Termination',c:'#991B1B'},
-  {v:'layoff',l:'Layoff — Lack of Work',c:'#6366F1'},
-  {v:'separation',l:'Separation',c:'#78716C'},
+  {v:'last_chance',l:'Last Chance Agreement',c:'#7C3AED'},
   {v:'coaching',l:'Coaching',c:'#3B82F6'},
   {v:'commendation',l:'Commendation',c:'#22C55E'}
+]
+
+const SEPARATION_TYPES = [
+  {v:'layoff',l:'Layoff — Lack of Work',c:'#6366F1',hasRecall:true},
+  {v:'termination_cause',l:'Termination for Cause',c:'#991B1B',hasRecall:false},
+  {v:'voluntary_resignation',l:'Voluntary Resignation',c:'#78716C',hasRecall:false},
+  {v:'job_abandonment',l:'Job Abandonment',c:'#DC2626',hasRecall:false},
+  {v:'retirement',l:'Retirement',c:'#059669',hasRecall:false}
+]
+
+const EQUIPMENT_CHECKLIST = [
+  {id:'keys',l:'Keys'},
+  {id:'badge',l:'Badge / Access Card'},
+  {id:'tools',l:'Tools / Equipment'},
+  {id:'uniform',l:'Uniform / PPE'},
+  {id:'laptop',l:'Laptop / Tablet'},
+  {id:'phone',l:'Company Phone'},
+  {id:'parking',l:'Parking Pass'},
+  {id:'other',l:'Other'}
 ]
 
 const REPORT_TYPES = [
@@ -110,6 +128,57 @@ const suggestNextLevel = (empId, allDisc) => {
   return idx < PROGRESSION_CHAIN.length - 1 ? PROGRESSION_CHAIN[idx + 1] : 'termination'
 }
 
+// Last Chance Agreement — calculate remaining days with layoff freeze support
+const getLCAStatus = (lcaRecord, empRecord) => {
+  if (!lcaRecord || !lcaRecord.lca_start_date || !lcaRecord.lca_duration_days) return null
+  const startDate = new Date(lcaRecord.lca_start_date)
+  const durationDays = parseInt(lcaRecord.lca_duration_days) || 0
+  const now = new Date()
+
+  // Calculate freeze days (time spent on layoff during LCA period)
+  let freezeDays = 0
+  if (empRecord?.layoff_date) {
+    const layoffStart = new Date(empRecord.layoff_date)
+    const layoffEnd = empRecord.recall_date ? new Date(empRecord.recall_date) : now
+    // Only count freeze days that overlap with the LCA period
+    const freezeStart = layoffStart > startDate ? layoffStart : startDate
+    const freezeEnd = layoffEnd
+    if (freezeEnd > freezeStart) {
+      freezeDays = Math.floor((freezeEnd - freezeStart) / (1000*60*60*24))
+    }
+  }
+
+  const elapsedTotal = Math.floor((now - startDate) / (1000*60*60*24))
+  const elapsedActive = elapsedTotal - freezeDays
+  const remaining = Math.max(0, durationDays - elapsedActive)
+  const isComplete = remaining === 0 && elapsedActive >= durationDays
+  const isFrozen = empRecord?.status === 'laid_off'
+
+  return { durationDays, elapsedActive, freezeDays, remaining, isComplete, isFrozen, startDate }
+}
+
+// New-hire probation days with freeze support
+const getProbationDays = (emp) => {
+  if (!emp?.hire_date) return { elapsed: 0, remaining: 90, frozen: false }
+  const hireDate = new Date(emp.hire_date)
+  const now = new Date()
+  const totalDays = Math.floor((now - hireDate) / (1000*60*60*24))
+
+  let freezeDays = 0
+  if (emp.layoff_date) {
+    const layoffStart = new Date(emp.layoff_date)
+    const layoffEnd = emp.recall_date ? new Date(emp.recall_date) : now
+    const freezeStart = layoffStart > hireDate ? layoffStart : hireDate
+    if (layoffEnd > freezeStart) {
+      freezeDays = Math.floor((layoffEnd - freezeStart) / (1000*60*60*24))
+    }
+  }
+
+  const activeDays = totalDays - freezeDays
+  const remaining = Math.max(0, 90 - activeDays)
+  return { elapsed: activeDays, remaining, frozen: emp.status === 'laid_off', freezeDays }
+}
+
 // Walk up reports_to chain to find first Manager or C-Level
 const findManager = (employeeId, emps) => {
   const visited = new Set()
@@ -136,6 +205,7 @@ const getDownline = (managerId, emps) => {
 export default function PeopleFlowModule({ orgId, C }) {
   const [emps, setEmps] = useState([])
   const [disc, setDisc] = useState([])
+  const [separations, setSeparations] = useState([])
   const [reports, setReports] = useState([])
   const [onb, setOnb] = useState({})
   const [docs, setDocs] = useState({})
@@ -182,16 +252,18 @@ export default function PeopleFlowModule({ orgId, C }) {
   useEffect(() => {
     if (!orgId) return
     const load = async () => {
-      const [eR, dR, oR, dcR, pR, rR] = await Promise.all([
+      const [eR, dR, oR, dcR, pR, rR, sR] = await Promise.all([
         supabase.from('employees').select('*').eq('org_id', orgId),
         supabase.from('disciplines').select('*').eq('org_id', orgId),
         supabase.from('onboarding').select('*').eq('org_id', orgId),
         supabase.from('documents').select('*').eq('org_id', orgId),
         supabase.from('payroll_items').select('*').eq('org_id', orgId),
-        supabase.from('workplace_reports').select('*').eq('org_id', orgId)
+        supabase.from('workplace_reports').select('*').eq('org_id', orgId),
+        supabase.from('separations').select('*').eq('org_id', orgId)
       ])
       setEmps(eR.data||[])
       setDisc(dR.data||[])
+      setSeparations(sR.data||[])
       const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]=r.completed}); setOnb(om)
       const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]=r.received}); setDocs(dm)
       setPay(pR.data||[])
@@ -230,6 +302,33 @@ export default function PeopleFlowModule({ orgId, C }) {
       if(data) setReports(p=>[...p,data])
     }
     sh('Report saved ✓')
+  }
+  const saveSeparation = async(s)=>{
+    if(s.id){
+      const{id,...rest}=s
+      delete rest.created_at
+      const{error}=await supabase.from('separations').update(rest).eq('id',id)
+      if(error){sh('ERROR: '+error.message);return}
+      setSeparations(p=>p.map(x=>x.id===id?{...x,...rest}:x))
+    } else {
+      const payload={...s,org_id:orgId}
+      const{data,error}=await supabase.from('separations').insert(payload).select().single()
+      if(error){sh('ERROR: '+error.message);return}
+      if(data) setSeparations(p=>[...p,data])
+    }
+    sh('Separation saved ✓')
+  }
+  const recallEmployee = async(sep)=>{
+    const recallDate = new Date().toISOString().split('T')[0]
+    // Update separation record
+    await supabase.from('separations').update({status:'recalled',recall_date:recallDate}).eq('id',sep.id)
+    setSeparations(p=>p.map(x=>x.id===sep.id?{...x,status:'recalled',recall_date:recallDate}:x))
+    // Update employee status back to active and set recall_date
+    if(sep.employee_id){
+      await supabase.from('employees').update({status:'active',recall_date:recallDate}).eq('id',sep.employee_id)
+      setEmps(p=>p.map(e=>e.id===sep.employee_id?{...e,status:'active',recall_date:recallDate}:e))
+    }
+    sh('Employee recalled ✓ — probation clock resumed')
   }
   const toggleOnb = async(empId,stepId,cur)=>{
     const nv=!cur
@@ -352,7 +451,8 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='workplace'&&<WorkplaceView
       disc={disc} setDisc={setDisc} saveDisc={saveDisc}
       reports={reports} saveReport={saveReport} setReports={setReports}
-      emps={emps} ac={ac} mod={mod} setMod={setMod} C={C}
+      separations={separations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
+      emps={emps} setEmps={setEmps} ac={ac} mod={mod} setMod={setMod} C={C}
       isAdmin={isAdmin} isHR={isHR} isManager={isManager}
       userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
@@ -589,15 +689,14 @@ function UnionView({ac, C}){
 // ═══════════════════════════════════════════
 // ── WORKPLACE VIEW (Reports + Discipline) ──
 // ═══════════════════════════════════════════
-function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,emps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord}){
+function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,separations,saveSeparation,recallEmployee,emps,setEmps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord}){
   const [subTab, setSubTab] = useState('reports')
 
   return(<div>
     <h2 style={{fontSize:18,marginTop:0,marginBottom:8}}>Workplace</h2>
     <div style={{display:'flex',gap:2,marginBottom:16}}>
-      {[{k:'reports',l:'Reports',i:'◉'},{k:'discipline',l:'Formal Discipline',i:'⚡'}].map(t=>{
-        const show = t.k === 'discipline' ? isHR : true
-        if (!show) return null
+      {[{k:'reports',l:'Reports',i:'◉',show:true},{k:'discipline',l:'Formal Discipline',i:'⚡',show:isHR},{k:'separations',l:'Separations',i:'◇',show:isHR}].map(t=>{
+        if (!t.show) return null
         return <button key={t.k} onClick={()=>setSubTab(t.k)} style={{
           background:subTab===t.k?C.gD:'transparent',
           border:`1px solid ${subTab===t.k?C.go:C.bdrF}`,
@@ -617,6 +716,12 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,emps
     {subTab==='discipline'&&isHR&&<DisciplineSubView
       disc={disc} setDisc={setDisc} saveDisc={saveDisc}
       emps={emps} ac={ac} mod={mod} setMod={setMod} C={C}
+      userEmail={userEmail} userEmpRecord={userEmpRecord}
+    />}
+
+    {subTab==='separations'&&isHR&&<SeparationsSubView
+      separations={separations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
+      emps={emps} setEmps={setEmps} ac={ac} disc={disc} mod={mod} setMod={setMod} C={C}
       userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
   </div>)
@@ -1468,96 +1573,30 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       <label style={lbl}>Current Disciplinary Action</label>
       <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} placeholder="e.g., Verbal Warning" style={{...inp,resize:'vertical',marginBottom:10}}/>
 
-      {/* ── Layoff-Specific Fields ── */}
-      {(f.type==='layoff'||f.type==='separation') && <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid #6366F1',borderRadius:8,padding:'12px 16px',marginBottom:12}}>
-        <div style={{fontSize:11,fontWeight:700,color:'#6366F1',marginBottom:8}}>Layoff / Separation Details</div>
+      {/* ── Last Chance Agreement Fields ── */}
+      {f.type==='last_chance' && <div style={{background:'rgba(124,58,237,0.08)',border:'1px solid #7C3AED',borderRadius:8,padding:'12px 16px',marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#7C3AED',marginBottom:8}}>Last Chance Agreement Terms</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
           <div>
-            <label style={{...lbl,color:'#6366F1'}}>Effective Date</label>
-            <input type="date" value={f.layoff_effective_date||f.date||''} onChange={e=>up('layoff_effective_date',e.target.value)} style={inp}/>
+            <label style={{...lbl,color:'#7C3AED'}}>Start Date</label>
+            <input type="date" value={f.lca_start_date||f.date||''} onChange={e=>up('lca_start_date',e.target.value)} style={inp}/>
           </div>
           <div>
-            <label style={{...lbl,color:'#6366F1'}}>Expected Recall Date</label>
-            <input type="date" value={f.expected_recall_date||''} onChange={e=>up('expected_recall_date',e.target.value)} style={inp}/>
+            <label style={{...lbl,color:'#7C3AED'}}>Duration (Days)</label>
+            <input type="number" value={f.lca_duration_days||60} onChange={e=>up('lca_duration_days',parseInt(e.target.value)||0)} style={inp} min="1" max="365"/>
           </div>
           <div style={{gridColumn:'1/-1'}}>
-            <label style={{...lbl,color:'#6366F1'}}>Reason for Layoff</label>
-            <select value={f.layoff_reason||''} onChange={e=>up('layoff_reason',e.target.value)} style={inp}>
-              <option value="">Select Reason</option>
-              <option value="lack_of_work">Lack of Work</option>
-              <option value="reduction_in_force">Reduction in Force</option>
-              <option value="seasonal">Seasonal Reduction</option>
-              <option value="restructuring">Restructuring</option>
-              <option value="other">Other</option>
-            </select>
+            <label style={{...lbl,color:'#7C3AED'}}>Conditions / Terms</label>
+            <textarea value={f.lca_terms||''} onChange={e=>up('lca_terms',e.target.value)} rows={3} placeholder="e.g., Perfect attendance and on-time punch-ins for 60 days. Any violation results in immediate termination." style={{...inp,resize:'vertical'}}/>
           </div>
-          {f.type==='layoff' && <div style={{gridColumn:'1/-1'}}>
-            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#6366F1',fontWeight:600,cursor:'pointer',marginTop:4}}>
-              <input type="checkbox" checked={f.union_notified||false} onChange={e=>up('union_notified',e.target.checked)} style={{width:16,height:16,accentColor:'#6366F1'}}/>
-              Union notified (Ruth & Marty)
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#7C3AED',fontWeight:600,cursor:'pointer'}}>
+              <input type="checkbox" checked={f.lca_union_agreed||false} onChange={e=>up('lca_union_agreed',e.target.checked)} style={{width:16,height:16,accentColor:'#7C3AED'}}/>
+              Union agreed to terms
             </label>
-          </div>}
-          <div style={{gridColumn:'1/-1'}}>
-            <label style={{...lbl,color:'#6366F1'}}>Additional Notes</label>
-            <textarea value={f.layoff_notes||''} onChange={e=>up('layoff_notes',e.target.value)} rows={2} placeholder="Benefits continuation, equipment return, etc." style={{...inp,resize:'vertical'}}/>
           </div>
         </div>
-        {f.employee_name && f.layoff_effective_date && <button onClick={()=>{
-          const reasonLabels = {lack_of_work:'lack of work',reduction_in_force:'a reduction in force',seasonal:'seasonal reduction',restructuring:'restructuring',other:'business reasons'}
-          const reason = reasonLabels[f.layoff_reason] || 'lack of work'
-          const recallStr = f.expected_recall_date ? `Your expected recall date is approximately <b>${new Date(f.expected_recall_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>. You will be notified in advance when work becomes available.` : 'You will be notified when work becomes available and a recall date is determined.'
-          const html = `<!DOCTYPE html><html><head><title>Layoff Notice — ${f.employee_name}</title>
-          <style>
-            body{font-family:Arial,sans-serif;margin:50px;color:#111;font-size:13px;line-height:1.8;max-width:700px}
-            h1{font-size:16px;text-align:center;margin-bottom:4px}
-            .header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px}
-            .subhead{font-size:11px;color:#666;text-align:center}
-            .field{margin-bottom:16px}
-            .label{font-weight:bold;color:#333}
-            .sig-line{border-bottom:1px solid #333;width:250px;display:inline-block;margin:0 10px}
-            .sig-section{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;gap:30px}
-            .notice{background:#F5F3FF;border:1px solid #6366F1;border-radius:6px;padding:14px;margin:20px 0;font-size:12px}
-            @media print{body{margin:30px}.notice{background:#F5F3FF !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-          </style></head><body>
-          <div class="header">
-            <h1>NOTICE OF TEMPORARY LAYOFF</h1>
-            <div class="subhead">Minuteman Press Uptown — Confidential</div>
-          </div>
-          <p><b>Date:</b> ${new Date(f.layoff_effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
-          <p><b>To:</b> ${f.employee_name}</p>
-          <p><b>From:</b> ${f.prepared_by || 'Management'}</p>
-          <p><b>Re:</b> Temporary Layoff — ${reason.charAt(0).toUpperCase()+reason.slice(1)}</p>
-          <hr style="border:none;border-top:1px solid #ccc;margin:20px 0"/>
-          <p>Dear ${f.employee_name.split(' ')[0]||f.employee_name},</p>
-          <p>This letter is to inform you that, due to ${reason}, your position at Minuteman Press Uptown will be temporarily laid off effective <b>${new Date(f.layoff_effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>.</p>
-          <p>${recallStr}</p>
-          <div class="notice">
-            <b>Important Information:</b><br/>
-            • Your seniority and hire date are preserved during this temporary layoff.<br/>
-            • Union membership status remains active per the Collective Bargaining Agreement.<br/>
-            • Please file for unemployment benefits promptly. Your employer will not contest your claim.<br/>
-            • Health insurance continuation information will be provided separately (COBRA/state continuation if applicable).<br/>
-            ${f.layoff_notes?'• '+f.layoff_notes.replace(/\n/g,'<br/>• ')+'<br/>':''}
-          </div>
-          <p>We value your contributions to our team and look forward to your return. If you have questions about your layoff status, benefits, or recall, please contact ${f.prepared_by || 'HR'}.</p>
-          <p>The union has been notified of this action per the Collective Bargaining Agreement.</p>
-          <div class="sig-section">
-            <div>
-              <p><span class="sig-line"></span><br/><b>Employee Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p>
-            </div>
-            <div>
-              <p><span class="sig-line"></span><br/><b>Management Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p>
-            </div>
-          </div>
-          <div style="margin-top:30px;text-align:center;color:#999;font-size:9px">Generated by FlowSuite PeopleFlow — ${new Date().toLocaleString()}</div>
-          </body></html>`
-          const win = window.open('','_blank')
-          win.document.write(html)
-          win.document.close()
-          setTimeout(()=>win.print(), 500)
-        }} style={{marginTop:10,background:'#6366F1',color:'#fff',border:'none',padding:'8px 16px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600,width:'100%'}}>
-          🖨 Generate Layoff Notice Letter
-        </button>}
+        <div style={{fontSize:9,color:C.g,marginTop:6}}>LCA clock freezes automatically during any layoff period and resumes on recall.</div>
       </div>}
 
       {/* ── Employee Comments ── */}
@@ -1625,6 +1664,318 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
         <Btn gold small onClick={handleSave} C={C}>{uploading ? 'Saving...' : 'Save Record'}</Btn>
+      </div>
+    </div>
+  </div>)
+}
+
+// ═══════════════════════════════════════════
+// ── SEPARATIONS SUB-TAB (HR Only) ──
+// ═══════════════════════════════════════════
+function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
+  const [viewSep, setViewSep] = useState(null)
+  const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
+
+  return(<div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <div style={{fontSize:13,color:C.g}}>HR only — layoffs, terminations, resignations, and recalls</div>
+      <Btn small gold onClick={()=>setMod('separation')} C={C}>+ New Separation</Btn>
+    </div>
+
+    {sorted.map(s=>{
+      const st=SEPARATION_TYPES.find(t=>t.v===s.separation_type)
+      const emp=emps.find(e=>e.id===s.employee_id)
+      const isRecalled = s.status === 'recalled'
+      return <Card key={s.id} C={C} style={{marginBottom:6,padding:'10px 14px',cursor:'pointer',opacity:isRecalled?0.6:1}} onClick={()=>setViewSep(viewSep?.id===s.id?null:s)}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <b style={{fontSize:13}}>{s.employee_name||'—'}</b>{' '}
+            <Tag c={st?.c||C.g}>{st?.l||s.separation_type}</Tag>
+            {isRecalled && <span style={{display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,background:'rgba(34,197,94,0.15)',color:'#22C55E',border:'1px solid #22C55E'}}>Recalled {fm(s.recall_date)}</span>}
+            <div style={{fontSize:11,color:C.g}}>{s.reason||'—'}</div>
+          </div>
+          <div style={{textAlign:'right',flexShrink:0}}>
+            <div style={{fontSize:10,color:C.g}}>{fm(s.effective_date||s.created_at)}</div>
+            {st?.hasRecall && !isRecalled && s.expected_recall_date && <div style={{fontSize:9,color:'#6366F1',marginTop:2}}>Recall: {fm(s.expected_recall_date)}</div>}
+          </div>
+        </div>
+
+        {/* Expanded detail */}
+        {viewSep?.id===s.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+            <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Effective Date</span><div>{fm(s.effective_date)||'—'}</div></div>
+            <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Type</span><div>{st?.l||s.separation_type}</div></div>
+            {s.expected_recall_date&&<div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Expected Recall</span><div style={{color:'#6366F1',fontWeight:600}}>{fm(s.expected_recall_date)}</div></div>}
+            {s.recall_date&&<div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Actual Recall</span><div style={{color:'#22C55E',fontWeight:600}}>{fm(s.recall_date)}</div></div>}
+            <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Union Notified</span><div>{s.union_notified?'Yes':'No'}</div></div>
+            <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Prepared By</span><div>{s.prepared_by||'—'}</div></div>
+          </div>
+
+          {s.reason&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Reason</span><div style={{whiteSpace:'pre-wrap'}}>{s.reason}</div></div>}
+          {s.final_paycheck_notes&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Final Paycheck</span><div>{s.final_paycheck_notes}</div></div>}
+          {s.cobra_notes&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>COBRA / Benefits</span><div>{s.cobra_notes}</div></div>}
+          {s.exit_notes&&<div style={{fontSize:11,marginBottom:6}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Exit Interview Notes</span><div style={{whiteSpace:'pre-wrap'}}>{s.exit_notes}</div></div>}
+
+          {/* Equipment checklist */}
+          {s.equipment_returned && (()=>{
+            let eq = []; try{eq=typeof s.equipment_returned==='string'?JSON.parse(s.equipment_returned):s.equipment_returned||[]}catch(e){}
+            if(eq.length===0) return null
+            return <div style={{fontSize:11,marginBottom:6}}>
+              <span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Equipment Returned</span>
+              <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:2}}>{eq.map(id=>{
+                const item=EQUIPMENT_CHECKLIST.find(e=>e.id===id)
+                return <span key={id} style={{padding:'2px 6px',borderRadius:4,fontSize:9,background:'rgba(34,197,94,0.1)',color:'#22C55E',border:'1px solid #22C55E'}}>✓ {item?.l||id}</span>
+              })}</div>
+            </div>
+          })()}
+
+          {/* Probation freeze info */}
+          {s.separation_type==='layoff'&&emp&&<div style={{background:'rgba(124,58,237,0.08)',border:'1px solid #7C3AED',borderRadius:6,padding:'8px 12px',marginTop:8}}>
+            <div style={{fontSize:10,color:'#7C3AED',fontWeight:700,textTransform:'uppercase',marginBottom:3}}>Probation Status</div>
+            {(()=>{
+              const prob = getProbationDays(emp)
+              const lcaRec = disc.find(d=>d.employee_id===emp.id && d.type==='last_chance')
+              const lca = lcaRec ? getLCAStatus(lcaRec, emp) : null
+              return <div style={{fontSize:11,color:C.w}}>
+                <div>New-hire probation: <b>{prob.elapsed}</b> active days / 90 — <b style={{color:prob.frozen?'#7C3AED':'#22C55E'}}>{prob.frozen?`FROZEN (${prob.remaining}d remaining)`:`${prob.remaining}d remaining`}</b></div>
+                {lca && <div style={{marginTop:3}}>LCA: <b>{lca.elapsedActive}</b> active days / {lca.durationDays} — <b style={{color:lca.isFrozen?'#7C3AED':'#22C55E'}}>{lca.isFrozen?`FROZEN (${lca.remaining}d remaining)`:`${lca.remaining}d remaining`}</b>{lca.freezeDays>0&&` (${lca.freezeDays}d frozen)`}</div>}
+              </div>
+            })()}
+          </div>}
+
+          {/* Action buttons */}
+          <div style={{display:'flex',gap:6,marginTop:10}}>
+            {st?.hasRecall && !isRecalled && <button onClick={(e)=>{e.stopPropagation();if(confirm('Recall this employee? This will set their status back to Active and resume all probation clocks.'))recallEmployee(s)}} style={{background:'#22C55E',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↩ Recall Employee</button>}
+            {s.separation_type==='layoff'&&s.employee_name&&s.effective_date&&<button onClick={(e)=>{e.stopPropagation();generateLayoffLetter(s)}} style={{background:'#6366F1',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>🖨 Print Layoff Notice</button>}
+          </div>
+        </div>}
+      </Card>
+    })}
+
+    {sorted.length===0&&<Card C={C} style={{textAlign:'center',color:C.g,padding:30}}>No separation records.</Card>}
+
+    {mod==='separation'&&<SeparationFormModal
+      onSave={saveSeparation} onClose={()=>setMod(null)} C={C}
+      emps={[...ac,...emps.filter(e=>e.status==='laid_off')] } allEmps={emps} disc={disc}
+      userEmail={userEmail} userEmpRecord={userEmpRecord} setEmps={setEmps}
+    />}
+  </div>)
+}
+
+const generateLayoffLetter = (s) => {
+  const reasonLabels = {lack_of_work:'lack of work',reduction_in_force:'a reduction in force',seasonal:'seasonal reduction',restructuring:'restructuring',other:'business reasons'}
+  const reason = reasonLabels[s.layoff_reason] || 'lack of work'
+  const recallStr = s.expected_recall_date ? `Your expected recall date is approximately <b>${new Date(s.expected_recall_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>. You will be notified in advance when work becomes available.` : 'You will be notified when work becomes available and a recall date is determined.'
+  const html = `<!DOCTYPE html><html><head><title>Layoff Notice — ${s.employee_name}</title>
+  <style>
+    body{font-family:Arial,sans-serif;margin:50px;color:#111;font-size:13px;line-height:1.8;max-width:700px}
+    h1{font-size:16px;text-align:center;margin-bottom:4px}
+    .header{text-align:center;margin-bottom:30px;border-bottom:2px solid #333;padding-bottom:15px}
+    .subhead{font-size:11px;color:#666;text-align:center}
+    .sig-line{border-bottom:1px solid #333;width:250px;display:inline-block;margin:0 10px}
+    .sig-section{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;gap:30px}
+    .notice{background:#F5F3FF;border:1px solid #6366F1;border-radius:6px;padding:14px;margin:20px 0;font-size:12px}
+    @media print{body{margin:30px}.notice{background:#F5F3FF !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body>
+  <div class="header">
+    <h1>NOTICE OF TEMPORARY LAYOFF</h1>
+    <div class="subhead">Minuteman Press Uptown — Confidential</div>
+  </div>
+  <p><b>Date:</b> ${new Date(s.effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</p>
+  <p><b>To:</b> ${s.employee_name}</p>
+  <p><b>From:</b> ${s.prepared_by || 'Management'}</p>
+  <p><b>Re:</b> Temporary Layoff — ${reason.charAt(0).toUpperCase()+reason.slice(1)}</p>
+  <hr style="border:none;border-top:1px solid #ccc;margin:20px 0"/>
+  <p>Dear ${(s.employee_name||'').split(' ')[0]||s.employee_name},</p>
+  <p>This letter is to inform you that, due to ${reason}, your position at Minuteman Press Uptown will be temporarily laid off effective <b>${new Date(s.effective_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</b>.</p>
+  <p>${recallStr}</p>
+  <div class="notice">
+    <b>Important Information:</b><br/>
+    • Your seniority and hire date are preserved during this temporary layoff.<br/>
+    • Union membership status remains active per the Collective Bargaining Agreement.<br/>
+    • Any probationary periods (new-hire or conditional) are frozen and will resume upon recall.<br/>
+    • Please file for unemployment benefits promptly. Your employer will not contest your claim.<br/>
+    • Health insurance continuation information will be provided separately (COBRA/state continuation if applicable).<br/>
+    ${s.notes?'• '+s.notes.replace(/\n/g,'<br/>• ')+'<br/>':''}
+  </div>
+  <p>We value your contributions to our team and look forward to your return. If you have questions about your layoff status, benefits, or recall, please contact ${s.prepared_by || 'HR'}.</p>
+  <p>The union has been notified of this action per the Collective Bargaining Agreement.</p>
+  <div class="sig-section">
+    <div><p><span class="sig-line"></span><br/><b>Employee Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p></div>
+    <div><p><span class="sig-line"></span><br/><b>Management Signature</b><br/><span style="font-size:10px;color:#666">Date: _______________</span></p></div>
+  </div>
+  <div style="margin-top:30px;text-align:center;color:#999;font-size:9px">Generated by FlowSuite PeopleFlow — ${new Date().toLocaleString()}</div>
+  </body></html>`
+  const win = window.open('','_blank')
+  win.document.write(html)
+  win.document.close()
+  setTimeout(()=>win.print(), 500)
+}
+
+// ── Separation Form Modal ──
+function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userEmpRecord,setEmps}){
+  const [f, setF] = useState({
+    status:'active',
+    effective_date: new Date().toISOString().split('T')[0],
+    prepared_by: userEmpRecord ? gn(userEmpRecord) : (userEmail||''),
+    prepared_by_email: userEmail||'',
+    union_notified: false,
+    equipment_returned: '[]'
+  })
+  const [equipChecked, setEquipChecked] = useState([])
+  const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const handleEmpChange = (empId) => {
+    const emp = allEmps.find(e=>e.id===empId)
+    up('employee_id', empId)
+    up('employee_name', emp ? gn(emp) : '')
+  }
+
+  const toggleEquip = (id) => setEquipChecked(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id])
+
+  const sepType = SEPARATION_TYPES.find(t=>t.v===f.separation_type)
+
+  const handleSave = () => {
+    const record = {...f, equipment_returned: JSON.stringify(equipChecked)}
+    onSave(record)
+    // Also update employee status if needed
+    if (f.employee_id && f.separation_type) {
+      const newStatus = f.separation_type === 'layoff' ? 'laid_off' : 'terminated'
+      const empUpdate = {status: newStatus}
+      if (f.separation_type === 'layoff') {
+        empUpdate.layoff_date = f.effective_date
+        empUpdate.expected_recall_date = f.expected_recall_date || null
+      }
+      supabase.from('employees').update(empUpdate).eq('id', f.employee_id).then(()=>{
+        setEmps(p=>p.map(e=>e.id===f.employee_id?{...e,...empUpdate}:e))
+      })
+    }
+    onClose()
+  }
+
+  const inp = {width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
+
+  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:9,color:sepType?.c||C.go,textTransform:'uppercase',letterSpacing:2}}>Minuteman Press Uptown</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>Employee Separation</h3>
+        </div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
+      </div>
+
+      {/* Type Selection */}
+      <label style={{...lbl,marginBottom:6}}>Separation Type</label>
+      <div style={{display:'flex',gap:4,marginBottom:14,flexWrap:'wrap'}}>
+        {SEPARATION_TYPES.map(t=>
+          <button key={t.v} onClick={()=>up('separation_type',t.v)} style={{
+            padding:'6px 12px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',
+            background:f.separation_type===t.v?t.c+'22':'transparent',
+            border:`1px solid ${f.separation_type===t.v?t.c:C.bdr}`,
+            color:f.separation_type===t.v?t.c:C.g
+          }}>{t.l}</button>
+        )}
+      </div>
+
+      {/* Core Fields */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+        <div>
+          <label style={lbl}>Employee</label>
+          <select value={f.employee_id||''} onChange={e=>handleEmpChange(e.target.value)} style={inp}>
+            <option value="">Select Employee</option>
+            {emps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Effective Date</label>
+          <input type="date" value={f.effective_date||''} onChange={e=>up('effective_date',e.target.value)} style={inp}/>
+        </div>
+        <div>
+          <label style={lbl}>Prepared By</label>
+          <input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7}}/>
+        </div>
+        {sepType?.hasRecall && <div>
+          <label style={{...lbl,color:'#6366F1'}}>Expected Recall Date</label>
+          <input type="date" value={f.expected_recall_date||''} onChange={e=>up('expected_recall_date',e.target.value)} style={{...inp,borderColor:'#6366F1'}}/>
+        </div>}
+      </div>
+
+      {/* Layoff-specific fields */}
+      {f.separation_type==='layoff' && <div style={{background:'rgba(99,102,241,0.08)',border:'1px solid #6366F1',borderRadius:8,padding:'12px 16px',marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#6366F1',marginBottom:8}}>Layoff Details</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{...lbl,color:'#6366F1'}}>Reason</label>
+            <select value={f.layoff_reason||''} onChange={e=>up('layoff_reason',e.target.value)} style={inp}>
+              <option value="">Select Reason</option>
+              <option value="lack_of_work">Lack of Work</option>
+              <option value="reduction_in_force">Reduction in Force</option>
+              <option value="seasonal">Seasonal Reduction</option>
+              <option value="restructuring">Restructuring</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'#6366F1',fontWeight:600,cursor:'pointer'}}>
+              <input type="checkbox" checked={f.union_notified||false} onChange={e=>up('union_notified',e.target.checked)} style={{width:16,height:16,accentColor:'#6366F1'}}/>
+              Union notified (Ruth & Marty)
+            </label>
+          </div>
+        </div>
+
+        {/* Probation freeze preview */}
+        {f.employee_id && (()=>{
+          const emp = allEmps.find(e=>e.id===f.employee_id)
+          if (!emp) return null
+          const prob = getProbationDays(emp)
+          const lcaRec = disc.find(d=>d.employee_id===emp.id && d.type==='last_chance')
+          const lca = lcaRec ? getLCAStatus(lcaRec, emp) : null
+          return <div style={{background:'rgba(124,58,237,0.08)',border:'1px solid #7C3AED',borderRadius:6,padding:'8px 12px',marginTop:8}}>
+            <div style={{fontSize:10,color:'#7C3AED',fontWeight:700,textTransform:'uppercase',marginBottom:3}}>⏸ Clocks that will freeze on layoff</div>
+            <div style={{fontSize:11,color:C.w}}>
+              {prob.remaining > 0 && <div>New-hire probation: {prob.elapsed}d / 90d — <b>{prob.remaining}d will freeze</b></div>}
+              {prob.remaining === 0 && <div style={{color:C.g}}>New-hire probation: Complete ✓</div>}
+              {lca && lca.remaining > 0 && <div style={{marginTop:2}}>Last Chance Agreement: {lca.elapsedActive}d / {lca.durationDays}d — <b>{lca.remaining}d will freeze</b></div>}
+              {lca && lca.remaining === 0 && <div style={{color:C.g,marginTop:2}}>LCA: Complete ✓</div>}
+            </div>
+          </div>
+        })()}
+      </div>}
+
+      {/* Reason / Notes */}
+      <label style={lbl}>Reason / Details</label>
+      <textarea value={f.reason||''} onChange={e=>up('reason',e.target.value)} rows={3} placeholder="Describe the circumstances..." style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      {/* Equipment Return */}
+      <label style={{...lbl,marginBottom:6}}>Equipment Return Checklist</label>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
+        {EQUIPMENT_CHECKLIST.map(item=>(
+          <button key={item.id} onClick={()=>toggleEquip(item.id)} style={{
+            padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
+            background:equipChecked.includes(item.id)?'rgba(34,197,94,0.1)':'transparent',
+            border:`1px solid ${equipChecked.includes(item.id)?'#22C55E':C.bdr}`,
+            color:equipChecked.includes(item.id)?'#22C55E':C.g
+          }}>{equipChecked.includes(item.id)?'✓':'○'} {item.l}</button>
+        ))}
+      </div>
+
+      {/* Final Paycheck */}
+      <label style={lbl}>Final Paycheck Notes</label>
+      <textarea value={f.final_paycheck_notes||''} onChange={e=>up('final_paycheck_notes',e.target.value)} rows={2} placeholder="Final check date, PTO payout, deductions..." style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      {/* COBRA */}
+      <label style={lbl}>COBRA / Benefits Continuation Notes</label>
+      <textarea value={f.cobra_notes||''} onChange={e=>up('cobra_notes',e.target.value)} rows={2} placeholder="COBRA eligibility, continuation details..." style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      {/* Exit Interview */}
+      <label style={lbl}>Exit Interview Notes</label>
+      <textarea value={f.exit_notes||''} onChange={e=>up('exit_notes',e.target.value)} rows={2} placeholder="Employee feedback, concerns, reason for leaving..." style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
+        <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+        <Btn gold small onClick={handleSave} C={C}>Save Separation</Btn>
       </div>
     </div>
   </div>)

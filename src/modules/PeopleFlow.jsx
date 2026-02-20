@@ -1686,7 +1686,8 @@ function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setE
       const st=SEPARATION_TYPES.find(t=>t.v===s.separation_type)
       const emp=emps.find(e=>e.id===s.employee_id)
       const isRecalled = s.status === 'recalled'
-      return <Card key={s.id} C={C} style={{marginBottom:6,padding:'10px 14px',cursor:'pointer',opacity:isRecalled?0.6:1}} onClick={()=>setViewSep(viewSep?.id===s.id?null:s)}>
+      return <div key={s.id} onClick={()=>setViewSep(viewSep?.id===s.id?null:s)} style={{cursor:'pointer'}}>
+        <Card C={C} style={{marginBottom:6,padding:'10px 14px',opacity:isRecalled?0.6:1}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
             <b style={{fontSize:13}}>{s.employee_name||'—'}</b>{' '}
@@ -1737,8 +1738,9 @@ function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setE
               const lcaRec = disc.find(d=>d.employee_id===emp.id && d.type==='last_chance')
               const lca = lcaRec ? getLCAStatus(lcaRec, emp) : null
               return <div style={{fontSize:11,color:C.w}}>
-                <div>New-hire probation: <b>{prob.elapsed}</b> active days / 90 — <b style={{color:prob.frozen?'#7C3AED':'#22C55E'}}>{prob.frozen?`FROZEN (${prob.remaining}d remaining)`:`${prob.remaining}d remaining`}</b></div>
-                {lca && <div style={{marginTop:3}}>LCA: <b>{lca.elapsedActive}</b> active days / {lca.durationDays} — <b style={{color:lca.isFrozen?'#7C3AED':'#22C55E'}}>{lca.isFrozen?`FROZEN (${lca.remaining}d remaining)`:`${lca.remaining}d remaining`}</b>{lca.freezeDays>0&&` (${lca.freezeDays}d frozen)`}</div>}
+                {prob.remaining > 0 && <div>New-hire probation (90-day): <b>{prob.elapsed}</b> active days / 90 — <b style={{color:prob.frozen?'#7C3AED':'#22C55E'}}>{prob.frozen?`FROZEN (${prob.remaining}d remaining)`:`${prob.remaining}d remaining`}</b></div>}
+                {prob.remaining === 0 && <div style={{color:C.g}}>New-hire probation: Complete ✓</div>}
+                {lca && <div style={{marginTop:3}}>Disciplinary probation (LCA): <b>{lca.elapsedActive}</b> active days / {lca.durationDays} — <b style={{color:lca.isFrozen?'#7C3AED':'#22C55E'}}>{lca.isFrozen?`FROZEN (${lca.remaining}d remaining)`:`${lca.remaining}d remaining`}</b>{lca.freezeDays>0&&` (${lca.freezeDays}d frozen)`}</div>}
               </div>
             })()}
           </div>}
@@ -1749,7 +1751,7 @@ function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setE
             {s.separation_type==='layoff'&&s.employee_name&&s.effective_date&&<button onClick={(e)=>{e.stopPropagation();generateLayoffLetter(s)}} style={{background:'#6366F1',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>🖨 Print Layoff Notice</button>}
           </div>
         </div>}
-      </Card>
+      </Card></div>
     })}
 
     {sorted.length===0&&<Card C={C} style={{textAlign:'center',color:C.g,padding:30}}>No separation records.</Card>}
@@ -1935,10 +1937,10 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
           return <div style={{background:'rgba(124,58,237,0.08)',border:'1px solid #7C3AED',borderRadius:6,padding:'8px 12px',marginTop:8}}>
             <div style={{fontSize:10,color:'#7C3AED',fontWeight:700,textTransform:'uppercase',marginBottom:3}}>⏸ Clocks that will freeze on layoff</div>
             <div style={{fontSize:11,color:C.w}}>
-              {prob.remaining > 0 && <div>New-hire probation: {prob.elapsed}d / 90d — <b>{prob.remaining}d will freeze</b></div>}
+              {prob.remaining > 0 && <div>New-hire probation (90-day): {prob.elapsed}d / 90d — <b>{prob.remaining}d will freeze</b></div>}
               {prob.remaining === 0 && <div style={{color:C.g}}>New-hire probation: Complete ✓</div>}
-              {lca && lca.remaining > 0 && <div style={{marginTop:2}}>Last Chance Agreement: {lca.elapsedActive}d / {lca.durationDays}d — <b>{lca.remaining}d will freeze</b></div>}
-              {lca && lca.remaining === 0 && <div style={{color:C.g,marginTop:2}}>LCA: Complete ✓</div>}
+              {lca && lca.remaining > 0 && <div style={{marginTop:2}}>Disciplinary probation (LCA): {lca.elapsedActive}d / {lca.durationDays}d — <b>{lca.remaining}d will freeze</b></div>}
+              {lca && lca.remaining === 0 && <div style={{color:C.g,marginTop:2}}>Disciplinary probation (LCA): Complete ✓</div>}
             </div>
           </div>
         })()}

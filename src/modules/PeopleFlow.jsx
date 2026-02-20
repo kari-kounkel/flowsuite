@@ -456,7 +456,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} disc={disc}/>}
 
     {/* ORG CHART */}
-    {view==='orgchart'&&<OrgChartView emps={ac} C={C}/>}
+    {view==='orgchart'&&<OrgChartView emps={emps} C={C}/>}
 
     {/* WORKPLACE (replaces Discipline) */}
     {view==='workplace'&&<WorkplaceView
@@ -472,7 +472,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='onboard'&&<OnbView ac={ac} onb={onb} toggleOnb={toggleOnb} C={C}/>}
 
     {/* UNION */}
-    {view==='union'&&<UnionView ac={ac} C={C}/>}
+    {view==='union'&&<UnionView ac={emps.filter(e=>e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='Terminated'&&e.status!=='Inactive')} C={C}/>}
 
     {/* PAYROLL */}
     {view==='payroll'&&<PayView pay={pay} sts={sts} lpr={lpr} markAllPay={markAllPay} savePay={savePay} ac={ac} mod={mod} setMod={setMod} C={C}/>}

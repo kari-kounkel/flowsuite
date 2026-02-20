@@ -24,7 +24,6 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
 
   return (
     <div style={{ color: theme.text }}>
-      {/* Module Tab Bar */}
       <div style={{
         display: 'flex', gap: 0, borderBottom: `2px solid ${theme.border}`,
         marginBottom: 24, overflowX: 'auto'
@@ -51,7 +50,7 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
       {activeTab === 'scan' && <ScanForm theme={theme} orgId={orgId} userRole={userRole} darkMode={darkMode} />}
       {activeTab === 'dashboard' && <JobDashboard theme={theme} orgId={orgId} darkMode={darkMode} />}
       {activeTab === 'jobs' && <JobManager theme={theme} orgId={orgId} darkMode={darkMode} />}
-      {activeTab === 'stations' && <StationManager theme={theme} orgId={orgId} darkMode={darkMode} />}
+      {activeTab === 'stations' && <StationManager theme={theme} orgId={orgId} darkMode={darkMode} userRole={userRole} />}
       {activeTab === 'waste' && <WasteLog theme={theme} orgId={orgId} darkMode={darkMode} />}
     </div>
   );

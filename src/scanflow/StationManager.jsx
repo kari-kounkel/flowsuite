@@ -1,18 +1,22 @@
 // ═══════════════════════════════════════════════════════
 // STATION MANAGER — Map STA codes to real machine names
+// Editing locked to managers/admins only
 // ═══════════════════════════════════════════════════════
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../supabase.js';
 import { cardStyle as getCardStyle, inputStyle as getInputStyle } from './scanflowTheme.js';
 
-export function StationManager({ theme, orgId, darkMode }) {
+export function StationManager({ theme, orgId, darkMode, userRole }) {
   const [stations, setStations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [editing, setEditing] = useState(null);
 
   const cardSt = getCardStyle(theme);
   const inpSt = getInputStyle(theme);
+
+  // Only managers, org_admin, super_admin can edit
+  const canEdit = ['manager','org_admin','super_admin'].includes(userRole)
 
   useEffect(() => { loadData(); }, []);
 
@@ -33,12 +37,12 @@ export function StationManager({ theme, orgId, darkMode }) {
     <div>
       <h2 style={{ fontSize: 20, fontWeight: 800, fontFamily: "'SF Mono', monospace", marginBottom: 8 }}>🔧 Stations & Machines</h2>
       <p style={{ color: theme.mutedText, fontSize: 13, marginBottom: 16 }}>
-        Click a station to rename it and assign it to a department. Desiree's floor mapping goes here.
+        {canEdit ? "Click a station to rename it and assign it to a department." : "Station assignments are managed by your supervisor."}
       </p>
 
       {stations.map(s => (
         <div key={s.id} style={cardSt}>
-          {editing === s.id ? (
+          {editing === s.id && canEdit ? (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ fontWeight: 700, fontSize: 12, fontFamily: "'SF Mono', monospace", minWidth: 90 }}>{s.id}</span>
               <input
@@ -59,7 +63,7 @@ export function StationManager({ theme, orgId, darkMode }) {
               <button onClick={() => setEditing(null)} style={{ padding: '8px 12px', background: 'transparent', color: theme.mutedText, border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontSize: 12 }}>Cancel</button>
             </div>
           ) : (
-            <div onClick={() => setEditing(s.id)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+            <div onClick={() => { if(canEdit) setEditing(s.id) }} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: canEdit ? 'pointer' : 'default' }}>
               <div>
                 <span style={{ fontWeight: 700, fontSize: 13, fontFamily: "'SF Mono', monospace" }}>{s.id}</span>
                 <span style={{ marginLeft: 12, fontWeight: s.name.includes('unmapped') ? 400 : 600, color: s.name.includes('unmapped') ? theme.mutedText : theme.text }}>

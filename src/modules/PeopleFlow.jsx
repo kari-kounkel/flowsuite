@@ -45,10 +45,8 @@ const REPORT_TYPES = [
 ]
 
 const INCIDENT_NATURES = [
-  'Attendance/Tardiness','Insubordination','Quality of Work','Safety Violation',
-  'Workplace Conduct','Policy Violation','Equipment Misuse','Harassment',
-  'Theft/Dishonesty','Substance Policy','Uniform/Dress Code','Failure to Follow Procedures',
-  'Unauthorized Absence','Excessive Personal Phone Use','Other'
+  'Safety Violation','Tardiness/Attendance','Performance',
+  'Violation of Company Policy/Procedure','Other (Please See Below)','Willful Misconduct'
 ]
 
 const REPORT_STATUSES = [
@@ -541,6 +539,7 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,emps
     {subTab==='discipline'&&isHR&&<DisciplineSubView
       disc={disc} setDisc={setDisc} saveDisc={saveDisc}
       emps={emps} ac={ac} mod={mod} setMod={setMod} C={C}
+      userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
   </div>)
 }
@@ -679,35 +678,36 @@ function ReportModal({onSave,onClose,C,emps,userEmail,userEmpRecord,allEmps}){
 }
 
 // ── Formal Discipline Sub-Tab (HR Only) ──
-function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C}){
-  const [selEmp, setSelEmp] = useState(null)
+function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail,userEmpRecord}){
+  const [viewRecord, setViewRecord] = useState(null)
   const sorted=[...disc].sort((a,b)=>new Date(b.date||b.created_at)-new Date(a.date||a.created_at))
 
   return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
       <div style={{fontSize:13,color:C.g}}>HR only — formal progressive discipline records</div>
-      <Btn small gold onClick={()=>{setSelEmp(null);setMod('formaldisc')}} C={C}>+ New Discipline</Btn>
+      <Btn small gold onClick={()=>setMod('formaldisc')} C={C}>+ New Discipline</Btn>
     </div>
 
     {sorted.map(d=>{
       const dt=DISC_TYPES.find(t=>t.v===d.type)
-      return <Card key={d.id} C={C} style={{marginBottom:6,padding:'10px 14px'}}>
+      return <Card key={d.id} C={C} style={{marginBottom:6,padding:'10px 14px',cursor:'pointer'}} onClick={()=>setViewRecord(d)}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
             <b style={{fontSize:13}}>{d.employee_name||'—'}</b>{' '}
             <Tag c={dt?dt.c:C.g}>{dt?dt.l:d.type}</Tag>
-            <div style={{fontSize:11,color:C.g}}>{d.category||'—'} — {(d.description||'—').substring(0,60)}{(d.description?.length||0)>60?'...':''}</div>
-            {d.natures && <div style={{fontSize:10,color:C.g,marginTop:2}}>{d.natures}</div>}
+            <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
             <div style={{fontSize:10,color:C.g}}>{fm(d.date||d.created_at)}</div>
-            <button onClick={async()=>{
+            <button onClick={async(e)=>{
+              e.stopPropagation()
               const st=(d.status||d.st)==='open'?'closed':'open'
               await supabase.from('disciplines').update({status:st}).eq('id',d.id)
               setDisc(p=>p.map(x=>x.id===d.id?{...x,status:st,st}:x))
             }} style={{background:(d.status||d.st)==='open'?C.aD:C.grD,color:(d.status||d.st)==='open'?C.am:C.gr,border:'none',padding:'2px 8px',borderRadius:99,fontSize:9,cursor:'pointer',marginTop:2}}>
               {d.status||d.st||'open'}
             </button>
+            {d.emp_signature && <div style={{fontSize:8,color:'#22C55E',marginTop:2}}>✓ Signed</div>}
           </div>
         </div>
       </Card>
@@ -715,24 +715,206 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C}){
 
     {sorted.length===0&&<Card C={C} style={{textAlign:'center',color:C.g,padding:30}}>No discipline records.</Card>}
 
+    {viewRecord && <DisciplineViewModal record={viewRecord} onClose={()=>setViewRecord(null)} C={C} disc={disc}/>}
+
     {mod==='formaldisc'&&<FormalDisciplineModal
       onSave={saveDisc} onClose={()=>setMod(null)} C={C}
-      emps={ac} disc={disc}
+      emps={ac} disc={disc} userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
   </div>)
 }
 
-function FormalDisciplineModal({onSave,onClose,C,emps,disc}){
-  const [f, setF] = useState({status:'open', date:td, weingarten_offered:false, weingarten_rep_requested:false})
+// ── View Completed Discipline Record ──
+function DisciplineViewModal({record,onClose,C,disc}){
+  const r = record
+  const dt = DISC_TYPES.find(t=>t.v===r.type)
+  const priorDisc = disc.filter(d => d.id !== r.id && (d.employee_id === r.employee_id || d.employee_name === r.employee_name))
+    .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+
+  const fmSigTs = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
+  }
+
+  const handlePrint = () => {
+    const natures = (r.natures||'').split(', ').filter(Boolean)
+    const html = `<!DOCTYPE html><html><head><title>Discipline Record — ${r.employee_name||'Employee'}</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:40px;color:#111;font-size:13px;line-height:1.6}
+      h1{font-size:18px;margin-bottom:2px} h2{font-size:13px;margin-top:18px;border-bottom:1px solid #ccc;padding-bottom:3px;text-transform:uppercase;letter-spacing:1px;color:#555}
+      .field{margin-bottom:6px} .label{font-weight:bold;color:#555;font-size:10px;text-transform:uppercase}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+      .natures{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+      .nature-tag{padding:3px 8px;border:1px solid #999;border-radius:4px;font-size:11px}
+      .nature-tag.checked{background:#FEE2E2;border-color:#DC2626;font-weight:bold}
+      .prior{background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:10px;margin:6px 0}
+      .weingarten{background:#FFFBEB;border:2px solid #F59E0B;border-radius:6px;padding:12px;margin:12px 0}
+      .sig-box{border:1px solid #E5E7EB;border-radius:6px;padding:10px 14px;margin-bottom:8px}
+      .sig-name{font-size:16px;font-style:italic;margin:4px 0} .sig-ts{font-size:9px;color:#888}
+      .e-sig-notice{font-size:8px;color:#999;text-align:center;margin-top:12px;font-style:italic}
+      @media print{body{margin:20px}button{display:none}}
+    </style></head><body>
+    <div style="text-align:center;margin-bottom:20px">
+      <h1>UNSATISFACTORY PERFORMANCE AND/OR CONDUCT ACTION NOTICE</h1>
+      <div style="color:#888;font-size:11px">Minuteman Press Uptown — Confidential</div>
+    </div>
+    <div class="weingarten">
+      <div style="font-weight:bold;font-size:12px;color:#92400E;margin-bottom:4px">⚖ WEINGARTEN RIGHTS NOTICE</div>
+      <div style="font-size:11px;color:#78350F;line-height:1.5">You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action. If you request representation, the interview will be paused until a union representative is available.</div>
+      <div style="margin-top:8px;font-size:11px"><b>Rights Offered:</b> ${r.weingarten_offered?'Yes':'No'} &nbsp; <b>Rep Requested:</b> ${r.weingarten_rep_requested?'Yes':'No'}${r.weingarten_rep_name?' &nbsp; <b>Rep:</b> '+r.weingarten_rep_name:''}</div>
+    </div>
+    <div class="grid">
+      <div class="field"><div class="label">Employee Name</div>${r.employee_name||'—'}</div>
+      <div class="field"><div class="label">Today's Date</div>${r.date||'—'}</div>
+      <div class="field"><div class="label">Type of Report</div>${dt?.l||r.type||'—'}</div>
+      <div class="field"><div class="label">Prepared By</div>${r.prepared_by||'—'}</div>
+    </div>
+    <h2>Nature of Incident</h2>
+    <div class="natures">${INCIDENT_NATURES.map(n=>`<span class="nature-tag ${natures.includes(n)?'checked':''}">${natures.includes(n)?'☑':'☐'} ${n}</span>`).join('')}</div>
+    <h2>Specifics of Incident</h2>
+    <div class="field">${(r.specifics||r.description||'—').replace(/\n/g,'<br>')}</div>
+    <h2>Current Disciplinary Action</h2>
+    <div class="field">${(r.current_action||'—').replace(/\n/g,'<br>')}</div>
+    ${r.employee_comments?`<h2>Employee's Comments</h2><div class="field">${r.employee_comments.replace(/\n/g,'<br>')}</div>`:''}
+    <h2>Future Action if Unsatisfactory Performance Recurs</h2>
+    <div class="field">${r.future_action||'If Performance doesn\'t improve, it may result in further disciplinary action, up to and including termination of employment.'}</div>
+    <div style="font-weight:bold;font-style:italic;margin:12px 0">My signature below signifies that I have read and understand the above report.</div>
+    <div style="margin:16px 0">
+      <div class="sig-box"><div class="label">Employee Signature</div>${r.emp_signature?`<div class="sig-name">${r.emp_signature}</div><div class="sig-ts">${r.emp_sig_date||''}</div>`:'<div style="color:#999;padding:8px 0">— not signed —</div>'}</div>
+      <div class="sig-box"><div class="label">Employer Signature</div>${r.employer_signature?`<div class="sig-name">${r.employer_signature}</div><div class="sig-ts">${r.sup_sig_date||''}</div>`:'<div style="color:#999;padding:8px 0">— not signed —</div>'}</div>
+      <div class="sig-box"><div class="label">Witness Signature</div>${r.witness_name&&r.witness_sig_date?`<div class="sig-name">${r.witness_name}</div><div class="sig-ts">${r.witness_sig_date||''}</div>`:'<div style="color:#999;padding:8px 0">— none —</div>'}</div>
+    </div>
+    <div class="e-sig-notice">Electronic signatures applied via FlowSuite PeopleFlow. Each signature includes a timestamp and the signer's acknowledgment that it carries the same legal effect as a handwritten signature.</div>
+    ${priorDisc.length>0?`<h2>Prior Discipline History</h2><div class="prior">${priorDisc.map(d=>`<div style="margin-bottom:4px"><b>${DISC_TYPES.find(t=>t.v===d.type)?.l||d.type}</b> — ${d.date||'—'} — ${d.natures||d.category||'—'} (${d.status||d.st||'open'})</div>`).join('')}</div>`:''}
+    <div style="margin-top:30px;text-align:center;color:#999;font-size:9px">Generated by FlowSuite PeopleFlow — ${new Date().toLocaleString()}</div>
+    </body></html>`
+    const win = window.open('','_blank')
+    win.document.write(html)
+    win.document.close()
+    setTimeout(()=>win.print(), 500)
+  }
+
+  const natures = (r.natures||'').split(', ').filter(Boolean)
+  const sec = {marginBottom:14}
+  const slbl = {fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:2}
+
+  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:9,color:C.go,textTransform:'uppercase',letterSpacing:2}}>Discipline Record</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>{r.employee_name||'—'}</h3>
+        </div>
+        <div style={{display:'flex',gap:6,alignItems:'flex-start'}}>
+          <button onClick={handlePrint} style={{background:'transparent',border:`1px solid ${C.go}`,color:C.go,padding:'4px 10px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit'}}>🖨 Print / PDF</button>
+          <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
+        </div>
+      </div>
+
+      {/* Weingarten */}
+      <div style={{background:'#FFFBEB',border:'2px solid #F59E0B',borderRadius:8,padding:'10px 14px',marginBottom:14}}>
+        <div style={{fontSize:11,fontWeight:700,color:'#92400E',marginBottom:4}}>⚖ WEINGARTEN RIGHTS NOTICE</div>
+        <div style={{fontSize:11,color:'#78350F'}}>
+          Rights Offered: <b>{r.weingarten_offered?'Yes':'No'}</b> &nbsp; Rep Requested: <b>{r.weingarten_rep_requested?'Yes':'No'}</b>
+          {r.weingarten_rep_name && <span> &nbsp; Rep: <b>{r.weingarten_rep_name}</b></span>}
+        </div>
+      </div>
+
+      {/* Grid info */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,...sec}}>
+        <div><div style={slbl}>Date</div><div style={{fontSize:13,color:C.w}}>{fm(r.date)}</div></div>
+        <div><div style={slbl}>Type</div><Tag c={dt?.c||C.g}>{dt?.l||r.type||'—'}</Tag></div>
+        <div><div style={slbl}>Prepared By</div><div style={{fontSize:12,color:C.w}}>{r.prepared_by||'—'}</div></div>
+        <div><div style={slbl}>Status</div><Tag c={(r.status||r.st)==='open'?C.am:C.gr}>{r.status||r.st||'open'}</Tag></div>
+      </div>
+
+      {/* Natures */}
+      <div style={sec}>
+        <div style={slbl}>Nature of Incident</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:4}}>
+          {INCIDENT_NATURES.map(n=>(
+            <span key={n} style={{padding:'3px 8px',borderRadius:4,fontSize:10,
+              background:natures.includes(n)?'#FEE2E2':'transparent',
+              border:`1px solid ${natures.includes(n)?'#DC2626':C.bdr}`,
+              color:natures.includes(n)?'#DC2626':C.g
+            }}>{natures.includes(n)?'☑':'☐'} {n}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* Specifics */}
+      <div style={sec}><div style={slbl}>Specifics</div><div style={{fontSize:12,color:C.w,lineHeight:1.6,whiteSpace:'pre-wrap'}}>{r.specifics||r.description||'—'}</div></div>
+
+      {/* Current Action */}
+      <div style={sec}><div style={slbl}>Current Disciplinary Action</div><div style={{fontSize:12,color:C.w}}>{r.current_action||'—'}</div></div>
+
+      {/* Employee Comments */}
+      {r.employee_comments && <div style={sec}><div style={slbl}>Employee's Comments</div><div style={{fontSize:12,color:C.w,whiteSpace:'pre-wrap'}}>{r.employee_comments}</div></div>}
+
+      {/* Future Action */}
+      <div style={{...sec,background:C.nL,borderRadius:6,padding:'8px 12px',border:`1px solid ${C.bdr}`}}>
+        <div style={slbl}>Future Action Warning</div>
+        <div style={{fontSize:11,color:C.w,lineHeight:1.5}}>{r.future_action||'If Performance doesn\'t improve, it may result in further disciplinary action, up to and including termination of employment.'}</div>
+      </div>
+
+      {/* Signatures */}
+      <div style={{marginTop:14}}>
+        <div style={slbl}>Signatures</div>
+        <div style={{display:'grid',gap:6,marginTop:6}}>
+          {[
+            {label:'Employee',name:r.emp_signature,ts:r.emp_sig_date},
+            {label:'Employer',name:r.employer_signature,ts:r.sup_sig_date},
+            {label:'Witness',name:r.witness_name&&r.witness_sig_date?r.witness_name:null,ts:r.witness_sig_date}
+          ].map((s,i)=>(
+            <div key={i} style={{border:`1px solid ${s.name?'#22C55E':C.bdr}`,borderRadius:6,padding:'8px 12px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <div style={{fontSize:9,color:C.g,textTransform:'uppercase'}}>{s.label} Signature</div>
+                  {s.name ? <div style={{fontSize:14,fontStyle:'italic',color:C.w}}>{s.name}</div>
+                    : <div style={{fontSize:11,color:C.g}}>— not signed —</div>}
+                </div>
+                {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:8,color:C.g,textAlign:'center',marginTop:8,fontStyle:'italic'}}>Electronic signatures carry the same legal effect as handwritten signatures per signer acknowledgment.</div>
+      </div>
+
+      {/* Prior History */}
+      {priorDisc.length > 0 && <div style={{marginTop:14}}>
+        <div style={slbl}>Prior Discipline History ({priorDisc.length})</div>
+        <Card C={C} style={{padding:'8px 12px',marginTop:4}}>
+          {priorDisc.map((d,i)=>{
+            const pdt=DISC_TYPES.find(t=>t.v===d.type)
+            return <div key={i} style={{fontSize:11,padding:'2px 0',display:'flex',justifyContent:'space-between'}}>
+              <span><Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag> {d.natures||d.category||'—'}</span>
+              <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
+            </div>
+          })}
+        </Card>
+      </div>}
+    </div>
+  </div>)
+}
+
+// ── Formal Discipline Form Modal ──
+function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpRecord}){
+  const [f, setF] = useState({status:'open', date:td, weingarten_offered:false, weingarten_rep_requested:false,
+    prepared_by: userEmpRecord ? gn(userEmpRecord) : (userEmail||''), prepared_by_email: userEmail || '',
+    future_action:'If Performance doesn\'t improve, it may result in further disciplinary action, up to and including termination of employment.'
+  })
   const [selNatures, setSelNatures] = useState([])
   const [priorDisc, setPriorDisc] = useState([])
+  const [sigMode, setSigMode] = useState(null)
+  const [sigName, setSigName] = useState('')
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
   const handleEmpChange = (empId) => {
     const emp = emps.find(e=>e.id===empId)
     up('employee_id', empId)
     up('employee_name', emp ? gn(emp) : '')
-    // Show prior discipline history
     const prior = disc.filter(d => d.employee_id === empId || d.employee_name === gn(emp))
       .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
     setPriorDisc(prior)
@@ -742,129 +924,125 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc}){
     setSelNatures(prev => prev.includes(n) ? prev.filter(x=>x!==n) : [...prev, n])
   }
 
+  const applySignature = () => {
+    if (!sigName.trim()) return
+    const ts = new Date().toISOString()
+    if (sigMode === 'employee') { up('emp_signature', sigName.trim()); up('emp_sig_date', ts) }
+    else if (sigMode === 'employer') { up('employer_signature', sigName.trim()); up('sup_sig_date', ts) }
+    else if (sigMode === 'witness') { up('witness_name', sigName.trim()); up('witness_sig_date', ts) }
+    setSigName(''); setSigMode(null)
+  }
+
   const handleSave = () => {
-    const record = {
-      ...f,
-      natures: selNatures.join(', '),
-      org_id: undefined // will be added by parent
-    }
+    const record = { ...f, natures: selNatures.join(', '), created_at: new Date().toISOString(), org_id: undefined }
     onSave(record)
     onClose()
   }
 
-  const handlePrint = () => {
-    const emp = emps.find(e=>e.id===f.employee_id)
-    const empName = emp ? gn(emp) : f.employee_name || '—'
-    const html = `<!DOCTYPE html><html><head><title>Discipline Record — ${empName}</title>
-    <style>
-      body{font-family:Arial,sans-serif;margin:40px;color:#111;font-size:13px;line-height:1.6}
-      h1{font-size:18px;margin-bottom:4px} h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ccc;padding-bottom:4px}
-      .field{margin-bottom:8px} .label{font-weight:bold;color:#555;font-size:11px;text-transform:uppercase}
-      .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      .sig-line{border-bottom:1px solid #333;min-width:200px;display:inline-block;margin:0 8px}
-      .natures{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-      .nature-tag{padding:2px 8px;border:1px solid #999;border-radius:4px;font-size:11px}
-      .nature-tag.checked{background:#FEE2E2;border-color:#DC2626;font-weight:bold}
-      .prior{background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;padding:12px;margin:8px 0}
-      .weingarten{background:#FFFBEB;border:1px solid #F59E0B;border-radius:6px;padding:12px;margin:12px 0}
-      @media print{body{margin:20px}button{display:none}}
-    </style></head><body>
-    <h1>EMPLOYEE DISCIPLINE RECORD</h1>
-    <div style="color:#555;margin-bottom:20px">Minuteman Press Uptown — Confidential</div>
-    <div class="grid">
-      <div class="field"><div class="label">Employee Name</div>${empName}</div>
-      <div class="field"><div class="label">Date</div>${f.date||td}</div>
-      <div class="field"><div class="label">Type</div>${DISC_TYPES.find(t=>t.v===f.type)?.l || f.type || '—'}</div>
-      <div class="field"><div class="label">Prepared By</div>${f.prepared_by||'—'}</div>
-    </div>
-    <h2>Nature of Violation</h2>
-    <div class="natures">${INCIDENT_NATURES.map(n=>`<span class="nature-tag ${selNatures.includes(n)?'checked':''}">${selNatures.includes(n)?'☑':'☐'} ${n}</span>`).join('')}</div>
-    <h2>Specifics</h2>
-    <div class="field">${(f.specifics||'—').replace(/\n/g,'<br>')}</div>
-    <h2>Current Action</h2>
-    <div class="field">${(f.current_action||'—').replace(/\n/g,'<br>')}</div>
-    <div class="weingarten">
-      <h2 style="margin-top:0;border:none">Weingarten Rights Notice</h2>
-      <p>You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action. If you request representation, the interview will be paused until a union representative is available.</p>
-      <div class="grid">
-        <div class="field"><div class="label">Weingarten Offered</div>${f.weingarten_offered?'Yes':'No'}</div>
-        <div class="field"><div class="label">Rep Requested</div>${f.weingarten_rep_requested?'Yes':'No'}</div>
-        ${f.weingarten_rep_name?`<div class="field"><div class="label">Rep Name</div>${f.weingarten_rep_name}</div>`:''}
-      </div>
-    </div>
-    ${f.employee_comments?`<h2>Employee Comments</h2><div class="field">${f.employee_comments.replace(/\n/g,'<br>')}</div>`:''}
-    <h2>Future Action Warning</h2>
-    <div class="field">${(f.future_action||'Further violations may result in additional disciplinary action, up to and including termination.').replace(/\n/g,'<br>')}</div>
-    <h2>Signatures</h2>
-    <div style="margin:20px 0">
-      <div style="margin-bottom:20px">Employee: <span class="sig-line">&nbsp;</span> Date: <span class="sig-line" style="min-width:100px">&nbsp;</span></div>
-      <div style="margin-bottom:20px">Supervisor: <span class="sig-line">&nbsp;</span> Date: <span class="sig-line" style="min-width:100px">&nbsp;</span></div>
-      ${f.witness_name?`<div style="margin-bottom:20px">Witness (${f.witness_name}): <span class="sig-line">&nbsp;</span> Date: <span class="sig-line" style="min-width:100px">&nbsp;</span></div>`:''}
-    </div>
-    ${priorDisc.length>0?`<h2>Prior Discipline History</h2><div class="prior">${priorDisc.map(d=>`<div style="margin-bottom:4px"><b>${DISC_TYPES.find(t=>t.v===d.type)?.l||d.type}</b> — ${fm(d.date||d.created_at)} — ${d.category||'—'} (${d.status||d.st||'open'})</div>`).join('')}</div>`:''}
-    <div style="margin-top:30px;text-align:center;color:#999;font-size:10px">Generated by FlowSuite PeopleFlow — ${new Date().toLocaleString()}</div>
-    </body></html>`
+  const fmSigTs = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
+  }
 
-    const win = window.open('','_blank')
-    win.document.write(html)
-    win.document.close()
-    setTimeout(()=>win.print(), 500)
+  const inp = {width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
+
+  // ── Signature Overlay ──
+  if (sigMode) {
+    const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+    return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:`2px solid ${C.go}`,textAlign:'center'}}>
+        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
+        <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>
+          By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.
+        </div>
+        <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
+          style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}}
+          onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
+        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+          <Btn ghost small onClick={()=>{setSigMode(null);setSigName('')}} C={C}>Cancel</Btn>
+          <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
+        </div>
+      </div>
+    </div>)
   }
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
-        <h3 style={{margin:0,fontSize:16}}>Formal Discipline Record</h3>
-        <div style={{display:'flex',gap:6}}>
-          <button onClick={handlePrint} style={{background:'transparent',border:`1px solid ${C.go}`,color:C.go,padding:'4px 10px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit'}}>🖨 Print</button>
-          <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:9,color:C.go,textTransform:'uppercase',letterSpacing:2}}>Minuteman Press Uptown</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>Unsatisfactory Performance and/or Conduct Action Notice</h3>
+        </div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
+      </div>
+
+      {/* ── WEINGARTEN RIGHTS — TOP OF FORM ── */}
+      <div style={{background:'#FFFBEB',border:'2px solid #F59E0B',borderRadius:8,padding:'12px 16px',marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:'#92400E',marginBottom:6}}>⚖ WEINGARTEN RIGHTS NOTICE</div>
+        <div style={{fontSize:11,color:'#78350F',lineHeight:1.6,marginBottom:10}}>
+          You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action. If you request representation, the interview will be paused until a union representative is available.
+        </div>
+        <div style={{display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
+          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
+            <input type="checkbox" checked={f.weingarten_offered||false} onChange={e=>up('weingarten_offered',e.target.checked)}
+              style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rights Offered
+          </label>
+          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
+            <input type="checkbox" checked={f.weingarten_rep_requested||false} onChange={e=>up('weingarten_rep_requested',e.target.checked)}
+              style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rep Requested
+          </label>
+          {f.weingarten_rep_requested && <input value={f.weingarten_rep_name||''} onChange={e=>up('weingarten_rep_name',e.target.value)} placeholder="Union Rep Name"
+            style={{padding:'5px 10px',background:'#FEF3C7',border:'1px solid #F59E0B',borderRadius:4,fontSize:12,color:'#78350F',fontFamily:'inherit',flex:1,minWidth:140}}/>}
         </div>
       </div>
 
-      {/* Employee Select */}
+      {/* ── Employee / Date / Type / Prepared By ── */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
         <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Employee</label>
-          <select value={f.employee_id||''} onChange={e=>handleEmpChange(e.target.value)} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          <label style={lbl}>Employee Name</label>
+          <select value={f.employee_id||''} onChange={e=>handleEmpChange(e.target.value)} style={inp}>
             <option value="">Select Employee</option>
             {emps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
           </select>
         </div>
         <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Date</label>
-          <input type="date" value={f.date||''} onChange={e=>up('date',e.target.value)} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>
+          <label style={lbl}>Today's Date</label>
+          <input type="date" value={f.date||''} onChange={e=>up('date',e.target.value)} style={inp}/>
         </div>
         <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Type</label>
-          <select value={f.type||''} onChange={e=>up('type',e.target.value)} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          <label style={lbl}>Type of Report</label>
+          <select value={f.type||''} onChange={e=>up('type',e.target.value)} style={inp}>
             <option value="">Select Type</option>
             {DISC_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
         </div>
         <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Prepared By</label>
-          <input value={f.prepared_by||''} onChange={e=>up('prepared_by',e.target.value)} placeholder="Auto-filled" style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>
+          <label style={lbl}>Prepared By</label>
+          <input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7,cursor:'default'}}/>
         </div>
       </div>
 
-      {/* Prior History */}
+      {/* ── Prior History ── */}
       {priorDisc.length > 0 && <Card C={C} style={{marginBottom:12,padding:'8px 12px',background:C.aD,border:`1px solid ${C.am}`}}>
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Prior Discipline ({priorDisc.length})</div>
         {priorDisc.map((d,i)=>{
-          const dt=DISC_TYPES.find(t=>t.v===d.type)
+          const pdt=DISC_TYPES.find(t=>t.v===d.type)
           return <div key={i} style={{fontSize:11,padding:'2px 0',display:'flex',justifyContent:'space-between'}}>
-            <span><Tag c={dt?.c||C.g}>{dt?.l||d.type}</Tag> {d.category||'—'}</span>
+            <span><Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag> {d.natures||d.category||'—'}</span>
             <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
           </div>
         })}
       </Card>}
 
-      {/* Nature Checkboxes */}
-      <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:4}}>Nature of Violation</label>
-      <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:12}}>
+      {/* ── Nature of Incident ── */}
+      <label style={{...lbl,marginBottom:6}}>Nature of Incident <span style={{fontWeight:400,textTransform:'none'}}>(check all that apply)</span></label>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
         {INCIDENT_NATURES.map(n=>(
           <button key={n} onClick={()=>toggleNature(n)} style={{
-            padding:'3px 8px',borderRadius:4,fontSize:10,cursor:'pointer',fontFamily:'inherit',
+            padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
             background:selNatures.includes(n)?'#FEE2E2':'transparent',
             border:`1px solid ${selNatures.includes(n)?'#DC2626':C.bdr}`,
             color:selNatures.includes(n)?'#DC2626':C.g
@@ -872,67 +1050,62 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc}){
         ))}
       </div>
 
-      {/* Specifics */}
-      <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Specifics of Violation</label>
-      <textarea value={f.specifics||''} onChange={e=>up('specifics',e.target.value)} rows={3} placeholder="Describe the specific incident(s)..." style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
+      {/* ── Specifics ── */}
+      <label style={lbl}>Specifics of Incident <span style={{fontWeight:400,textTransform:'none'}}>(be as specific as possible)</span></label>
+      <textarea value={f.specifics||''} onChange={e=>up('specifics',e.target.value)} rows={4} placeholder="Describe the specific incident(s)..." style={{...inp,resize:'vertical',marginBottom:10}}/>
 
-      {/* Current Action */}
-      <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Current Action Being Taken</label>
-      <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} placeholder="What action is being taken now..." style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
+      {/* ── Current Action ── */}
+      <label style={lbl}>Current Disciplinary Action</label>
+      <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} placeholder="e.g., Verbal Warning" style={{...inp,resize:'vertical',marginBottom:10}}/>
 
-      {/* Weingarten Rights */}
-      <Card C={C} style={{marginBottom:12,padding:'10px 14px',background:'#FFFBEB',border:'1px solid #F59E0B'}}>
-        <div style={{fontSize:11,fontWeight:700,color:'#92400E',marginBottom:6}}>WEINGARTEN RIGHTS NOTICE</div>
-        <div style={{fontSize:10,color:'#78350F',lineHeight:1.5,marginBottom:8}}>
-          You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action.
-        </div>
-        <div style={{display:'flex',gap:12,alignItems:'center',flexWrap:'wrap'}}>
-          <label style={{fontSize:11,display:'flex',alignItems:'center',gap:4,cursor:'pointer',color:'#92400E'}}>
-            <input type="checkbox" checked={f.weingarten_offered||false} onChange={e=>up('weingarten_offered',e.target.checked)}/> Rights Offered
-          </label>
-          <label style={{fontSize:11,display:'flex',alignItems:'center',gap:4,cursor:'pointer',color:'#92400E'}}>
-            <input type="checkbox" checked={f.weingarten_rep_requested||false} onChange={e=>up('weingarten_rep_requested',e.target.checked)}/> Rep Requested
-          </label>
-          {f.weingarten_rep_requested && <input value={f.weingarten_rep_name||''} onChange={e=>up('weingarten_rep_name',e.target.value)} placeholder="Rep Name" style={{padding:'4px 8px',background:'#FEF3C7',border:'1px solid #F59E0B',borderRadius:4,fontSize:11,color:'#78350F',fontFamily:'inherit'}}/>}
-        </div>
-      </Card>
+      {/* ── Employee Comments ── */}
+      <label style={lbl}>Employee's Comments</label>
+      <textarea value={f.employee_comments||''} onChange={e=>up('employee_comments',e.target.value)} rows={2} placeholder="Employee's response or comments..." style={{...inp,resize:'vertical',marginBottom:10}}/>
 
-      {/* Employee Comments */}
-      <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Employee Comments</label>
-      <textarea value={f.employee_comments||''} onChange={e=>up('employee_comments',e.target.value)} rows={2} placeholder="Employee's response or comments..." style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
+      {/* ── Future Action Warning ── */}
+      <label style={lbl}>Future Action if Unsatisfactory Performance Recurs</label>
+      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:`1px solid ${C.bdr}`}}>
+        If Performance doesn't improve, it may result in further disciplinary action, up to and including termination of employment.
+        <div style={{marginTop:6,fontSize:11,fontWeight:600,fontStyle:'italic'}}>My signature below signifies that I have read and understand the above report.</div>
+      </div>
 
-      {/* Future Action Warning */}
-      <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Future Action Warning</label>
-      <textarea value={f.future_action||'Further violations may result in additional disciplinary action, up to and including termination.'} onChange={e=>up('future_action',e.target.value)} rows={2} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
-
-      {/* Signatures */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-        <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Employee Signature Date</label>
-          <input type="date" value={f.emp_sig_date||''} onChange={e=>up('emp_sig_date',e.target.value)} style={{width:'100%',padding:6,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>
-        </div>
-        <div>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Supervisor Signature Date</label>
-          <input type="date" value={f.sup_sig_date||''} onChange={e=>up('sup_sig_date',e.target.value)} style={{width:'100%',padding:6,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>
-        </div>
-        <div style={{gridColumn:'1/-1'}}>
-          <label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>Witness Name</label>
-          <input value={f.witness_name||''} onChange={e=>up('witness_name',e.target.value)} placeholder="Optional" style={{width:'100%',padding:6,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>
-        </div>
+      {/* ── SIGNATURES — iPad Pass-Around ── */}
+      <label style={{...lbl,marginBottom:8,fontSize:11}}>Signatures</label>
+      <div style={{display:'grid',gap:8,marginBottom:16}}>
+        {[
+          {key:'employee',label:'Employee Signature',name:f.emp_signature,ts:f.emp_sig_date,
+            clear:()=>{up('emp_signature','');up('emp_sig_date','')}},
+          {key:'employer',label:'Employer Signature',name:f.employer_signature,ts:f.sup_sig_date,
+            clear:()=>{up('employer_signature','');up('sup_sig_date','')}},
+          {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,
+            clear:()=>{up('witness_name','');up('witness_sig_date','')}}
+        ].map((s,i)=>(
+          <div key={i} style={{border:`1px solid ${s.name?'#22C55E':C.bdr}`,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
+                {s.name ? <div style={{fontSize:14,fontStyle:'italic',color:C.w,marginTop:2}}>{s.name}</div>
+                  : <div style={{fontSize:11,color:C.g,marginTop:2}}>{s.key==='witness'?'Optional — tap to add':'Not yet signed'}</div>}
+              </div>
+              <div style={{textAlign:'right'}}>
+                {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
+                {!s.name ?
+                  <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?`1px solid ${C.go}`:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
+                  : <button onClick={s.clear} style={{background:'transparent',border:`1px solid ${C.bdr}`,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>
+                }
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
-        <button onClick={handlePrint} style={{background:'transparent',border:`1px solid ${C.go}`,color:C.go,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>🖨 Print Preview</button>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
         <Btn gold small onClick={handleSave} C={C}>Save Record</Btn>
       </div>
     </div>
   </div>)
 }
-
-// ═══════════════════════════════════════════
-// ── REMAINING SUB-COMPONENTS (unchanged) ──
-// ═══════════════════════════════════════════
 
 function OnbView({ac,onb,toggleOnb,C}){
   const recent=ac.filter(e=>dbt(e.hire_date||td,td)<=180&&e.union_status!=='Non-Union'&&e.union_status!=='1099').sort((a,b)=>new Date(b.hire_date)-new Date(a.hire_date))

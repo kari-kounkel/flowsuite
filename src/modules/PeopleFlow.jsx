@@ -451,7 +451,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='workplace'&&<WorkplaceView
       disc={disc} setDisc={setDisc} saveDisc={saveDisc}
       reports={reports} saveReport={saveReport} setReports={setReports}
-      separations={separations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
+      separations={separations} setSeparations={setSeparations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
       emps={emps} setEmps={setEmps} ac={ac} mod={mod} setMod={setMod} C={C}
       isAdmin={isAdmin} isHR={isHR} isManager={isManager}
       userEmail={userEmail} userEmpRecord={userEmpRecord}
@@ -689,7 +689,7 @@ function UnionView({ac, C}){
 // ═══════════════════════════════════════════
 // ── WORKPLACE VIEW (Reports + Discipline) ──
 // ═══════════════════════════════════════════
-function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,separations,saveSeparation,recallEmployee,emps,setEmps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord}){
+function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord}){
   const [subTab, setSubTab] = useState('reports')
 
   return(<div>
@@ -720,7 +720,7 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,sepa
     />}
 
     {subTab==='separations'&&isHR&&<SeparationsSubView
-      separations={separations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
+      separations={separations} setSeparations={setSeparations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
       emps={emps} setEmps={setEmps} ac={ac} disc={disc} mod={mod} setMod={setMod} C={C}
       userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
@@ -1672,7 +1672,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 // ═══════════════════════════════════════════
 // ── SEPARATIONS SUB-TAB (HR Only) ──
 // ═══════════════════════════════════════════
-function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
+function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
   const [viewSep, setViewSep] = useState(null)
   const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
 
@@ -1748,6 +1748,14 @@ function SeparationsSubView({separations,saveSeparation,recallEmployee,emps,setE
           {/* Action buttons */}
           <div style={{display:'flex',gap:6,marginTop:10}}>
             {st?.hasRecall && !isRecalled && <button onClick={(e)=>{e.stopPropagation();if(confirm('Recall this employee? This will set their status back to Active and resume all probation clocks.'))recallEmployee(s)}} style={{background:'#22C55E',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↩ Recall Employee</button>}
+            {isRecalled && <button onClick={async(e)=>{e.stopPropagation();if(confirm('Undo recall? This will set the employee back to Laid Off.')){
+              await supabase.from('separations').update({status:'active',recall_date:null}).eq('id',s.id)
+              setSeparations(p=>p.map(x=>x.id===s.id?{...x,status:'active',recall_date:null}:x))
+              if(s.employee_id){
+                await supabase.from('employees').update({status:'laid_off',recall_date:null}).eq('id',s.employee_id)
+                setEmps(p=>p.map(e=>e.id===s.employee_id?{...e,status:'laid_off',recall_date:null}:e))
+              }
+            }}} style={{background:'transparent',color:'#EF4444',border:'1px solid #EF4444',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↺ Undo Recall</button>}
             {s.separation_type==='layoff'&&s.employee_name&&s.effective_date&&<button onClick={(e)=>{e.stopPropagation();generateLayoffLetter(s)}} style={{background:'#6366F1',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>🖨 Print Layoff Notice</button>}
           </div>
         </div>}

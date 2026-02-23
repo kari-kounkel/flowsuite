@@ -9,7 +9,15 @@ export default function App({ user, orgCtx, onLogout }) {
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('fs-theme') || 'brown' } catch { return 'brown' }
   })
-  const [activeModule, setActiveModule] = useState('peopleflow')
+  const [activeModule, setActiveModule] = useState(() => {
+    try { return localStorage.getItem('fs-module') || 'peopleflow' } catch { return 'peopleflow' }
+  })
+
+  // Persist module selection
+  function switchModule(id) {
+    setActiveModule(id)
+    try { localStorage.setItem('fs-module', id) } catch {}
+  }
 
   const C = themes[theme] || themes.brown
   const toggleTheme = () => {
@@ -28,6 +36,8 @@ export default function App({ user, orgCtx, onLogout }) {
     { id: 'peopleflow', label: 'PeopleFlow', icon: '👥', desc: 'HR & Team' },
     { id: 'paperflow', label: 'PaperFlow', icon: '📄', desc: 'Contracts & Policies' },
     { id: 'scanflow', label: 'ScanFlow', icon: '📦', desc: 'Job Tracking' },
+    { id: 'moneyflow', label: 'MoneyFlow', icon: '💰', desc: 'Accounting & AR' },
+    { id: 'taskflow', label: 'TaskFlow', icon: '✅', desc: 'Tasks & Priorities' },
   ]
 
   return (
@@ -58,7 +68,7 @@ export default function App({ user, orgCtx, onLogout }) {
               const locked = !enabled && !m.future
               return (
                 <button key={m.id} onClick={() => {
-                  if (enabled) setActiveModule(m.id)
+                  if (enabled) switchModule(m.id)
                 }} style={{
                   background: active ? C.gD : 'transparent',
                   border: `1px solid ${active ? C.go : C.bdrF}`,
@@ -74,7 +84,7 @@ export default function App({ user, orgCtx, onLogout }) {
             })}
             {/* Admin button — super_admin only */}
             {isSuperAdmin && (
-              <button onClick={() => setActiveModule('admin')} style={{
+              <button onClick={() => switchModule('admin')} style={{
                 background: activeModule === 'admin' ? C.rdD : 'transparent',
                 border: `1px solid ${activeModule === 'admin' ? C.rd : C.bdrF}`,
                 color: activeModule === 'admin' ? C.rd : C.g,

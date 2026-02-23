@@ -11,8 +11,15 @@ import { StationManager } from './StationManager.jsx';
 import { WasteLog } from './WasteLog.jsx';
 
 export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'employee' }) {
-  const [activeTab, setActiveTab] = useState('scan');
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return localStorage.getItem('sf-tab') || 'scan' } catch { return 'scan' }
+  });
   const theme = getTheme(darkMode);
+
+  function switchTab(id) {
+    setActiveTab(id);
+    try { localStorage.setItem('sf-tab', id) } catch {}
+  }
 
   const tabs = [
     { id: 'scan', label: '📱 Scan' },
@@ -29,7 +36,7 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
         marginBottom: 24, overflowX: 'auto'
       }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+          <button key={t.id} onClick={() => switchTab(t.id)} style={{
             padding: '12px 20px',
             background: activeTab === t.id ? theme.accent : 'transparent',
             color: activeTab === t.id ? '#fff' : theme.mutedText,

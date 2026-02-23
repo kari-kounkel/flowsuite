@@ -127,6 +127,7 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
     if (action === 'BLOCKER') setStep(5);
     else if (action === 'MAINTENANCE') setStep(5.5);
     else if (action === 'WASTE_STOP') setStep(6);
+    else if (action === 'STOP_HOLD') setStep(6);
     else setStep(6);
   }
 
@@ -158,7 +159,7 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
         job_id: scanData.job_id,
         department_id: scanData.department_id,
         station_id: scanData.station_id || null,
-        action: scanData.action,
+        action: scanData.action === 'STOP_HOLD' ? 'STOP' : scanData.action,
         reason_id: scanData.reason_id || null,
         return_to_dept_id: scanData.return_to_dept || null,
         maintenance_scope: scanData.maintenance_scope || null,
@@ -170,13 +171,41 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
       if (scanErr) throw scanErr;
 
       // START/STOP update job location
-      if (scanData.action === 'START' || scanData.action === 'STOP') {
-        await supabase.from('job_sleeves').update({
-          current_department_id: scanData.action === 'STOP' ? null : scanData.department_id,
-          current_station_id: scanData.action === 'STOP' ? null : (scanData.station_id || null),
-          entered_current_at: new Date().toISOString(),
-          status: 'active'
-        }).eq('id', scanData.job_id);
+      if (scanData.action === 'START' || scanData.action === 'STOP' || scanData.action === 'STOP_HOLD') {
+        const dept = departments.find(d => d.id === scanData.department_id);
+        const isFinalStop = dept?.is_final_stop && scanData.action === 'STOP';
+
+        if (isFinalStop) {
+          // Final department STOP → auto-complete + auto-release sleeve
+          await supabase.from('job_sleeves').update({
+            status: 'available',
+            flex_job_number: null,
+            customer_name: null,
+            job_description: null,
+            current_department_id: null,
+            current_station_id: null,
+            entered_current_at: null,
+            completed_at: new Date().toISOString(),
+            due_date: null,
+            is_rush: false
+          }).eq('id', scanData.job_id);
+        } else if (scanData.action === 'STOP' || scanData.action === 'STOP_HOLD') {
+          // Normal STOP or explicit HOLD — just clear location, keep job active
+          await supabase.from('job_sleeves').update({
+            current_department_id: null,
+            current_station_id: null,
+            entered_current_at: new Date().toISOString(),
+            status: 'active'
+          }).eq('id', scanData.job_id);
+        } else {
+          // START — set location
+          await supabase.from('job_sleeves').update({
+            current_department_id: scanData.department_id,
+            current_station_id: scanData.station_id || null,
+            entered_current_at: new Date().toISOString(),
+            status: 'active'
+          }).eq('id', scanData.job_id);
+        }
       }
 
       if (scanData.waste_sheets > 0) {
@@ -201,8 +230,16 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
         });
       }
 
-      setSuccess(`✅ ${scanData.action} logged for ${scanData.job_info || scanData.job_id}`);
-      setTimeout(() => { setSuccess(''); resetScan(); }, 2000);
+      // Build success message
+      const dept = departments.find(d => d.id === scanData.department_id);
+      const isFinalRelease = dept?.is_final_stop && scanData.action === 'STOP';
+      const actionForLog = scanData.action === 'STOP_HOLD' ? 'STOP' : scanData.action;
+      const releaseMsg = isFinalRelease
+        ? `\n🟢 Sleeve ${scanData.job_id} returned to inventory!`
+        : '';
+
+      setSuccess(`✅ ${actionForLog} logged for ${scanData.job_info || scanData.job_id}${releaseMsg}`);
+      setTimeout(() => { setSuccess(''); resetScan(); }, isFinalRelease ? 3500 : 2000);
 
     } catch (err) {
       setError(`Submit failed: ${err.message}`);
@@ -228,12 +265,12 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
 
   // ─── ACTION DISPLAY HELPERS ───
   function actionLabel(action) {
-    const map = { 'START': '▶ START', 'STOP': '⏹ STOP', 'BLOCKER': '🚫 BLOCKER', 'WASTE_STOP': '🛑 STOP — WASTE', 'MAINTENANCE': '🔧 MAINTENANCE' };
+    const map = { 'START': '▶ START', 'STOP': '⏹ STOP', 'STOP_HOLD': '⏸️ STOP (HOLD)', 'BLOCKER': '🚫 BLOCKER', 'WASTE_STOP': '🛑 STOP — WASTE', 'MAINTENANCE': '🔧 MAINTENANCE' };
     return map[action] || action;
   }
 
   function actionColor(action) {
-    const map = { 'START': '#2E7D32', 'STOP': '#1565C0', 'BLOCKER': '#C62828', 'WASTE_STOP': '#E65100', 'MAINTENANCE': '#6A1B9A' };
+    const map = { 'START': '#2E7D32', 'STOP': '#1565C0', 'STOP_HOLD': '#37474F', 'BLOCKER': '#C62828', 'WASTE_STOP': '#E65100', 'MAINTENANCE': '#6A1B9A' };
     return map[action] || theme.accent;
   }
 
@@ -372,12 +409,33 @@ export function ScanForm({ theme, orgId, userRole, darkMode }) {
       {/* ACTION PICKER (step 4) — START/STOP instead of IN/OUT */}
       {step === 4 && !success && (
         <div style={cardSt}>
+          {/* Show final-stop notice if at Delivery etc */}
+          {departments.find(d => d.id === scanData.department_id)?.is_final_stop && (
+            <div style={{
+              background: darkMode ? '#1b2e1b' : '#E8F5E9', border: '1px solid #4CAF50',
+              borderRadius: 6, padding: '8px 12px', marginBottom: 12,
+              fontSize: 12, fontWeight: 600, color: '#2E7D32',
+              fontFamily: "'SF Mono', monospace"
+            }}>
+              📍 Final Stop — STOP will complete job & release sleeve
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <button onClick={() => selectAction('START')} style={bigBtn(false, '#2E7D32')}>▶ START</button>
-            <button onClick={() => selectAction('STOP')} style={bigBtn(false, '#1565C0')}>⏹ STOP</button>
+            <button onClick={() => selectAction('STOP')} style={bigBtn(false, '#1565C0')}>
+              {departments.find(d => d.id === scanData.department_id)?.is_final_stop ? '⏹ STOP & RELEASE' : '⏹ STOP'}
+            </button>
             <button onClick={() => selectAction('BLOCKER')} style={bigBtn(false, '#C62828')}>🚫 BLOCKER</button>
             <button onClick={() => selectAction('WASTE_STOP')} style={bigBtn(false, '#E65100')}>🛑 STOP — WASTE</button>
           </div>
+          {/* Override: Hold at final stop without releasing */}
+          {departments.find(d => d.id === scanData.department_id)?.is_final_stop && (
+            <button onClick={() => selectAction('STOP_HOLD')} style={{
+              ...bigBtn(false, '#37474F'), width: '100%', marginTop: 12, fontSize: 13
+            }}>
+              ⏸️ STOP — Hold (don't release sleeve)
+            </button>
+          )}
           <button onClick={() => selectAction('MAINTENANCE')} style={{ ...bigBtn(false, '#6A1B9A'), width: '100%', marginTop: 12 }}>
             🔧 MAINTENANCE
           </button>

@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase.js';
 import { cardStyle as getCardStyle, inputStyle as getInputStyle, statusColors, getDeptColor } from './scanflowTheme.js';
 import { GanttView } from './GanttView.jsx';
+import { JobDetail } from './JobDetail.jsx';
 
 export function JobManager({ theme, orgId, darkMode }) {
   const [jobs, setJobs] = useState([]);
@@ -14,6 +15,7 @@ export function JobManager({ theme, orgId, darkMode }) {
   const [filter, setFilter] = useState('active');
   const [toast, setToast] = useState('');
   const [scanInput, setScanInput] = useState('');
+  const [selectedJobId, setSelectedJobId] = useState(null);
   const scanRef = useRef(null);
 
   const [intakeData, setIntakeData] = useState({
@@ -156,6 +158,10 @@ export function JobManager({ theme, orgId, darkMode }) {
             padding: '8px 16px', background: mode === 'sleeves' ? '#6A1B9A' : 'transparent', color: mode === 'sleeves' ? '#fff' : theme.mutedText,
             border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
           }}>🗂️ Sleeves</button>
+          <button onClick={() => setMode('assign')} style={{
+            padding: '8px 16px', background: mode === 'assign' ? '#E65100' : 'transparent', color: mode === 'assign' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>🔗 Assign</button>
         </div>
       </div>
 
@@ -270,13 +276,18 @@ export function JobManager({ theme, orgId, darkMode }) {
           {jobs.map(j => {
             const dc = getDeptColor(j.current_department_id, darkMode);
             return (
-              <div key={j.id} style={{
+              <div key={j.id} onClick={() => setSelectedJobId(j.id)} style={{
                 ...cardSt, marginBottom: 12,
                 background: dc.bg || cardSt.background,
                 borderLeft: `4px solid ${dc.border || statusColors[j.status] || '#555'}`,
                 border: `1px solid ${dc.border || theme.border}`,
-                borderLeftWidth: 4
-              }}>
+                borderLeftWidth: 4,
+                cursor: 'pointer',
+                transition: 'transform 0.1s, box-shadow 0.1s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1 }}>
                     {/* RUSH indicator */}
@@ -309,7 +320,7 @@ export function JobManager({ theme, orgId, darkMode }) {
                       sleeve: {j.id}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                  <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                     <span style={{
                       padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
                       background: statusColors[j.status] || '#555', color: '#fff', textTransform: 'uppercase'
@@ -342,6 +353,22 @@ export function JobManager({ theme, orgId, darkMode }) {
             );
           })}
         </div>
+      )}
+
+      {/* ═══ JOB DETAIL MODAL ═══ */}
+      {selectedJobId && (
+        <JobDetail
+          jobId={selectedJobId}
+          theme={theme}
+          darkMode={darkMode}
+          onClose={() => setSelectedJobId(null)}
+          onUpdate={loadJobs}
+        />
+      )}
+
+      {/* ═══ SLEEVE ASSIGNMENT MODE ═══ */}
+      {mode === 'assign' && (
+        <SleeveAssignment theme={theme} darkMode={darkMode} orgId={orgId} onDone={() => { setMode('list'); loadJobs(); }} />
       )}
 
       {/* Toast */}
@@ -506,6 +533,179 @@ function SleeveInventory({ theme, darkMode, orgId }) {
           color: theme.mutedText, borderRadius: 4, cursor: 'pointer', fontSize: 11
         }}>↻ Refresh Inventory</button>
       </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════
+// SLEEVE ASSIGNMENT — Link unassigned imports to sleeves
+// ═══════════════════════════════════════════════════════
+
+function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
+  const [imports, setImports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [scanInput, setScanInput] = useState('');
+  const [selectedImport, setSelectedImport] = useState(null);
+  const [toast, setToast] = useState('');
+  const scanRef = useRef(null);
+
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000); };
+
+  useEffect(() => { loadImports(); }, []);
+  useEffect(() => { if (scanRef.current && selectedImport) scanRef.current.focus(); }, [selectedImport]);
+
+  async function loadImports() {
+    setLoading(true);
+    // Get all IMP-### records (unassigned imports without real sleeves)
+    const { data } = await supabase.from('job_sleeves')
+      .select('*')
+      .like('id', 'IMP-%')
+      .order('id', { ascending: true });
+    if (data) setImports(data);
+    setLoading(false);
+  }
+
+  async function handleSleeveScan(e) {
+    if (e.key !== 'Enter') return;
+    const code = scanInput.trim().toUpperCase();
+    setScanInput('');
+
+    if (!code.startsWith('JOB')) { sh('⚠️ Scan a JOB sleeve barcode'); return; }
+    if (!selectedImport) { sh('⚠️ Select an import first'); return; }
+
+    // Check sleeve is available
+    const { data: sleeve } = await supabase.from('job_sleeves')
+      .select('id, status')
+      .eq('id', code)
+      .single();
+
+    if (!sleeve) { sh(`⚠️ Sleeve ${code} not found`); return; }
+    if (sleeve.status !== 'available') { sh(`⚠️ Sleeve ${code} is ${sleeve.status}, not available`); return; }
+
+    // Transfer the import data to the real sleeve
+    const { error: updateErr } = await supabase.from('job_sleeves').update({
+      flex_job_number: selectedImport.flex_job_number,
+      customer_name: selectedImport.customer_name,
+      job_description: selectedImport.job_description,
+      status: selectedImport.status || 'waiting',
+      current_department_id: selectedImport.current_department_id,
+      current_station_id: selectedImport.current_station_id,
+      entered_current_at: new Date().toISOString(),
+      due_date: selectedImport.due_date,
+      is_rush: selectedImport.is_rush || false,
+    }).eq('id', code);
+
+    if (updateErr) { sh(`❌ ${updateErr.message}`); return; }
+
+    // Delete the import record
+    const { error: delErr } = await supabase.from('job_sleeves').delete().eq('id', selectedImport.id);
+    if (delErr) { sh(`⚠️ Sleeve linked but couldn't delete import: ${delErr.message}`); }
+
+    sh(`✅ ${selectedImport.flex_job_number || selectedImport.id} → sleeve ${code}`);
+    setSelectedImport(null);
+    loadImports();
+  }
+
+  if (loading) return <p style={{ color: theme.mutedText, textAlign: 'center', padding: 40 }}>Loading unassigned jobs...</p>;
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, fontFamily: "'SF Mono', monospace" }}>
+        🔗 Assign Sleeves to Imported Jobs
+      </h3>
+      <p style={{ fontSize: 12, color: theme.mutedText, marginBottom: 16 }}>
+        {imports.length} unassigned imports remaining. Select a job, then scan the sleeve barcode to link them.
+      </p>
+
+      {imports.length === 0 && (
+        <div style={{
+          padding: 40, textAlign: 'center', color: theme.mutedText,
+          background: darkMode ? '#1b2e1b' : '#E8F5E9', borderRadius: 8,
+          border: '1px solid #4CAF50'
+        }}>
+          <div style={{ fontSize: 24, marginBottom: 8 }}>🎉</div>
+          <div style={{ fontWeight: 700, color: '#2E7D32' }}>All imports assigned!</div>
+          <button onClick={onDone} style={{
+            marginTop: 16, padding: '8px 20px', background: '#2E7D32', color: '#fff',
+            border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700
+          }}>← Back to Job List</button>
+        </div>
+      )}
+
+      {/* Scanner input when an import is selected */}
+      {selectedImport && (
+        <div style={{
+          padding: 16, marginBottom: 16, borderRadius: 8,
+          background: darkMode ? '#1a2a1a' : '#E8F5E9',
+          border: '2px solid #2E7D32'
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#2E7D32' }}>
+            Assigning: {selectedImport.flex_job_number || selectedImport.id}
+            {selectedImport.customer_name && ` — ${selectedImport.customer_name}`}
+          </div>
+          <input
+            ref={scanRef}
+            value={scanInput}
+            onChange={e => setScanInput(e.target.value)}
+            onKeyDown={handleSleeveScan}
+            placeholder="Scan sleeve barcode (JOB######)..."
+            style={{
+              width: '100%', padding: 14, fontSize: 18, fontWeight: 700, textAlign: 'center',
+              background: darkMode ? '#111' : '#fff', color: theme.text,
+              border: '2px solid #2E7D32', borderRadius: 8, boxSizing: 'border-box',
+              fontFamily: "'SF Mono', monospace"
+            }}
+          />
+          <button onClick={() => setSelectedImport(null)} style={{
+            marginTop: 8, padding: '6px 16px', background: 'transparent',
+            border: `1px solid ${theme.border}`, borderRadius: 4,
+            color: theme.mutedText, cursor: 'pointer', fontSize: 11
+          }}>Cancel</button>
+        </div>
+      )}
+
+      {/* Import list */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {imports.map(imp => (
+          <div key={imp.id}
+            onClick={() => setSelectedImport(imp)}
+            style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: selectedImport?.id === imp.id
+                ? (darkMode ? '#1a2a1a' : '#E8F5E9')
+                : (darkMode ? '#1a1a1a' : '#fff'),
+              border: `1px solid ${selectedImport?.id === imp.id ? '#2E7D32' : theme.border}`,
+              cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              transition: 'all 0.15s'
+            }}
+          >
+            <div>
+              <span style={{ fontWeight: 700, fontSize: 14, fontFamily: "'SF Mono', monospace" }}>
+                {imp.flex_job_number || imp.id}
+              </span>
+              {imp.customer_name && (
+                <span style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                  {imp.customer_name}
+                </span>
+              )}
+              {imp.job_description && (
+                <span style={{ marginLeft: 8, fontSize: 11, color: theme.mutedText }}>
+                  {imp.job_description}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {imp.is_rush && <span style={{ fontSize: 10, color: '#C62828', fontWeight: 700 }}>🔴 RUSH</span>}
+              <span style={{ fontSize: 10, color: theme.mutedText, fontFamily: "'SF Mono', monospace" }}>
+                {imp.id}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {toast && <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: toast.includes('❌') || toast.includes('⚠️') ? '#C62828' : '#2E7D32', color: '#fff', padding: '12px 24px', borderRadius: 8, fontWeight: 700, fontSize: 14, zIndex: 1000 }}>{toast}</div>}
     </div>
   );
 }

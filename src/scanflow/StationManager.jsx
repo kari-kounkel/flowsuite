@@ -22,6 +22,15 @@ export function StationManager({ theme, orgId, darkMode, userRole }) {
 
   async function loadData() {
     const { data: s } = await supabase.from('stations').select('*, departments(name)').order('id');
+    // Sort alphabetically by assigned name, unmapped stations go to the bottom
+    if (s) s.sort((a, b) => {
+      const aUnmapped = !a.name || a.name.includes('unmapped');
+      const bUnmapped = !b.name || b.name.includes('unmapped');
+      if (aUnmapped && !bUnmapped) return 1;
+      if (!aUnmapped && bUnmapped) return -1;
+      if (aUnmapped && bUnmapped) return a.id.localeCompare(b.id);
+      return a.name.localeCompare(b.name);
+    });
     const { data: d } = await supabase.from('departments').select('*').order('id');
     if (s) setStations(s);
     if (d) setDepartments(d);

@@ -45,6 +45,30 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
       name: `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim(),
       email: e.email || ''
     }))
+
+    // Pull org_users with admin roles who aren't already in employees
+    // so admins/consultants like Kari show up as assignable
+    const { data: orgAdmins } = await supabase.from('org_users')
+      .select('user_id, display_name, email, role')
+      .eq('org_id', orgId)
+      .in('role', ['org_admin'])
+    if (orgAdmins) {
+      const existingEmails = new Set(emps.map(e => e.email?.toLowerCase()).filter(Boolean))
+      orgAdmins.forEach(ou => {
+        if (ou.email && !existingEmails.has(ou.email.toLowerCase())) {
+          emps.push({
+            id: ou.user_id || `admin_${ou.email}`,
+            status: 'active',
+            reports_to: null,
+            name: ou.display_name || ou.email.split('@')[0],
+            email: ou.email,
+            _isAdmin: true
+          })
+          existingEmails.add(ou.email.toLowerCase())
+        }
+      })
+    }
+
     setEmployees(emps)
     const me = emps.find(e => e.email?.toLowerCase() === user?.email?.toLowerCase())
     if (me) { setCurrentEmp(me) }

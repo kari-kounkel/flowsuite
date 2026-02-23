@@ -8,10 +8,10 @@ import { cardStyle as getCardStyle, inputStyle as getInputStyle, statusColors, g
 import { GanttView } from './GanttView.jsx';
 import { JobDetail } from './JobDetail.jsx';
 
-export function JobManager({ theme, orgId, darkMode }) {
+export function JobManager({ theme, orgId, darkMode, forceMode }) {
   const [jobs, setJobs] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [mode, setMode] = useState('list');
+  const [mode, setMode] = useState(forceMode || 'list');
   const [filter, setFilter] = useState('active');
   const [toast, setToast] = useState('');
   const [scanInput, setScanInput] = useState('');
@@ -20,13 +20,16 @@ export function JobManager({ theme, orgId, darkMode }) {
 
   const [intakeData, setIntakeData] = useState({
     sleeve_code: '', flex_job_number: '', customer_name: '', job_description: '',
-    send_to: 'DEPT0012', due_date: '', is_rush: false
+    required_materials: '', send_to: 'DEPT0012', due_date: '', is_rush: false
   });
   const [intakeStep, setIntakeStep] = useState(0);
 
   const cardSt = getCardStyle(theme);
   const inpSt = getInputStyle(theme);
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000); };
+
+  // If forceMode changes (e.g. navigating to New Job tab), reset to intake
+  useEffect(() => { if (forceMode) setMode(forceMode); }, [forceMode]);
 
   useEffect(() => { loadJobs(); loadDepts(); }, [filter]);
   useEffect(() => { if (scanRef.current && mode === 'intake' && intakeStep === 0) scanRef.current.focus(); }, [mode, intakeStep]);
@@ -70,6 +73,7 @@ export function JobManager({ theme, orgId, darkMode }) {
       flex_job_number: intakeData.flex_job_number,
       customer_name: intakeData.customer_name || null,
       job_description: intakeData.job_description || null,
+      required_materials: intakeData.required_materials || null,
       status: 'waiting',
       current_department_id: intakeData.send_to,
       current_station_id: null,
@@ -86,7 +90,7 @@ export function JobManager({ theme, orgId, darkMode }) {
     const deptName = departments.find(d => d.id === intakeData.send_to)?.name || intakeData.send_to;
     sh(`✅ Job ${intakeData.flex_job_number} started → waiting at ${deptName}${intakeData.is_rush ? ' 🔴 RUSH' : ''}`);
 
-    setIntakeData({ sleeve_code: '', flex_job_number: '', customer_name: '', job_description: '', send_to: 'DEPT0012', due_date: '', is_rush: false });
+    setIntakeData({ sleeve_code: '', flex_job_number: '', customer_name: '', job_description: '', required_materials: '', send_to: 'DEPT0012', due_date: '', is_rush: false });
     setIntakeStep(0);
     loadJobs();
   }
@@ -94,7 +98,7 @@ export function JobManager({ theme, orgId, darkMode }) {
   async function makeAvailable(jobId) {
     const { error } = await supabase.from('job_sleeves').update({
       status: 'available', flex_job_number: null, customer_name: null,
-      job_description: null, current_department_id: null, current_station_id: null,
+      job_description: null, required_materials: null, current_department_id: null, current_station_id: null,
       entered_current_at: null, completed_at: new Date().toISOString(),
       due_date: null, is_rush: false
     }).eq('id', jobId);
@@ -124,7 +128,7 @@ export function JobManager({ theme, orgId, darkMode }) {
     if (!confirm(`Delete job ${flexNum || jobId}? This clears the sleeve back to available.`)) return;
     const { error } = await supabase.from('job_sleeves').update({
       status: 'available', flex_job_number: null, customer_name: null,
-      job_description: null, current_department_id: null, current_station_id: null,
+      job_description: null, required_materials: null, current_department_id: null, current_station_id: null,
       entered_current_at: null, completed_at: null,
       due_date: null, is_rush: false
     }).eq('id', jobId);
@@ -132,43 +136,12 @@ export function JobManager({ theme, orgId, darkMode }) {
     else sh(`❌ ${error.message}`);
   }
 
-  return (
-    <div>
-      {/* Header with mode buttons */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800, fontFamily: "'SF Mono', monospace", margin: 0 }}>📋 Job Sleeves</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => { setMode('intake'); setIntakeStep(0); setIntakeData(p => ({ ...p, sleeve_code: '', flex_job_number: '', customer_name: '', job_description: '', due_date: '', is_rush: false })); }} style={{
-            padding: '8px 16px', background: mode === 'intake' ? '#2E7D32' : theme.accent, color: '#fff', border: 'none',
-            borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 13
-          }}>📥 Start New Job</button>
-          <button onClick={() => setMode('list')} style={{
-            padding: '8px 16px', background: mode === 'list' ? theme.accent : 'transparent', color: mode === 'list' ? '#fff' : theme.mutedText,
-            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
-          }}>📋 Job List</button>
-          <button onClick={() => setMode('due_dates')} style={{
-            padding: '8px 16px', background: mode === 'due_dates' ? theme.accent : 'transparent', color: mode === 'due_dates' ? '#fff' : theme.mutedText,
-            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
-          }}>📅 Due Dates</button>
-          <button onClick={() => setMode('gantt')} style={{
-            padding: '8px 16px', background: mode === 'gantt' ? '#1565C0' : 'transparent', color: mode === 'gantt' ? '#fff' : theme.mutedText,
-            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
-          }}>📊 Gantt</button>
-          <button onClick={() => setMode('sleeves')} style={{
-            padding: '8px 16px', background: mode === 'sleeves' ? '#6A1B9A' : 'transparent', color: mode === 'sleeves' ? '#fff' : theme.mutedText,
-            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
-          }}>🗂️ Sleeves</button>
-          <button onClick={() => setMode('assign')} style={{
-            padding: '8px 16px', background: mode === 'assign' ? '#E65100' : 'transparent', color: mode === 'assign' ? '#fff' : theme.mutedText,
-            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
-          }}>🔗 Assign</button>
-        </div>
-      </div>
-
-      {/* ═══ INTAKE MODE ═══ */}
-      {mode === 'intake' && (
+  // If forced to intake mode (from New Job tab), show ONLY the intake form
+  if (forceMode === 'intake') {
+    return (
+      <div>
         <div style={{ ...cardSt, borderLeft: '4px solid #2E7D32' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700 }}>📥 Job Intake — Customer Service</h3>
+          <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700 }}>📋 New Job Intake — Customer Service</h3>
 
           {intakeStep === 0 && (
             <div>
@@ -197,6 +170,18 @@ export function JobManager({ theme, orgId, darkMode }) {
                 placeholder="Customer name (optional)" style={inpSt} />
               <input value={intakeData.job_description} onChange={e => setIntakeData(p => ({ ...p, job_description: e.target.value }))}
                 placeholder="Job description (optional)" style={inpSt} />
+
+              {/* Required Materials — free text for now */}
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: theme.mutedText, display: 'block', marginBottom: 4 }}>Required materials:</label>
+                <textarea
+                  value={intakeData.required_materials}
+                  onChange={e => setIntakeData(p => ({ ...p, required_materials: e.target.value }))}
+                  placeholder="e.g. 500 sheets 80lb gloss, 2 rolls laminate, black ink..."
+                  rows={2}
+                  style={{ ...inpSt, resize: 'vertical', minHeight: 48 }}
+                />
+              </div>
 
               {/* Due Date */}
               <div style={{ marginBottom: 8 }}>
@@ -241,7 +226,41 @@ export function JobManager({ theme, orgId, darkMode }) {
             </div>
           )}
         </div>
-      )}
+
+        {/* Toast */}
+        {toast && <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: toast.includes('❌') || toast.includes('⚠️') ? '#C62828' : '#2E7D32', color: '#fff', padding: '12px 24px', borderRadius: 8, fontWeight: 700, fontSize: 14, zIndex: 1000 }}>{toast}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Header with mode buttons — NO Start New Job here anymore */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 800, fontFamily: "'SF Mono', monospace", margin: 0 }}>📋 Job Sleeves</h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setMode('list')} style={{
+            padding: '8px 16px', background: mode === 'list' ? theme.accent : 'transparent', color: mode === 'list' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>📋 Job List</button>
+          <button onClick={() => setMode('due_dates')} style={{
+            padding: '8px 16px', background: mode === 'due_dates' ? theme.accent : 'transparent', color: mode === 'due_dates' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>📅 Due Dates</button>
+          <button onClick={() => setMode('gantt')} style={{
+            padding: '8px 16px', background: mode === 'gantt' ? '#1565C0' : 'transparent', color: mode === 'gantt' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>📊 Gantt</button>
+          <button onClick={() => setMode('sleeves')} style={{
+            padding: '8px 16px', background: mode === 'sleeves' ? '#6A1B9A' : 'transparent', color: mode === 'sleeves' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>🗂️ Sleeves</button>
+          <button onClick={() => setMode('assign')} style={{
+            padding: '8px 16px', background: mode === 'assign' ? '#E65100' : 'transparent', color: mode === 'assign' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>🔗 Assign</button>
+        </div>
+      </div>
 
       {/* ═══ DUE DATES VIEW ═══ */}
       {mode === 'due_dates' && (
@@ -303,6 +322,12 @@ export function JobManager({ theme, orgId, darkMode }) {
                     {/* Customer name — BIGGER */}
                     {j.customer_name && <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4, color: theme.text }}>{j.customer_name}</div>}
                     {j.job_description && <div style={{ fontSize: 12, color: theme.mutedText, marginTop: 2 }}>{j.job_description}</div>}
+                    {/* Required materials */}
+                    {j.required_materials && (
+                      <div style={{ fontSize: 11, color: theme.mutedText, marginTop: 4, fontStyle: 'italic' }}>
+                        🧾 Materials: {j.required_materials}
+                      </div>
+                    )}
                     {/* Due date */}
                     {j.due_date && (
                       <div style={{ fontSize: 12, color: new Date(j.due_date) < new Date() ? '#C62828' : theme.mutedText, fontWeight: new Date(j.due_date) < new Date() ? 700 : 400, marginTop: 4 }}>
@@ -588,6 +613,7 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
       flex_job_number: selectedImport.flex_job_number,
       customer_name: selectedImport.customer_name,
       job_description: selectedImport.job_description,
+      required_materials: selectedImport.required_materials,
       status: selectedImport.status || 'waiting',
       current_department_id: selectedImport.current_department_id,
       current_station_id: selectedImport.current_station_id,

@@ -22,9 +22,10 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
   }
 
   const tabs = [
+    { id: 'newjob', label: '📋 New Job' },
     { id: 'scan', label: '📱 Scan' },
     { id: 'dashboard', label: '📊 Dashboard' },
-    { id: 'jobs', label: '📋 Jobs' },
+    { id: 'jobs', label: '📁 Jobs' },
     { id: 'stations', label: '🔧 Stations' },
     { id: 'waste', label: '🗑️ Waste Log' },
   ];
@@ -38,10 +39,14 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
         {tabs.map(t => (
           <button key={t.id} onClick={() => switchTab(t.id)} style={{
             padding: '12px 20px',
-            background: activeTab === t.id ? theme.accent : 'transparent',
+            background: activeTab === t.id
+              ? (t.id === 'newjob' ? '#2E7D32' : theme.accent)
+              : 'transparent',
             color: activeTab === t.id ? '#fff' : theme.mutedText,
             border: 'none',
-            borderBottom: activeTab === t.id ? `2px solid ${theme.accent}` : '2px solid transparent',
+            borderBottom: activeTab === t.id
+              ? `2px solid ${t.id === 'newjob' ? '#2E7D32' : theme.accent}`
+              : '2px solid transparent',
             cursor: 'pointer', fontSize: 14,
             fontWeight: activeTab === t.id ? 700 : 400,
             fontFamily: "'SF Mono', 'Fira Code', monospace",
@@ -54,6 +59,7 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
         ))}
       </div>
 
+      {activeTab === 'newjob' && <JobManager theme={theme} orgId={orgId} darkMode={darkMode} forceMode="intake" />}
       {activeTab === 'scan' && <ScanForm theme={theme} orgId={orgId} userRole={userRole} darkMode={darkMode} />}
       {activeTab === 'dashboard' && <JobDashboard theme={theme} orgId={orgId} darkMode={darkMode} />}
       {activeTab === 'jobs' && <JobManager theme={theme} orgId={orgId} darkMode={darkMode} />}

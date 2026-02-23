@@ -189,7 +189,17 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   }
 
   async function removeCollaborator(collabId) {
-    await supabase.from('task_collaborators').delete().eq('id', collabId); sh('✓ Removed'); loadTasks()
+    await supabase.from('task_collaborators').delete().eq('id', collabId)
+    // Immediately remove from local state so UI updates instantly
+    setCollabs(prev => {
+      const next = { ...prev }
+      Object.keys(next).forEach(tid => {
+        next[tid] = next[tid].filter(c => c.id !== collabId)
+      })
+      return next
+    })
+    sh('✓ Removed')
+    await loadTasks()
   }
 
   async function handleFileUpload(taskId, file) {

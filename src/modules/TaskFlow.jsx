@@ -365,7 +365,7 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
             const isCollab = task._isCollab
             const taskCollabs = collabs[task.id] || []
             const taskFiles = attachments[task.id] || []
-            const isOwner = task.assigned_to === currentEmp?.id || task.created_by === currentEmp?.id
+            const isOwner = task.assigned_to === currentEmp?.id || task.created_by === currentEmp?.id || currentEmp?._isAdmin || userRole === 'super_admin' || userRole === 'org_admin'
             const isPickerOpen = showCollabPicker === task.id
             const isUploading = uploading === task.id
 

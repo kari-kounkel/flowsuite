@@ -217,9 +217,23 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   }
 
   async function deleteAttachment(att) {
-    await supabase.storage.from('task-files').remove([att.file_path])
-    await supabase.from('task_attachments').delete().eq('id', att.id)
-    sh('🗑️ File removed'); loadTasks()
+    // Instantly remove from local state
+    setAttachments(prev => {
+      const next = { ...prev }
+      Object.keys(next).forEach(tid => {
+        next[tid] = next[tid].filter(a => a.id !== att.id)
+      })
+      return next
+    })
+
+    const { error: storageErr } = await supabase.storage.from('task-files').remove([att.file_path])
+    if (storageErr) { sh(`❌ Storage: ${storageErr.message}`); await loadTasks(); return }
+
+    const { error: dbErr } = await supabase.from('task_attachments').delete().eq('id', att.id)
+    if (dbErr) { sh(`❌ DB: ${dbErr.message}`); await loadTasks(); return }
+
+    sh('🗑️ File removed')
+    await loadTasks()
   }
 
   function getFileUrl(filePath) {

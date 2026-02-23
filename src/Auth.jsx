@@ -44,6 +44,12 @@ export default function Auth() {
             {mode === 'login' ? 'Sign up' : 'Sign in'}
           </span>
         </p>
+        <div style={{ marginTop:24, paddingTop:20, borderTop:'1px solid rgba(212,168,83,0.15)', textAlign:'center', fontSize:10, color:'#8B7355', lineHeight:1.8 }}>
+          FlowSuite™ is the proprietary intellectual property of<br/>
+          <strong style={{ color:'#F5F0E8' }}>CARES Consulting, Inc. &amp; Kari Hoglund Kounkel</strong><br/>
+          © 2025–2026. All rights reserved.<br/>
+          Unauthorized use, duplication, hosting, or distribution is strictly prohibited.
+        </div>
       </form>
     </div>
   )

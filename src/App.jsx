@@ -126,7 +126,31 @@ export default function App({ user, orgCtx, onLogout }) {
         </main>
 
         {/* Print styles */}
-        <style>{"@media print{header,button{display:none!important}}"}</style>
+        <style>{`
+          @media print {
+            header, button, .no-print { display: none !important; }
+            .print-footer { display: block !important; }
+          }
+        `}</style>
+
+        {/* ═══ APP FOOTER ═══ */}
+        <footer style={{
+          textAlign: 'center', padding: '20px 16px 16px', fontSize: 9,
+          color: C.g, lineHeight: 1.8, borderTop: `1px solid ${C.bdr}`,
+          marginTop: 32
+        }}>
+          FlowSuite™ is the proprietary intellectual property of CARES Consulting, Inc. &amp; Kari Hoglund Kounkel<br/>
+          © 2025–2026. All rights reserved. Unauthorized use, duplication, hosting, or distribution is strictly prohibited.
+        </footer>
+
+        {/* Print-only footer (visible only when printing) */}
+        <div className="print-footer" style={{
+          display: 'none', textAlign: 'center', padding: '12px 0', fontSize: 8,
+          color: '#7a6f65', lineHeight: 1.7, borderTop: '0.5pt solid #d9cfc4', marginTop: 20
+        }}>
+          FlowSuite™ is the proprietary intellectual property of CARES Consulting, Inc. &amp; Kari Hoglund Kounkel<br/>
+          © 2025–2026. All rights reserved. Unauthorized use, duplication, hosting, or distribution is strictly prohibited.
+        </div>
       </div>
     </ThemeCtx.Provider>
   )

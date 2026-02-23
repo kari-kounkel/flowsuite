@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase.js';
 import { cardStyle as getCardStyle, inputStyle as getInputStyle, statusColors, getDeptColor } from './scanflowTheme.js';
+import { GanttView } from './GanttView.jsx';
 
 export function JobManager({ theme, orgId, darkMode }) {
   const [jobs, setJobs] = useState([]);
@@ -108,6 +109,27 @@ export function JobManager({ theme, orgId, darkMode }) {
     else sh(`❌ ${error.message}`);
   }
 
+  async function archiveJob(jobId) {
+    const { error } = await supabase.from('job_sleeves').update({
+      status: 'archived',
+      completed_at: new Date().toISOString()
+    }).eq('id', jobId);
+    if (!error) { sh(`📦 Job ${jobId} archived`); loadJobs(); }
+    else sh(`❌ ${error.message}`);
+  }
+
+  async function deleteJob(jobId, flexNum) {
+    if (!confirm(`Delete job ${flexNum || jobId}? This clears the sleeve back to available.`)) return;
+    const { error } = await supabase.from('job_sleeves').update({
+      status: 'available', flex_job_number: null, customer_name: null,
+      job_description: null, current_department_id: null, current_station_id: null,
+      entered_current_at: null, completed_at: null,
+      due_date: null, is_rush: false
+    }).eq('id', jobId);
+    if (!error) { sh(`🗑️ Job deleted — sleeve ${jobId} is now available`); loadJobs(); }
+    else sh(`❌ ${error.message}`);
+  }
+
   return (
     <div>
       {/* Header with mode buttons */}
@@ -126,6 +148,14 @@ export function JobManager({ theme, orgId, darkMode }) {
             padding: '8px 16px', background: mode === 'due_dates' ? theme.accent : 'transparent', color: mode === 'due_dates' ? '#fff' : theme.mutedText,
             border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
           }}>📅 Due Dates</button>
+          <button onClick={() => setMode('gantt')} style={{
+            padding: '8px 16px', background: mode === 'gantt' ? '#1565C0' : 'transparent', color: mode === 'gantt' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>📊 Gantt</button>
+          <button onClick={() => setMode('sleeves')} style={{
+            padding: '8px 16px', background: mode === 'sleeves' ? '#6A1B9A' : 'transparent', color: mode === 'sleeves' ? '#fff' : theme.mutedText,
+            border: `1px solid ${theme.border}`, borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13
+          }}>🗂️ Sleeves</button>
         </div>
       </div>
 
@@ -212,11 +242,21 @@ export function JobManager({ theme, orgId, darkMode }) {
         <DueDateView theme={theme} darkMode={darkMode} orgId={orgId} cardSt={cardSt} onComplete={completeJob} />
       )}
 
+      {/* ═══ GANTT VIEW ═══ */}
+      {mode === 'gantt' && (
+        <GanttView theme={theme} darkMode={darkMode} orgId={orgId} />
+      )}
+
+      {/* ═══ SLEEVE INVENTORY ═══ */}
+      {mode === 'sleeves' && (
+        <SleeveInventory theme={theme} darkMode={darkMode} orgId={orgId} />
+      )}
+
       {/* ═══ LIST MODE ═══ */}
       {mode === 'list' && (
         <div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            {['active', 'waiting', 'completed', 'available', 'on_hold', 'all'].map(f => (
+            {['active', 'waiting', 'completed', 'archived', 'on_hold', 'all'].map(f => (
               <button key={f} onClick={() => setFilter(f)} style={{
                 padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: filter === f ? 700 : 400,
                 background: filter === f ? theme.accent : 'transparent', color: filter === f ? '#fff' : theme.mutedText,
@@ -286,6 +326,16 @@ export function JobManager({ theme, orgId, darkMode }) {
                         borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600
                       }}>↩ Make Available</button>
                     )}
+                    {(j.status === 'completed' || j.status === 'waiting') && (
+                      <button onClick={() => archiveJob(j.id)} style={{
+                        padding: '4px 10px', background: '#37474F', color: '#fff', border: 'none',
+                        borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600
+                      }}>📦 Archive</button>
+                    )}
+                    <button onClick={() => deleteJob(j.id, j.flex_job_number)} style={{
+                      padding: '4px 10px', background: 'transparent', color: '#C62828', border: `1px solid #C62828`,
+                      borderRadius: 4, cursor: 'pointer', fontSize: 10, fontWeight: 600
+                    }}>🗑️ Delete</button>
                   </div>
                 </div>
               </div>
@@ -296,6 +346,166 @@ export function JobManager({ theme, orgId, darkMode }) {
 
       {/* Toast */}
       {toast && <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: toast.includes('❌') || toast.includes('⚠️') ? '#C62828' : '#2E7D32', color: '#fff', padding: '12px 24px', borderRadius: 8, fontWeight: 700, fontSize: 14, zIndex: 1000 }}>{toast}</div>}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════
+// SLEEVE INVENTORY — Count bar + compact chip grid
+// ═══════════════════════════════════════════════════════
+
+function SleeveInventory({ theme, darkMode, orgId }) {
+  const [sleeves, setSleeves] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAvailable, setShowAvailable] = useState(false);
+
+  useEffect(() => { loadSleeves(); }, []);
+
+  async function loadSleeves() {
+    setLoading(true);
+    // Load ALL sleeves — just id and status, lightweight
+    const { data } = await supabase.from('job_sleeves')
+      .select('id, status, flex_job_number, customer_name, is_rush, current_department_id')
+      .like('id', 'JOB%')
+      .order('id', { ascending: true });
+    if (data) setSleeves(data);
+    setLoading(false);
+  }
+
+  if (loading) return <p style={{ color: theme.mutedText, textAlign: 'center', padding: 40 }}>Loading sleeve inventory...</p>;
+
+  // Count by status
+  const counts = { available: 0, active: 0, waiting: 0, completed: 0, archived: 0, on_hold: 0 };
+  sleeves.forEach(s => { counts[s.status] = (counts[s.status] || 0) + 1; });
+  const inUse = sleeves.filter(s => s.status !== 'available');
+  const total = sleeves.length;
+
+  const statusConfig = {
+    available: { label: '🟢 Available', color: '#4CAF50' },
+    active: { label: '🔵 Active', color: '#1565C0' },
+    waiting: { label: '🟠 Waiting', color: '#E65100' },
+    completed: { label: '✅ Completed', color: '#2E7D32' },
+    archived: { label: '📦 Archived', color: '#37474F' },
+    on_hold: { label: '⏸️ On Hold', color: '#F57C00' },
+  };
+
+  function chipColor(status) {
+    if (status === 'available') return { bg: darkMode ? '#1b2e1b' : '#E8F5E9', text: darkMode ? '#66BB6A' : '#2E7D32', border: darkMode ? '#2E7D32' : '#A5D6A7' };
+    if (status === 'active') return { bg: darkMode ? '#0d2744' : '#E3F2FD', text: '#1565C0', border: '#64B5F6' };
+    if (status === 'waiting') return { bg: darkMode ? '#331a00' : '#FFF3E0', text: '#E65100', border: '#FFB74D' };
+    if (status === 'completed') return { bg: darkMode ? '#1b331b' : '#E8F5E9', text: '#2E7D32', border: '#81C784' };
+    if (status === 'archived') return { bg: darkMode ? '#222' : '#ECEFF1', text: '#546E7A', border: '#90A4AE' };
+    return { bg: darkMode ? '#222' : '#f5f5f5', text: '#777', border: '#999' };
+  }
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, fontFamily: "'SF Mono', monospace" }}>
+        🗂️ Sleeve Inventory — {total} Total
+      </h3>
+
+      {/* ── Counts Bar ── */}
+      <div style={{
+        display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap',
+        padding: 16, background: darkMode ? '#111' : '#fafafa',
+        border: `1px solid ${theme.border}`, borderRadius: 8
+      }}>
+        {Object.entries(statusConfig).map(([key, cfg]) => (
+          counts[key] > 0 && (
+            <div key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 16px', borderRadius: 8,
+              background: darkMode ? '#1a1a1a' : '#fff',
+              border: `1px solid ${theme.border}`,
+              minWidth: 120
+            }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.color }} />
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: cfg.color, fontFamily: "'SF Mono', monospace" }}>
+                  {counts[key]}
+                </div>
+                <div style={{ fontSize: 10, color: theme.mutedText, fontWeight: 600 }}>
+                  {key.toUpperCase()}
+                </div>
+              </div>
+            </div>
+          )
+        ))}
+      </div>
+
+      {/* ── Visual bar ── */}
+      <div style={{ height: 8, borderRadius: 4, overflow: 'hidden', display: 'flex', marginBottom: 20 }}>
+        {Object.entries(counts).map(([key, count]) => (
+          count > 0 && (
+            <div key={key} style={{
+              width: `${(count / total) * 100}%`,
+              background: statusConfig[key]?.color || '#555',
+              transition: 'width 0.3s'
+            }} />
+          )
+        ))}
+      </div>
+
+      {/* ── Toggle to show/hide available chips ── */}
+      {inUse.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <h4 style={{ fontSize: 13, fontWeight: 700, color: theme.text, marginBottom: 8, fontFamily: "'SF Mono', monospace" }}>
+            🔵 In-Use Sleeves ({inUse.length})
+          </h4>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {inUse.map(s => {
+              const cc = chipColor(s.status);
+              return (
+                <div key={s.id} title={`${s.id}${s.flex_job_number ? ' → ' + s.flex_job_number : ''}${s.customer_name ? ' — ' + s.customer_name : ''}\nStatus: ${s.status}${s.is_rush ? ' 🔴 RUSH' : ''}`}
+                  style={{
+                    padding: '3px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700,
+                    fontFamily: "'SF Mono', monospace",
+                    background: cc.bg, color: cc.text, border: `1px solid ${cc.border}`,
+                    cursor: 'default', whiteSpace: 'nowrap',
+                    boxShadow: s.is_rush ? '0 0 0 1px #C62828' : 'none'
+                  }}>
+                  {s.id.replace('JOB00', '')}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: theme.mutedText, cursor: 'pointer', marginBottom: 12 }}>
+        <input type="checkbox" checked={showAvailable} onChange={e => setShowAvailable(e.target.checked)} />
+        Show all {counts.available} available sleeves
+      </label>
+
+      {showAvailable && (
+        <div>
+          <h4 style={{ fontSize: 13, fontWeight: 700, color: theme.mutedText, marginBottom: 8, fontFamily: "'SF Mono', monospace" }}>
+            🟢 Available Sleeves ({counts.available})
+          </h4>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            {sleeves.filter(s => s.status === 'available').map(s => (
+              <div key={s.id} style={{
+                padding: '2px 5px', borderRadius: 3, fontSize: 8, fontWeight: 600,
+                fontFamily: "'SF Mono', monospace",
+                background: darkMode ? '#1b2e1b' : '#E8F5E9',
+                color: darkMode ? '#4a7a4a' : '#81C784',
+                border: `1px solid ${darkMode ? '#2a3e2a' : '#C8E6C9'}`,
+              }}>
+                {s.id.replace('JOB00', '')}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Refresh */}
+      <div style={{ marginTop: 16, textAlign: 'center' }}>
+        <button onClick={loadSleeves} style={{
+          padding: '6px 16px', background: 'transparent', border: `1px solid ${theme.border}`,
+          color: theme.mutedText, borderRadius: 4, cursor: 'pointer', fontSize: 11
+        }}>↻ Refresh Inventory</button>
+      </div>
     </div>
   );
 }

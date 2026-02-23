@@ -132,7 +132,7 @@ export default function App({ user, orgCtx, onLogout }) {
           )}
 
           {orgId && activeModule === 'taskflow' && enabledModules.includes('taskflow') && (
-            <TaskFlowModule orgId={orgId} C={C} user={user} />
+            <TaskFlowModule orgId={orgId} C={C} user={user} userRole={role} />
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase.js'
 import { Card, Tag, Btn } from '../theme.jsx'
 
-export default function TaskFlowModule({ orgId, C, user }) {
+export default function TaskFlowModule({ orgId, C, user, userRole }) {
   const [tasks, setTasks] = useState([])
   const [employees, setEmployees] = useState([])
   const [currentEmp, setCurrentEmp] = useState(null)
@@ -51,7 +51,20 @@ export default function TaskFlowModule({ orgId, C, user }) {
 
     // Find current user in employee list
     const me = emps.find(e => e.email?.toLowerCase() === user?.email?.toLowerCase())
-    setCurrentEmp(me || null)
+    if (me) {
+      setCurrentEmp(me)
+    } else if (userRole === 'super_admin' || userRole === 'admin') {
+      // Admin/consultant not in employees table — create virtual top-level user
+      setCurrentEmp({
+        id: '__admin__',
+        name: user?.email?.split('@')[0] || 'Admin',
+        email: user?.email,
+        status: 'active',
+        reports_to: null  // null = top level = sees everything
+      })
+    } else {
+      setCurrentEmp(null)
+    }
   }
 
   // ── Tree walk: get all employees visible to current user ──

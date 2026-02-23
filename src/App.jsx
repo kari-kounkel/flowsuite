@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { themes, ThemeCtx } from './theme.jsx'
 import PeopleFlowModule from './modules/PeopleFlow.jsx'
 import PaperFlowModule from './modules/PaperFlow.jsx'
+import TaskFlowModule from './modules/TaskFlow.jsx'
 import AdminPanel from './modules/AdminPanel.jsx'
 import ScanFlowModule from './scanflow/index.jsx'
 
@@ -128,6 +129,10 @@ export default function App({ user, orgCtx, onLogout }) {
 
           {orgId && activeModule === 'scanflow' && enabledModules.includes('scanflow') && (
             <ScanFlowModule darkMode={theme === 'brown'} orgId={orgId} userRole={role} />
+          )}
+
+          {orgId && activeModule === 'taskflow' && enabledModules.includes('taskflow') && (
+            <TaskFlowModule orgId={orgId} C={C} user={user} />
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

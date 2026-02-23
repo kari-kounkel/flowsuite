@@ -20,6 +20,8 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   const [editingId, setEditingId] = useState(null)
   const [editText, setEditText] = useState('')
   const [dragId, setDragId] = useState(null)
+  const [collabs, setCollabs] = useState({})      // { taskId: [{ id, user_email, status }] }
+  const [showCollabPicker, setShowCollabPicker] = useState(null) // taskId or null
   const inputRef = useRef(null)
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
@@ -99,6 +101,7 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
     const visibleIds = getVisibleEmployeeIds()
     if (visibleIds.length === 0) return
 
+    // 1. Load tasks assigned to visible employees
     let query = supabase.from('tasks')
       .select('*')
       .eq('org_id', orgId)
@@ -109,8 +112,77 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
     if (filter === 'active') query = query.eq('is_complete', false)
     else if (filter === 'completed') query = query.eq('is_complete', true)
 
-    const { data } = await query
-    if (data) setTasks(data)
+    const { data: assignedTasks } = await query
+
+    // 2. Load tasks where current user is an accepted collaborator (for My Tasks view)
+    let collabTasks = []
+    if (view === 'my' && currentEmp?.email) {
+      const { data: myCollabs } = await supabase.from('task_collaborators')
+        .select('task_id')
+        .eq('user_email', currentEmp.email.toLowerCase())
+        .eq('status', 'accepted')
+
+      if (myCollabs?.length) {
+        const collabTaskIds = myCollabs.map(c => c.task_id)
+        let cq = supabase.from('tasks')
+          .select('*')
+          .eq('org_id', orgId)
+          .in('id', collabTaskIds)
+
+        if (filter === 'active') cq = cq.eq('is_complete', false)
+        else if (filter === 'completed') cq = cq.eq('is_complete', true)
+
+        const { data: ct } = await cq
+        if (ct) collabTasks = ct
+      }
+    }
+
+    // 3. Also load pending invitations for My Tasks
+    let pendingTasks = []
+    if (view === 'my' && currentEmp?.email) {
+      const { data: pendingCollabs } = await supabase.from('task_collaborators')
+        .select('task_id')
+        .eq('user_email', currentEmp.email.toLowerCase())
+        .eq('status', 'pending')
+
+      if (pendingCollabs?.length) {
+        const pendingIds = pendingCollabs.map(c => c.task_id)
+        let pq = supabase.from('tasks')
+          .select('*')
+          .in('id', pendingIds)
+          .eq('is_complete', false)
+
+        const { data: pt } = await pq
+        if (pt) pendingTasks = pt
+      }
+    }
+
+    // Merge & dedupe
+    const allTasks = assignedTasks || []
+    const existingIds = new Set(allTasks.map(t => t.id))
+    collabTasks.forEach(t => { if (!existingIds.has(t.id)) { allTasks.push({ ...t, _isCollab: true }); existingIds.add(t.id) } })
+    pendingTasks.forEach(t => { if (!existingIds.has(t.id)) { allTasks.push({ ...t, _isPending: true }); existingIds.add(t.id) } })
+
+    setTasks(allTasks)
+
+    // 4. Load all collaborators for these tasks
+    if (allTasks.length > 0) {
+      const taskIds = allTasks.map(t => t.id)
+      const { data: allCollabs } = await supabase.from('task_collaborators')
+        .select('*')
+        .in('task_id', taskIds)
+
+      if (allCollabs) {
+        const grouped = {}
+        allCollabs.forEach(c => {
+          if (!grouped[c.task_id]) grouped[c.task_id] = []
+          grouped[c.task_id].push(c)
+        })
+        setCollabs(grouped)
+      } else {
+        setCollabs({})
+      }
+    }
   }
 
   // ── Active employees for assignment dropdown ──
@@ -179,6 +251,46 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
     if (!confirm('Delete this task?')) return
     await supabase.from('tasks').delete().eq('id', taskId)
     sh('🗑️ Task deleted')
+    loadTasks()
+  }
+
+  // ── Add collaborator ──
+  async function addCollaborator(taskId, emp) {
+    const existing = collabs[taskId] || []
+    if (existing.some(c => c.user_email === emp.email.toLowerCase())) {
+      sh('⚠️ Already added')
+      return
+    }
+
+    const { error } = await supabase.from('task_collaborators').insert({
+      task_id: taskId,
+      user_email: emp.email.toLowerCase(),
+      status: 'pending',
+      added_by: currentEmp?.email || user?.email
+    })
+
+    if (error) { sh(`❌ ${error.message}`); return }
+    sh(`✓ ${emp.name} invited`)
+    setShowCollabPicker(null)
+    loadTasks()
+  }
+
+  // ── Accept / Decline collaboration ──
+  async function respondToCollab(taskId, accept) {
+    const { error } = await supabase.from('task_collaborators')
+      .update({ status: accept ? 'accepted' : 'declined' })
+      .eq('task_id', taskId)
+      .eq('user_email', currentEmp.email.toLowerCase())
+
+    if (error) { sh(`❌ ${error.message}`); return }
+    sh(accept ? '✓ Task accepted' : '✓ Task declined')
+    loadTasks()
+  }
+
+  // ── Remove collaborator ──
+  async function removeCollaborator(collabId) {
+    await supabase.from('task_collaborators').delete().eq('id', collabId)
+    sh('✓ Removed')
     loadTasks()
   }
 
@@ -251,6 +363,13 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   if (!currentEmp) return <div style={{ textAlign: 'center', color: C.g, padding: 40 }}>Loading...</div>
 
   const groups = groupedTasks()
+
+  // ── Collab status helpers ──
+  const getCollabStatus = (taskId) => {
+    if (!currentEmp?.email) return null
+    const taskCollabs = collabs[taskId] || []
+    return taskCollabs.find(c => c.user_email === currentEmp.email.toLowerCase())
+  }
 
   return (
     <div>
@@ -352,103 +471,226 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
             const pc = priorityConfig[task.priority] || priorityConfig.normal
             const isOverdue = task.due_date && !task.is_complete && new Date(task.due_date) < new Date()
             const isEditing = editingId === task.id
+            const isPending = task._isPending
+            const isCollab = task._isCollab
+            const taskCollabs = collabs[task.id] || []
+            const isOwner = task.assigned_to === currentEmp?.id || task.created_by === currentEmp?.id
+            const isPickerOpen = showCollabPicker === task.id
 
             return (
-              <div
-                key={task.id}
-                draggable={!task.is_complete && view === 'my'}
-                onDragStart={() => setDragId(task.id)}
-                onDragOver={e => e.preventDefault()}
-                onDrop={() => handleDrop(task.id)}
-                style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 10,
-                  padding: '10px 14px', marginBottom: 4, borderRadius: 8,
-                  background: task.is_complete ? `${C.ch}88` : pc.bg,
-                  border: `1px solid ${isOverdue ? '#C62828' : C.bdr}`,
-                  opacity: task.is_complete ? 0.6 : 1,
-                  cursor: !task.is_complete && view === 'my' ? 'grab' : 'default',
-                  transition: 'all 0.15s'
-                }}
-              >
-                {/* Checkbox */}
-                <button onClick={() => toggleComplete(task)} style={{
-                  width: 20, height: 20, minWidth: 20, borderRadius: 4, cursor: 'pointer',
-                  background: task.is_complete ? C.go : 'transparent',
-                  border: `2px solid ${task.is_complete ? C.go : C.bdr}`,
-                  color: '#fff', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  marginTop: 2, padding: 0
-                }}>
-                  {task.is_complete ? '✓' : ''}
-                </button>
-
-                {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {isEditing ? (
-                    <input
-                      value={editText}
-                      onChange={e => setEditText(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveEdit(task.id); if (e.key === 'Escape') setEditingId(null) }}
-                      onBlur={() => saveEdit(task.id)}
-                      autoFocus
-                      style={{
-                        width: '100%', padding: '4px 8px', background: C.ch, border: `1px solid ${C.go}`,
-                        borderRadius: 4, color: C.w, fontSize: 13, fontFamily: 'inherit', outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                  ) : (
-                    <div
-                      onClick={() => { setEditingId(task.id); setEditText(task.title) }}
-                      style={{
-                        fontSize: 13, fontWeight: 500, cursor: 'text',
-                        textDecoration: task.is_complete ? 'line-through' : 'none',
-                        color: task.is_complete ? C.g : C.w,
-                        wordBreak: 'break-word'
-                      }}
-                    >
-                      {task.title}
+              <div key={task.id} style={{ marginBottom: 4 }}>
+                {/* ── Pending invitation banner ── */}
+                {isPending && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 14px', borderRadius: '8px 8px 0 0',
+                    background: C.bg === '#1a1512' ? '#2a2518' : '#FFF8E1',
+                    border: `1px solid ${C.go}`, borderBottom: 'none',
+                    fontSize: 11, color: C.go, fontWeight: 600
+                  }}>
+                    <span>📨 {employees.find(e => e.id === task.assigned_to)?.name || 'Someone'} added you to this task</span>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                      <button onClick={() => respondToCollab(task.id, true)} style={{
+                        padding: '3px 10px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                        background: '#2E7D32', color: '#fff', border: 'none', cursor: 'pointer'
+                      }}>Accept</button>
+                      <button onClick={() => respondToCollab(task.id, false)} style={{
+                        padding: '3px 10px', borderRadius: 4, fontSize: 10, fontWeight: 700,
+                        background: '#C62828', color: '#fff', border: 'none', cursor: 'pointer'
+                      }}>Decline</button>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {/* Meta row */}
-                  <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {task.priority !== 'normal' && (
-                      <span style={{ fontSize: 9, fontWeight: 700, color: pc.color }}>
-                        {pc.label}
-                      </span>
+                <div
+                  draggable={!task.is_complete && view === 'my' && !isPending}
+                  onDragStart={() => setDragId(task.id)}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={() => handleDrop(task.id)}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: '10px 14px',
+                    borderRadius: isPending ? '0 0 8px 8px' : 8,
+                    background: task.is_complete ? `${C.ch}88` : isCollab ? (C.bg === '#1a1512' ? '#1a2015' : '#E8F5E9') : pc.bg,
+                    border: `1px solid ${isOverdue ? '#C62828' : isPending ? C.go : C.bdr}`,
+                    opacity: task.is_complete ? 0.6 : 1,
+                    cursor: !task.is_complete && view === 'my' && !isPending ? 'grab' : 'default',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  {/* Checkbox */}
+                  <button onClick={() => toggleComplete(task)} style={{
+                    width: 20, height: 20, minWidth: 20, borderRadius: 4, cursor: 'pointer',
+                    background: task.is_complete ? C.go : 'transparent',
+                    border: `2px solid ${task.is_complete ? C.go : C.bdr}`,
+                    color: '#fff', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    marginTop: 2, padding: 0
+                  }}>
+                    {task.is_complete ? '✓' : ''}
+                  </button>
+
+                  {/* Content */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {isEditing ? (
+                      <input
+                        value={editText}
+                        onChange={e => setEditText(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveEdit(task.id); if (e.key === 'Escape') setEditingId(null) }}
+                        onBlur={() => saveEdit(task.id)}
+                        autoFocus
+                        style={{
+                          width: '100%', padding: '4px 8px', background: C.ch, border: `1px solid ${C.go}`,
+                          borderRadius: 4, color: C.w, fontSize: 13, fontFamily: 'inherit', outline: 'none',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                    ) : (
+                      <div
+                        onClick={() => { setEditingId(task.id); setEditText(task.title) }}
+                        style={{
+                          fontSize: 13, fontWeight: 500, cursor: 'text',
+                          textDecoration: task.is_complete ? 'line-through' : 'none',
+                          color: task.is_complete ? C.g : C.w,
+                          wordBreak: 'break-word'
+                        }}
+                      >
+                        {task.title}
+                      </div>
                     )}
-                    {task.due_date && (
-                      <span style={{
-                        fontSize: 9, fontWeight: isOverdue ? 700 : 400,
-                        color: isOverdue ? '#C62828' : C.g
-                      }}>
-                        📅 {new Date(task.due_date).toLocaleDateString()}
-                        {isOverdue && ' ⚠️'}
-                      </span>
+
+                    {/* Meta row */}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {task.priority !== 'normal' && (
+                        <span style={{ fontSize: 9, fontWeight: 700, color: pc.color }}>
+                          {pc.label}
+                        </span>
+                      )}
+                      {task.due_date && (
+                        <span style={{
+                          fontSize: 9, fontWeight: isOverdue ? 700 : 400,
+                          color: isOverdue ? '#C62828' : C.g
+                        }}>
+                          📅 {new Date(task.due_date).toLocaleDateString()}
+                          {isOverdue && ' ⚠️'}
+                        </span>
+                      )}
+                      {view !== 'my' && task.assigned_to !== currentEmp?.id && (
+                        <span style={{ fontSize: 9, color: C.g }}>
+                          → {employees.find(e => e.id === task.assigned_to)?.name || '?'}
+                        </span>
+                      )}
+                      {(isCollab || isPending) && (
+                        <span style={{ fontSize: 9, color: C.go, fontWeight: 600 }}>
+                          👥 shared by {employees.find(e => e.id === task.assigned_to)?.name || '?'}
+                        </span>
+                      )}
+                      {task.created_by && task.created_by !== task.assigned_to && !isCollab && !isPending && (
+                        <span style={{ fontSize: 9, color: C.g, fontStyle: 'italic' }}>
+                          from {employees.find(e => e.id === task.created_by)?.name || '?'}
+                        </span>
+                      )}
+
+                      {/* Collab avatars */}
+                      {taskCollabs.length > 0 && (
+                        <span style={{ fontSize: 9, color: C.g, display: 'flex', gap: 4, alignItems: 'center' }}>
+                          👥
+                          {taskCollabs.map(c => {
+                            const emp = employees.find(e => e.email?.toLowerCase() === c.user_email)
+                            const statusIcon = c.status === 'pending' ? '⏳' : c.status === 'accepted' ? '✓' : '✕'
+                            const statusColor = c.status === 'pending' ? C.go : c.status === 'accepted' ? '#2E7D32' : '#C62828'
+                            return (
+                              <span key={c.id} title={`${emp?.name || c.user_email} (${c.status})`} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 2,
+                                padding: '1px 5px', borderRadius: 4, fontSize: 8,
+                                background: `${statusColor}22`, color: statusColor, fontWeight: 600
+                              }}>
+                                {emp?.name?.split(' ')[0] || c.user_email.split('@')[0]} {statusIcon}
+                                {isOwner && (
+                                  <button onClick={(e) => { e.stopPropagation(); removeCollaborator(c.id) }} style={{
+                                    background: 'none', border: 'none', color: statusColor, cursor: 'pointer',
+                                    fontSize: 8, padding: 0, marginLeft: 2, opacity: 0.7
+                                  }} title="Remove">✕</button>
+                                )}
+                              </span>
+                            )
+                          })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                    {/* Add person button */}
+                    {!task.is_complete && (isOwner || task.assigned_to === currentEmp?.id) && (
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          onClick={() => setShowCollabPicker(isPickerOpen ? null : task.id)}
+                          style={{
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            fontSize: 14, padding: '2px 4px', opacity: 0.6,
+                            color: C.go
+                          }}
+                          title="Add someone"
+                        >👤+</button>
+
+                        {/* Collaborator picker dropdown */}
+                        {isPickerOpen && (
+                          <div style={{
+                            position: 'absolute', right: 0, top: '100%', zIndex: 100,
+                            background: C.c, border: `1px solid ${C.bdr}`, borderRadius: 8,
+                            padding: 8, minWidth: 180, boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                          }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: C.go, marginBottom: 6 }}>
+                              Add to task:
+                            </div>
+                            {activeEmps
+                              .filter(e => e.id !== task.assigned_to && !taskCollabs.some(c => c.user_email === e.email?.toLowerCase()))
+                              .map(emp => (
+                                <button
+                                  key={emp.id}
+                                  onClick={() => addCollaborator(task.id, emp)}
+                                  style={{
+                                    display: 'block', width: '100%', textAlign: 'left',
+                                    padding: '6px 8px', background: 'transparent', border: 'none',
+                                    color: C.w, fontSize: 11, cursor: 'pointer', borderRadius: 4,
+                                    fontFamily: 'inherit'
+                                  }}
+                                  onMouseOver={e => e.target.style.background = C.ch}
+                                  onMouseOut={e => e.target.style.background = 'transparent'}
+                                >
+                                  {emp.name}
+                                </button>
+                              ))
+                            }
+                            {activeEmps.filter(e => e.id !== task.assigned_to && !taskCollabs.some(c => c.user_email === e.email?.toLowerCase())).length === 0 && (
+                              <div style={{ fontSize: 10, color: C.g, padding: 4 }}>Everyone's already on it</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
-                    {view !== 'my' && task.assigned_to !== currentEmp?.id && (
-                      <span style={{ fontSize: 9, color: C.g }}>
-                        → {employees.find(e => e.id === task.assigned_to)?.name || '?'}
-                      </span>
-                    )}
-                    {task.created_by && task.created_by !== task.assigned_to && (
-                      <span style={{ fontSize: 9, color: C.g, fontStyle: 'italic' }}>
-                        from {employees.find(e => e.id === task.created_by)?.name || '?'}
-                      </span>
-                    )}
+
+                    {/* Delete */}
+                    <button onClick={() => deleteTask(task.id)} style={{
+                      background: 'transparent', border: 'none', color: C.g,
+                      cursor: 'pointer', fontSize: 12, padding: '2px 4px', opacity: 0.5
+                    }} title="Delete">✕</button>
                   </div>
                 </div>
-
-                {/* Delete */}
-                <button onClick={() => deleteTask(task.id)} style={{
-                  background: 'transparent', border: 'none', color: C.g,
-                  cursor: 'pointer', fontSize: 12, padding: '2px 4px', opacity: 0.5
-                }} title="Delete">✕</button>
               </div>
             )
           })}
         </div>
       ))}
+
+      {/* ── Click-away to close picker ── */}
+      {showCollabPicker && (
+        <div
+          onClick={() => setShowCollabPicker(null)}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }}
+        />
+      )}
 
       {/* ── Toast ── */}
       {toast && (

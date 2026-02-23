@@ -25,6 +25,8 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   const [attachments, setAttachments] = useState({})
   const [showCollabPicker, setShowCollabPicker] = useState(null)
   const [uploading, setUploading] = useState(null)
+  const [editModal, setEditModal] = useState(null) // task object or null
+  const [editFields, setEditFields] = useState({ title: '', priority: '', due_date: '', assigned_to: '', notes: '' })
   const inputRef = useRef(null)
   const fileInputRefs = useRef({})
 
@@ -189,6 +191,32 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   function getFileUrl(filePath) {
     const { data } = supabase.storage.from('task-files').getPublicUrl(filePath)
     return data?.publicUrl
+  }
+
+  function openEditModal(task) {
+    setEditModal(task)
+    setEditFields({
+      title: task.title || '',
+      priority: task.priority || 'normal',
+      due_date: task.due_date || '',
+      assigned_to: task.assigned_to || '',
+      notes: task.notes || ''
+    })
+  }
+
+  async function saveTaskEdit() {
+    if (!editModal || !editFields.title.trim()) return
+    const { error } = await supabase.from('tasks').update({
+      title: editFields.title.trim(),
+      priority: editFields.priority,
+      due_date: editFields.due_date || null,
+      assigned_to: editFields.assigned_to || editModal.assigned_to,
+      notes: editFields.notes || null
+    }).eq('id', editModal.id)
+    if (error) { sh(`❌ ${error.message}`); return }
+    sh('✓ Task updated')
+    setEditModal(null)
+    loadTasks()
   }
 
   async function handleDrop(targetId) {
@@ -358,7 +386,16 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
                         </span>
                       )}
                       {taskFiles.length > 0 && <span style={{ fontSize: 9, color: C.g }}>📎 {taskFiles.length}</span>}
+                      {task.notes && <span style={{ fontSize: 9, color: C.g }}>📝</span>}
                     </div>
+
+                    {/* Notes preview */}
+                    {task.notes && !isEditing && (
+                      <div style={{ fontSize: 10, color: C.g, marginTop: 4, fontStyle: 'italic', lineHeight: 1.4,
+                        overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                        {task.notes}
+                      </div>
+                    )}
 
                     {taskFiles.length > 0 && (
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
@@ -377,6 +414,11 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
                   </div>
 
                   <div style={{ display: 'flex', gap: 2, alignItems: 'center', flexShrink: 0 }}>
+                    {!task.is_complete && (
+                      <button onClick={() => openEditModal(task)}
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 12, padding: '2px 4px', opacity: 0.6, color: C.go }}
+                        title="Edit task">✏️</button>
+                    )}
                     {!task.is_complete && <>
                       <input type="file" ref={el => fileInputRefs.current[task.id] = el} style={{ display: 'none' }}
                         onChange={e => { handleFileUpload(task.id, e.target.files[0]); e.target.value = '' }} />
@@ -416,6 +458,62 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
       ))}
 
       {showCollabPicker && <div onClick={() => setShowCollabPicker(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }} />}
+
+      {/* ── Edit Modal ── */}
+      {editModal && (
+        <>
+          <div onClick={() => setEditModal(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200 }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            background: C.c, border: `1px solid ${C.bdr}`, borderRadius: 12,
+            padding: 24, width: '90%', maxWidth: 420, zIndex: 201,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.go }}>✏️ Edit Task</h3>
+              <button onClick={() => setEditModal(null)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 16 }}>✕</button>
+            </div>
+
+            <label style={{ fontSize: 10, color: C.g, fontWeight: 600, display: 'block', marginBottom: 4 }}>Title</label>
+            <input value={editFields.title} onChange={e => setEditFields(p => ({ ...p, title: e.target.value }))}
+              style={{ width: '100%', padding: '8px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box', marginBottom: 12 }} />
+
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 10, color: C.g, fontWeight: 600, display: 'block', marginBottom: 4 }}>Priority</label>
+                <select value={editFields.priority} onChange={e => setEditFields(p => ({ ...p, priority: e.target.value }))}
+                  style={{ width: '100%', padding: '6px 8px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit' }}>
+                  <option value="urgent">🔴 Urgent</option><option value="high">🟠 High</option>
+                  <option value="normal">🔵 Normal</option><option value="low">⚪ Low</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 10, color: C.g, fontWeight: 600, display: 'block', marginBottom: 4 }}>Due Date</label>
+                <input type="date" value={editFields.due_date} onChange={e => setEditFields(p => ({ ...p, due_date: e.target.value }))}
+                  style={{ width: '100%', padding: '6px 8px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+              </div>
+            </div>
+
+            <label style={{ fontSize: 10, color: C.g, fontWeight: 600, display: 'block', marginBottom: 4 }}>Assigned To</label>
+            <select value={editFields.assigned_to} onChange={e => setEditFields(p => ({ ...p, assigned_to: e.target.value }))}
+              style={{ width: '100%', padding: '6px 8px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', marginBottom: 12 }}>
+              {activeEmps.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+              {currentEmp?.id === '__admin__' && <option value="__admin__">{currentEmp.name}</option>}
+            </select>
+
+            <label style={{ fontSize: 10, color: C.g, fontWeight: 600, display: 'block', marginBottom: 4 }}>Notes</label>
+            <textarea value={editFields.notes} onChange={e => setEditFields(p => ({ ...p, notes: e.target.value }))}
+              placeholder="Add notes, context, details..."
+              rows={3}
+              style={{ width: '100%', padding: '8px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box', resize: 'vertical', marginBottom: 16 }} />
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <Btn small ghost onClick={() => setEditModal(null)} C={C}>Cancel</Btn>
+              <Btn small gold onClick={saveTaskEdit} C={C}>Save Changes</Btn>
+            </div>
+          </div>
+        </>
+      )}
 
       {toast && (
         <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)',

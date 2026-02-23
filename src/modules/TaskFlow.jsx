@@ -36,7 +36,7 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
 
   async function loadEmployees() {
     const { data } = await supabase.from('employees')
-      .select('id, data, status, reports_to')
+      .select('id, first_name, last_name, preferred_name, email, status, reports_to')
       .eq('org_id', orgId)
     if (!data) return
 
@@ -44,8 +44,8 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
       id: e.id,
       status: e.status,
       reports_to: e.reports_to,
-      name: `${e.data?.pn || e.data?.preferred_name || e.data?.first_name || ''} ${e.data?.ln || e.data?.last_name || ''}`.trim(),
-      email: e.data?.email || ''
+      name: `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim(),
+      email: e.email || ''
     }))
     setEmployees(emps)
 

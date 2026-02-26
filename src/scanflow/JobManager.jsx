@@ -564,40 +564,79 @@ function SleeveInventory({ theme, darkMode, orgId }) {
 
 
 // ═══════════════════════════════════════════════════════
-// SLEEVE ASSIGNMENT — Link unassigned imports to sleeves
+// SLEEVE ASSIGNMENT — Enter job # first, then scan sleeve
+// Flow: Type job number → find import → scan sleeve → next
 // ═══════════════════════════════════════════════════════
 
 function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
   const [imports, setImports] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [step, setStep] = useState('job'); // 'job' | 'sleeve' | 'done'
+  const [jobInput, setJobInput] = useState('');
   const [scanInput, setScanInput] = useState('');
-  const [selectedImport, setSelectedImport] = useState(null);
+  const [matchedImport, setMatchedImport] = useState(null);
   const [toast, setToast] = useState('');
+  const [assigned, setAssigned] = useState([]); // track what we've done this session
+  const jobRef = useRef(null);
   const scanRef = useRef(null);
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   useEffect(() => { loadImports(); }, []);
-  useEffect(() => { if (scanRef.current && selectedImport) scanRef.current.focus(); }, [selectedImport]);
+  useEffect(() => { if (jobRef.current && step === 'job') jobRef.current.focus(); }, [step]);
+  useEffect(() => { if (scanRef.current && step === 'sleeve') scanRef.current.focus(); }, [step]);
 
   async function loadImports() {
     setLoading(true);
-    // Get all IMP-### records (unassigned imports without real sleeves)
     const { data } = await supabase.from('job_sleeves')
       .select('*')
       .like('id', 'IMP-%')
       .order('id', { ascending: true });
-    if (data) setImports(data);
+    if (data) {
+      setImports(data);
+      if (data.length === 0) setStep('done');
+    }
     setLoading(false);
   }
 
+  // Step 1: User types/scans a job number and hits Enter
+  async function handleJobLookup(e) {
+    if (e.key !== 'Enter') return;
+    const query = jobInput.trim();
+    if (!query) return;
+
+    // Search imports by flex_job_number (case-insensitive partial match)
+    const match = imports.find(imp =>
+      imp.flex_job_number && imp.flex_job_number.toLowerCase().includes(query.toLowerCase())
+    );
+
+    if (!match) {
+      // Also try searching by IMP id directly
+      const idMatch = imports.find(imp => imp.id.toLowerCase().includes(query.toLowerCase()));
+      if (idMatch) {
+        setMatchedImport(idMatch);
+        setJobInput('');
+        setStep('sleeve');
+        return;
+      }
+      sh(`⚠️ No unassigned import found matching "${query}"`);
+      setJobInput('');
+      return;
+    }
+
+    setMatchedImport(match);
+    setJobInput('');
+    setStep('sleeve');
+  }
+
+  // Step 2: User scans a sleeve barcode
   async function handleSleeveScan(e) {
     if (e.key !== 'Enter') return;
     const code = scanInput.trim().toUpperCase();
     setScanInput('');
 
     if (!code.startsWith('JOB')) { sh('⚠️ Scan a JOB sleeve barcode'); return; }
-    if (!selectedImport) { sh('⚠️ Select an import first'); return; }
+    if (!matchedImport) { sh('⚠️ No import selected'); return; }
 
     // Check sleeve is available
     const { data: sleeve } = await supabase.from('job_sleeves')
@@ -610,27 +649,48 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
 
     // Transfer the import data to the real sleeve
     const { error: updateErr } = await supabase.from('job_sleeves').update({
-      flex_job_number: selectedImport.flex_job_number,
-      customer_name: selectedImport.customer_name,
-      job_description: selectedImport.job_description,
-      required_materials: selectedImport.required_materials,
-      status: selectedImport.status || 'waiting',
-      current_department_id: selectedImport.current_department_id,
-      current_station_id: selectedImport.current_station_id,
+      flex_job_number: matchedImport.flex_job_number,
+      customer_name: matchedImport.customer_name,
+      job_description: matchedImport.job_description,
+      required_materials: matchedImport.required_materials,
+      status: matchedImport.status || 'waiting',
+      current_department_id: matchedImport.current_department_id,
+      current_station_id: matchedImport.current_station_id,
       entered_current_at: new Date().toISOString(),
-      due_date: selectedImport.due_date,
-      is_rush: selectedImport.is_rush || false,
+      due_date: matchedImport.due_date,
+      is_rush: matchedImport.is_rush || false,
     }).eq('id', code);
 
     if (updateErr) { sh(`❌ ${updateErr.message}`); return; }
 
     // Delete the import record
-    const { error: delErr } = await supabase.from('job_sleeves').delete().eq('id', selectedImport.id);
+    const { error: delErr } = await supabase.from('job_sleeves').delete().eq('id', matchedImport.id);
     if (delErr) { sh(`⚠️ Sleeve linked but couldn't delete import: ${delErr.message}`); }
 
-    sh(`✅ ${selectedImport.flex_job_number || selectedImport.id} → sleeve ${code}`);
-    setSelectedImport(null);
-    loadImports();
+    // Track it for the session log
+    setAssigned(prev => [...prev, {
+      jobNum: matchedImport.flex_job_number || matchedImport.id,
+      customer: matchedImport.customer_name,
+      sleeve: code
+    }]);
+
+    sh(`✅ ${matchedImport.flex_job_number || matchedImport.id} → ${code}`);
+
+    // Remove from local list and loop back
+    const remaining = imports.filter(i => i.id !== matchedImport.id);
+    setImports(remaining);
+    setMatchedImport(null);
+
+    if (remaining.length === 0) {
+      setStep('done');
+    } else {
+      setStep('job');
+    }
+  }
+
+  function skipToList() {
+    // Let them pick from the list instead of typing
+    setStep('list');
   }
 
   if (loading) return <p style={{ color: theme.mutedText, textAlign: 'center', padding: 40 }}>Loading unassigned jobs...</p>;
@@ -641,17 +701,24 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
         🔗 Assign Sleeves to Imported Jobs
       </h3>
       <p style={{ fontSize: 12, color: theme.mutedText, marginBottom: 16 }}>
-        {imports.length} unassigned imports remaining. Select a job, then scan the sleeve barcode to link them.
+        {imports.length} unassigned import{imports.length !== 1 ? 's' : ''} remaining
+        {assigned.length > 0 && ` · ${assigned.length} assigned this session`}
       </p>
 
-      {imports.length === 0 && (
+      {/* ═══ STEP: ALL DONE ═══ */}
+      {step === 'done' && (
         <div style={{
           padding: 40, textAlign: 'center', color: theme.mutedText,
           background: darkMode ? '#1b2e1b' : '#E8F5E9', borderRadius: 8,
           border: '1px solid #4CAF50'
         }}>
           <div style={{ fontSize: 24, marginBottom: 8 }}>🎉</div>
-          <div style={{ fontWeight: 700, color: '#2E7D32' }}>All imports assigned!</div>
+          <div style={{ fontWeight: 700, color: '#2E7D32', fontSize: 16 }}>All imports assigned!</div>
+          {assigned.length > 0 && (
+            <div style={{ fontSize: 12, color: theme.mutedText, marginTop: 12 }}>
+              Assigned {assigned.length} job{assigned.length !== 1 ? 's' : ''} this session
+            </div>
+          )}
           <button onClick={onDone} style={{
             marginTop: 16, padding: '8px 20px', background: '#2E7D32', color: '#fff',
             border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700
@@ -659,17 +726,87 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
         </div>
       )}
 
-      {/* Scanner input when an import is selected */}
-      {selectedImport && (
+      {/* ═══ STEP 1: ENTER JOB NUMBER ═══ */}
+      {step === 'job' && (
         <div style={{
-          padding: 16, marginBottom: 16, borderRadius: 8,
-          background: darkMode ? '#1a2a1a' : '#E8F5E9',
-          border: '2px solid #2E7D32'
+          padding: 20, borderRadius: 10,
+          background: darkMode ? '#1a1a2e' : '#E8EAF6',
+          border: `2px solid ${theme.accent}`,
+          marginBottom: 16
         }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#2E7D32' }}>
-            Assigning: {selectedImport.flex_job_number || selectedImport.id}
-            {selectedImport.customer_name && ` — ${selectedImport.customer_name}`}
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: theme.accent }}>
+            Step 1 → Enter the job number
           </div>
+          <input
+            ref={jobRef}
+            value={jobInput}
+            onChange={e => setJobInput(e.target.value)}
+            onKeyDown={handleJobLookup}
+            placeholder="Type or scan job number, then press Enter..."
+            style={{
+              width: '100%', padding: 16, fontSize: 22, fontWeight: 700, textAlign: 'center',
+              background: darkMode ? '#111' : '#fff', color: theme.text,
+              border: `2px solid ${theme.accent}`, borderRadius: 8, boxSizing: 'border-box',
+              fontFamily: "'SF Mono', monospace"
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+            <span style={{ fontSize: 11, color: theme.mutedText }}>
+              Type a Flex job # and press Enter to find it
+            </span>
+            <button onClick={skipToList} style={{
+              padding: '6px 14px', background: 'transparent',
+              border: `1px solid ${theme.border}`, borderRadius: 4,
+              color: theme.mutedText, cursor: 'pointer', fontSize: 11
+            }}>📋 Browse list instead</button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ STEP 2: SCAN SLEEVE ═══ */}
+      {step === 'sleeve' && matchedImport && (
+        <div style={{
+          padding: 20, borderRadius: 10,
+          background: darkMode ? '#1a2a1a' : '#E8F5E9',
+          border: '2px solid #2E7D32',
+          marginBottom: 16
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: '#2E7D32' }}>
+            Step 2 → Scan the sleeve barcode
+          </div>
+
+          {/* Job info card */}
+          <div style={{
+            padding: 14, borderRadius: 8, marginBottom: 14,
+            background: darkMode ? '#111' : '#fff',
+            border: `1px solid ${theme.border}`
+          }}>
+            {matchedImport.is_rush && (
+              <div style={{ background: '#C62828', color: '#fff', padding: '2px 10px', borderRadius: 4, fontSize: 10, fontWeight: 800, display: 'inline-block', marginBottom: 6, letterSpacing: 1 }}>
+                🔴 RUSH
+              </div>
+            )}
+            <div style={{ fontWeight: 800, fontSize: 20, fontFamily: "'SF Mono', monospace" }}>
+              {matchedImport.flex_job_number || matchedImport.id}
+            </div>
+            {matchedImport.customer_name && (
+              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4, color: theme.text }}>
+                {matchedImport.customer_name}
+              </div>
+            )}
+            {matchedImport.job_description && (
+              <div style={{ fontSize: 12, color: theme.mutedText, marginTop: 4 }}>{matchedImport.job_description}</div>
+            )}
+            {matchedImport.due_date && (
+              <div style={{ fontSize: 12, color: new Date(matchedImport.due_date) < new Date() ? '#C62828' : theme.mutedText, marginTop: 4 }}>
+                📅 Due: {new Date(matchedImport.due_date).toLocaleDateString()}
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: theme.mutedText, marginTop: 6, fontFamily: "'SF Mono', monospace" }}>
+              import: {matchedImport.id}
+            </div>
+          </div>
+
           <input
             ref={scanRef}
             value={scanInput}
@@ -677,59 +814,136 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
             onKeyDown={handleSleeveScan}
             placeholder="Scan sleeve barcode (JOB######)..."
             style={{
-              width: '100%', padding: 14, fontSize: 18, fontWeight: 700, textAlign: 'center',
+              width: '100%', padding: 16, fontSize: 22, fontWeight: 700, textAlign: 'center',
               background: darkMode ? '#111' : '#fff', color: theme.text,
               border: '2px solid #2E7D32', borderRadius: 8, boxSizing: 'border-box',
               fontFamily: "'SF Mono', monospace"
             }}
           />
-          <button onClick={() => setSelectedImport(null)} style={{
-            marginTop: 8, padding: '6px 16px', background: 'transparent',
-            border: `1px solid ${theme.border}`, borderRadius: 4,
-            color: theme.mutedText, cursor: 'pointer', fontSize: 11
-          }}>Cancel</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button onClick={() => { setMatchedImport(null); setStep('job'); }} style={{
+              padding: '6px 16px', background: 'transparent',
+              border: `1px solid ${theme.border}`, borderRadius: 4,
+              color: theme.mutedText, cursor: 'pointer', fontSize: 11
+            }}>← Wrong job, go back</button>
+          </div>
         </div>
       )}
 
-      {/* Import list */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {imports.map(imp => (
-          <div key={imp.id}
-            onClick={() => setSelectedImport(imp)}
-            style={{
-              padding: '10px 14px', borderRadius: 6,
-              background: selectedImport?.id === imp.id
-                ? (darkMode ? '#1a2a1a' : '#E8F5E9')
-                : (darkMode ? '#1a1a1a' : '#fff'),
-              border: `1px solid ${selectedImport?.id === imp.id ? '#2E7D32' : theme.border}`,
-              cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              transition: 'all 0.15s'
-            }}
-          >
-            <div>
-              <span style={{ fontWeight: 700, fontSize: 14, fontFamily: "'SF Mono', monospace" }}>
-                {imp.flex_job_number || imp.id}
-              </span>
-              {imp.customer_name && (
-                <span style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: theme.text }}>
-                  {imp.customer_name}
-                </span>
-              )}
-              {imp.job_description && (
-                <span style={{ marginLeft: 8, fontSize: 11, color: theme.mutedText }}>
-                  {imp.job_description}
-                </span>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {imp.is_rush && <span style={{ fontSize: 10, color: '#C62828', fontWeight: 700 }}>🔴 RUSH</span>}
-              <span style={{ fontSize: 10, color: theme.mutedText, fontFamily: "'SF Mono', monospace" }}>
-                {imp.id}
-              </span>
-            </div>
+      {/* ═══ BROWSE LIST MODE ═══ */}
+      {step === 'list' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+              Click a job to select it, then scan the sleeve
+            </span>
+            <button onClick={() => setStep('job')} style={{
+              padding: '6px 14px', background: 'transparent',
+              border: `1px solid ${theme.border}`, borderRadius: 4,
+              color: theme.mutedText, cursor: 'pointer', fontSize: 11
+            }}>← Back to search</button>
           </div>
-        ))}
-      </div>
+
+          {/* If they picked one from the list, show the sleeve scanner */}
+          {matchedImport && (
+            <div style={{
+              padding: 16, marginBottom: 16, borderRadius: 8,
+              background: darkMode ? '#1a2a1a' : '#E8F5E9',
+              border: '2px solid #2E7D32'
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: '#2E7D32' }}>
+                Assigning: {matchedImport.flex_job_number || matchedImport.id}
+                {matchedImport.customer_name && ` — ${matchedImport.customer_name}`}
+              </div>
+              <input
+                ref={scanRef}
+                value={scanInput}
+                onChange={e => setScanInput(e.target.value)}
+                onKeyDown={handleSleeveScan}
+                placeholder="Scan sleeve barcode (JOB######)..."
+                style={{
+                  width: '100%', padding: 14, fontSize: 18, fontWeight: 700, textAlign: 'center',
+                  background: darkMode ? '#111' : '#fff', color: theme.text,
+                  border: '2px solid #2E7D32', borderRadius: 8, boxSizing: 'border-box',
+                  fontFamily: "'SF Mono', monospace"
+                }}
+              />
+              <button onClick={() => setMatchedImport(null)} style={{
+                marginTop: 8, padding: '6px 16px', background: 'transparent',
+                border: `1px solid ${theme.border}`, borderRadius: 4,
+                color: theme.mutedText, cursor: 'pointer', fontSize: 11
+              }}>Cancel</button>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {imports.map(imp => (
+              <div key={imp.id}
+                onClick={() => { setMatchedImport(imp); }}
+                style={{
+                  padding: '10px 14px', borderRadius: 6,
+                  background: matchedImport?.id === imp.id
+                    ? (darkMode ? '#1a2a1a' : '#E8F5E9')
+                    : (darkMode ? '#1a1a1a' : '#fff'),
+                  border: `1px solid ${matchedImport?.id === imp.id ? '#2E7D32' : theme.border}`,
+                  cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  transition: 'all 0.15s'
+                }}
+              >
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 14, fontFamily: "'SF Mono', monospace" }}>
+                    {imp.flex_job_number || imp.id}
+                  </span>
+                  {imp.customer_name && (
+                    <span style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: theme.text }}>
+                      {imp.customer_name}
+                    </span>
+                  )}
+                  {imp.job_description && (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: theme.mutedText }}>
+                      {imp.job_description}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {imp.is_rush && <span style={{ fontSize: 10, color: '#C62828', fontWeight: 700 }}>🔴 RUSH</span>}
+                  {imp.due_date && (
+                    <span style={{ fontSize: 10, color: theme.mutedText }}>
+                      📅 {new Date(imp.due_date).toLocaleDateString()}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 10, color: theme.mutedText, fontFamily: "'SF Mono', monospace" }}>
+                    {imp.id}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ SESSION LOG ═══ */}
+      {assigned.length > 0 && step !== 'done' && (
+        <div style={{
+          marginTop: 20, padding: 14, borderRadius: 8,
+          background: darkMode ? '#111' : '#fafafa',
+          border: `1px solid ${theme.border}`
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: theme.mutedText, marginBottom: 8, fontFamily: "'SF Mono', monospace" }}>
+            ✅ Assigned this session ({assigned.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {assigned.map((a, i) => (
+              <div key={i} style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontFamily: "'SF Mono', monospace", color: '#2E7D32' }}>{a.jobNum}</span>
+                {a.customer && <span style={{ color: theme.mutedText }}>— {a.customer}</span>}
+                <span style={{ color: theme.mutedText }}>→</span>
+                <span style={{ fontWeight: 600, fontFamily: "'SF Mono', monospace" }}>{a.sleeve}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {toast && <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', background: toast.includes('❌') || toast.includes('⚠️') ? '#C62828' : '#2E7D32', color: '#fff', padding: '12px 24px', borderRadius: 8, fontWeight: 700, fontSize: 14, zIndex: 1000 }}>{toast}</div>}
     </div>

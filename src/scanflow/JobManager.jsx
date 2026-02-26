@@ -570,21 +570,33 @@ function SleeveInventory({ theme, darkMode, orgId }) {
 
 function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
   const [imports, setImports] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState('job'); // 'job' | 'sleeve' | 'done'
+  const [step, setStep] = useState('job'); // 'job' | 'newjob' | 'sleeve' | 'done' | 'list'
   const [jobInput, setJobInput] = useState('');
   const [scanInput, setScanInput] = useState('');
   const [matchedImport, setMatchedImport] = useState(null);
   const [toast, setToast] = useState('');
   const [assigned, setAssigned] = useState([]); // track what we've done this session
+  const [newJob, setNewJob] = useState({ flex_job_number: '', customer_name: '', job_description: '', send_to: 'DEPT0012', due_date: '', is_rush: false, status: 'waiting' });
+  const [editingAssigned, setEditingAssigned] = useState(null); // index into assigned[] for editing
+  const [editForm, setEditForm] = useState({});
+  const [statusInput, setStatusInput] = useState(''); // for custom status typing on sleeve step
+  const [isNewJob, setIsNewJob] = useState(false); // tracks if current assignment is a new job (not from imports)
   const jobRef = useRef(null);
   const scanRef = useRef(null);
+  const inpSt = getInputStyle(theme);
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
-  useEffect(() => { loadImports(); }, []);
+  useEffect(() => { loadImports(); loadDepts(); }, []);
   useEffect(() => { if (jobRef.current && step === 'job') jobRef.current.focus(); }, [step]);
   useEffect(() => { if (scanRef.current && step === 'sleeve') scanRef.current.focus(); }, [step]);
+
+  async function loadDepts() {
+    const { data } = await supabase.from('departments').select('id, name').eq('is_active', true).order('id');
+    if (data) setDepartments(data);
+  }
 
   async function loadImports() {
     setLoading(true);
@@ -615,17 +627,47 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
       const idMatch = imports.find(imp => imp.id.toLowerCase().includes(query.toLowerCase()));
       if (idMatch) {
         setMatchedImport(idMatch);
+        setIsNewJob(false);
+        setStatusInput(idMatch.status || 'waiting');
         setJobInput('');
         setStep('sleeve');
         return;
       }
-      sh(`⚠️ No unassigned import found matching "${query}"`);
+      // Not found — offer to create it
+      setNewJob(prev => ({ ...prev, flex_job_number: query }));
       setJobInput('');
+      setStep('newjob');
       return;
     }
 
     setMatchedImport(match);
+    setIsNewJob(false);
+    setStatusInput(match.status || 'waiting');
     setJobInput('');
+    setStep('sleeve');
+  }
+
+  // Step 1b: Create a new job on the fly and go to sleeve scan
+  function handleNewJobSubmit() {
+    if (!newJob.flex_job_number) { sh('⚠️ Job number is required'); return; }
+
+    // Build a virtual import object (not saved to DB — goes straight to sleeve)
+    const virtualImport = {
+      id: null, // no IMP record
+      flex_job_number: newJob.flex_job_number,
+      customer_name: newJob.customer_name || null,
+      job_description: newJob.job_description || null,
+      required_materials: null,
+      status: newJob.status || 'waiting',
+      current_department_id: newJob.send_to,
+      current_station_id: null,
+      due_date: newJob.due_date || null,
+      is_rush: newJob.is_rush,
+    };
+
+    setMatchedImport(virtualImport);
+    setIsNewJob(true);
+    setStatusInput(virtualImport.status);
     setStep('sleeve');
   }
 
@@ -647,13 +689,15 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
     if (!sleeve) { sh(`⚠️ Sleeve ${code} not found`); return; }
     if (sleeve.status !== 'available') { sh(`⚠️ Sleeve ${code} is ${sleeve.status}, not available`); return; }
 
-    // Transfer the import data to the real sleeve
+    const finalStatus = statusInput.trim() || matchedImport.status || 'waiting';
+
+    // Transfer the job data to the real sleeve
     const { error: updateErr } = await supabase.from('job_sleeves').update({
       flex_job_number: matchedImport.flex_job_number,
       customer_name: matchedImport.customer_name,
       job_description: matchedImport.job_description,
       required_materials: matchedImport.required_materials,
-      status: matchedImport.status || 'waiting',
+      status: finalStatus,
       current_department_id: matchedImport.current_department_id,
       current_station_id: matchedImport.current_station_id,
       entered_current_at: new Date().toISOString(),
@@ -663,30 +707,68 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
 
     if (updateErr) { sh(`❌ ${updateErr.message}`); return; }
 
-    // Delete the import record
-    const { error: delErr } = await supabase.from('job_sleeves').delete().eq('id', matchedImport.id);
-    if (delErr) { sh(`⚠️ Sleeve linked but couldn't delete import: ${delErr.message}`); }
+    // If this was an import (not a new job), delete the IMP record
+    if (!isNewJob && matchedImport.id) {
+      const { error: delErr } = await supabase.from('job_sleeves').delete().eq('id', matchedImport.id);
+      if (delErr) { sh(`⚠️ Sleeve linked but couldn't delete import: ${delErr.message}`); }
+    }
 
-    // Track it for the session log
+    // Track it for the session log (with enough data to edit later)
     setAssigned(prev => [...prev, {
       jobNum: matchedImport.flex_job_number || matchedImport.id,
       customer: matchedImport.customer_name,
-      sleeve: code
+      sleeve: code,
+      wasNew: isNewJob,
+      status: finalStatus,
+      description: matchedImport.job_description,
+      deptId: matchedImport.current_department_id,
+      dueDate: matchedImport.due_date,
+      isRush: matchedImport.is_rush,
     }]);
 
-    sh(`✅ ${matchedImport.flex_job_number || matchedImport.id} → ${code}`);
+    sh(`✅ ${matchedImport.flex_job_number || matchedImport.id} → ${code} [${finalStatus}]`);
 
-    // Remove from local list and loop back
-    const remaining = imports.filter(i => i.id !== matchedImport.id);
-    setImports(remaining);
-    setMatchedImport(null);
-
-    if (remaining.length === 0) {
-      setStep('done');
-    } else {
-      setStep('job');
+    // Remove from local list if it was an import
+    if (!isNewJob && matchedImport.id) {
+      const remaining = imports.filter(i => i.id !== matchedImport.id);
+      setImports(remaining);
     }
+
+    // Reset for next
+    setMatchedImport(null);
+    setIsNewJob(false);
+    setStatusInput('');
+    setNewJob({ flex_job_number: '', customer_name: '', job_description: '', send_to: 'DEPT0012', due_date: '', is_rush: false, status: 'waiting' });
+    setStep('job');
   }
+
+  // Edit a previously assigned job from the session log
+  async function handleEditSave() {
+    if (editingAssigned === null) return;
+    const item = assigned[editingAssigned];
+    const ef = editForm;
+
+    const { error } = await supabase.from('job_sleeves').update({
+      customer_name: ef.customer_name || null,
+      job_description: ef.job_description || null,
+      status: ef.status || 'waiting',
+      current_department_id: ef.deptId || null,
+      due_date: ef.dueDate || null,
+      is_rush: ef.isRush || false,
+    }).eq('id', item.sleeve);
+
+    if (error) { sh(`❌ ${error.message}`); return; }
+
+    // Update local assigned list
+    const updated = [...assigned];
+    updated[editingAssigned] = { ...item, customer: ef.customer_name, description: ef.job_description, status: ef.status, deptId: ef.deptId, dueDate: ef.dueDate, isRush: ef.isRush };
+    setAssigned(updated);
+    setEditingAssigned(null);
+    sh(`✅ Updated ${item.jobNum} on sleeve ${item.sleeve}`);
+  }
+
+  // Common status presets for the combo picker
+  const statusPresets = ['waiting', 'active', 'completed', 'on_hold', 'invoicing', 'delivering', 'proofing', 'printing'];
 
   function skipToList() {
     // Let them pick from the list instead of typing
@@ -763,6 +845,108 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
         </div>
       )}
 
+      {/* ═══ STEP 1b: NEW JOB — Not in imports, add it quick ═══ */}
+      {step === 'newjob' && (
+        <div style={{
+          padding: 20, borderRadius: 10,
+          background: darkMode ? '#2a1f0d' : '#FFF3E0',
+          border: '2px solid #E65100',
+          marginBottom: 16
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: '#E65100' }}>
+            ✨ New Job — Not on the WIP list
+          </div>
+          <div style={{ fontSize: 11, color: theme.mutedText, marginBottom: 14 }}>
+            "{newJob.flex_job_number}" wasn't found in imports. Fill in what you know and assign it.
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              value={newJob.flex_job_number}
+              onChange={e => setNewJob(p => ({ ...p, flex_job_number: e.target.value }))}
+              placeholder="Job number (required)"
+              style={{ ...inpSt, border: '2px solid #E65100', fontWeight: 700, fontSize: 16 }}
+              autoFocus
+            />
+            <input
+              value={newJob.customer_name}
+              onChange={e => setNewJob(p => ({ ...p, customer_name: e.target.value }))}
+              placeholder="Customer name"
+              style={inpSt}
+            />
+            <input
+              value={newJob.job_description}
+              onChange={e => setNewJob(p => ({ ...p, job_description: e.target.value }))}
+              placeholder="Job description"
+              style={inpSt}
+            />
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: theme.mutedText, display: 'block', marginBottom: 4 }}>Department:</label>
+                <select value={newJob.send_to} onChange={e => setNewJob(p => ({ ...p, send_to: e.target.value }))}
+                  style={{ ...inpSt, cursor: 'pointer', marginBottom: 0 }}>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}{d.id === 'DEPT0012' ? ' (default)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: theme.mutedText, display: 'block', marginBottom: 4 }}>Due date:</label>
+                <input type="date" value={newJob.due_date} onChange={e => setNewJob(p => ({ ...p, due_date: e.target.value }))}
+                  style={{ ...inpSt, cursor: 'pointer', marginBottom: 0 }} />
+              </div>
+            </div>
+
+            {/* Status — combo: type custom or pick from presets */}
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 600, color: theme.mutedText, display: 'block', marginBottom: 4 }}>Status:</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                {statusPresets.map(s => (
+                  <button key={s} type="button" onClick={() => setNewJob(p => ({ ...p, status: s }))} style={{
+                    padding: '4px 10px', borderRadius: 4, fontSize: 11, fontWeight: newJob.status === s ? 700 : 400,
+                    background: newJob.status === s ? theme.accent : 'transparent',
+                    color: newJob.status === s ? '#fff' : theme.mutedText,
+                    border: `1px solid ${newJob.status === s ? theme.accent : theme.border}`,
+                    cursor: 'pointer', fontFamily: "'SF Mono', monospace"
+                  }}>{s}</button>
+                ))}
+              </div>
+              <input
+                value={newJob.status}
+                onChange={e => setNewJob(p => ({ ...p, status: e.target.value }))}
+                placeholder="Or type a custom status..."
+                style={{ ...inpSt, marginBottom: 0, fontSize: 12 }}
+              />
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '8px 12px',
+              background: newJob.is_rush ? '#C62828' : 'transparent',
+              border: `2px solid ${newJob.is_rush ? '#C62828' : theme.border}`,
+              borderRadius: 8, transition: 'all 0.2s'
+            }}>
+              <input type="checkbox" checked={newJob.is_rush} onChange={e => setNewJob(p => ({ ...p, is_rush: e.target.checked }))} />
+              <span style={{ fontWeight: 700, fontSize: 13, color: newJob.is_rush ? '#fff' : theme.mutedText }}>
+                🔴 RUSH ORDER
+              </span>
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <button onClick={() => { setNewJob({ flex_job_number: '', customer_name: '', job_description: '', send_to: 'DEPT0012', due_date: '', is_rush: false, status: 'waiting' }); setStep('job'); }} style={{
+              padding: '10px 16px', background: 'transparent', border: `1px solid ${theme.border}`,
+              color: theme.mutedText, borderRadius: 6, cursor: 'pointer', fontWeight: 600, flex: 1, fontSize: 12
+            }}>← Back</button>
+            <button onClick={handleNewJobSubmit} disabled={!newJob.flex_job_number} style={{
+              padding: '10px 16px', background: newJob.flex_job_number ? '#E65100' : '#555',
+              color: '#fff', border: 'none', borderRadius: 6,
+              cursor: newJob.flex_job_number ? 'pointer' : 'not-allowed',
+              fontWeight: 700, fontSize: 14, flex: 2
+            }}>📋 Assign to Sleeve →</button>
+          </div>
+        </div>
+      )}
+
       {/* ═══ STEP 2: SCAN SLEEVE ═══ */}
       {step === 'sleeve' && matchedImport && (
         <div style={{
@@ -803,8 +987,30 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
               </div>
             )}
             <div style={{ fontSize: 10, color: theme.mutedText, marginTop: 6, fontFamily: "'SF Mono', monospace" }}>
-              import: {matchedImport.id}
+              {isNewJob ? '✨ new job' : `import: ${matchedImport.id}`}
             </div>
+          </div>
+
+          {/* Status picker — quick presets + custom input */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#2E7D32', display: 'block', marginBottom: 4 }}>Status:</label>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 6 }}>
+              {statusPresets.map(s => (
+                <button key={s} type="button" onClick={() => setStatusInput(s)} style={{
+                  padding: '3px 9px', borderRadius: 4, fontSize: 10, fontWeight: statusInput === s ? 700 : 400,
+                  background: statusInput === s ? '#2E7D32' : 'transparent',
+                  color: statusInput === s ? '#fff' : theme.mutedText,
+                  border: `1px solid ${statusInput === s ? '#2E7D32' : theme.border}`,
+                  cursor: 'pointer', fontFamily: "'SF Mono', monospace"
+                }}>{s}</button>
+              ))}
+            </div>
+            <input
+              value={statusInput}
+              onChange={e => setStatusInput(e.target.value)}
+              placeholder="Or type a custom status..."
+              style={{ ...inpSt, marginBottom: 0, fontSize: 12, padding: 8 }}
+            />
           </div>
 
           <input
@@ -922,7 +1128,7 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
         </div>
       )}
 
-      {/* ═══ SESSION LOG ═══ */}
+      {/* ═══ SESSION LOG — click to edit ═══ */}
       {assigned.length > 0 && step !== 'done' && (
         <div style={{
           marginTop: 20, padding: 14, borderRadius: 8,
@@ -930,15 +1136,83 @@ function SleeveAssignment({ theme, darkMode, orgId, onDone }) {
           border: `1px solid ${theme.border}`
         }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: theme.mutedText, marginBottom: 8, fontFamily: "'SF Mono', monospace" }}>
-            ✅ Assigned this session ({assigned.length})
+            ✅ Assigned this session ({assigned.length}) — click to edit
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {assigned.map((a, i) => (
-              <div key={i} style={{ fontSize: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontWeight: 700, fontFamily: "'SF Mono', monospace", color: '#2E7D32' }}>{a.jobNum}</span>
-                {a.customer && <span style={{ color: theme.mutedText }}>— {a.customer}</span>}
-                <span style={{ color: theme.mutedText }}>→</span>
-                <span style={{ fontWeight: 600, fontFamily: "'SF Mono', monospace" }}>{a.sleeve}</span>
+              <div key={i}>
+                <div onClick={() => {
+                  if (editingAssigned === i) { setEditingAssigned(null); return; }
+                  setEditingAssigned(i);
+                  setEditForm({ customer_name: a.customer || '', job_description: a.description || '', status: a.status || 'waiting', deptId: a.deptId || '', dueDate: a.dueDate || '', isRush: a.isRush || false });
+                }} style={{
+                  fontSize: 12, display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer',
+                  padding: '4px 6px', borderRadius: 4,
+                  background: editingAssigned === i ? (darkMode ? '#1a2a1a' : '#E8F5E9') : 'transparent',
+                  transition: 'background 0.15s'
+                }}>
+                  <span style={{ fontWeight: 700, fontFamily: "'SF Mono', monospace", color: '#2E7D32' }}>{a.jobNum}</span>
+                  {a.customer && <span style={{ color: theme.mutedText }}>— {a.customer}</span>}
+                  <span style={{ color: theme.mutedText }}>→</span>
+                  <span style={{ fontWeight: 600, fontFamily: "'SF Mono', monospace" }}>{a.sleeve}</span>
+                  <span style={{ fontSize: 9, background: statusColors[a.status] || '#888', color: '#fff', padding: '1px 6px', borderRadius: 3, fontWeight: 600 }}>{a.status}</span>
+                  {a.wasNew && <span style={{ fontSize: 9, background: '#E65100', color: '#fff', padding: '1px 6px', borderRadius: 3, fontWeight: 700 }}>NEW</span>}
+                  <span style={{ fontSize: 9, color: theme.mutedText, marginLeft: 'auto' }}>✏️</span>
+                </div>
+
+                {/* Inline edit form */}
+                {editingAssigned === i && (
+                  <div style={{
+                    padding: 12, marginTop: 4, marginBottom: 4, borderRadius: 6,
+                    background: darkMode ? '#1a1a1a' : '#fff',
+                    border: `1px solid ${theme.border}`
+                  }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <input value={editForm.customer_name} onChange={e => setEditForm(p => ({ ...p, customer_name: e.target.value }))}
+                        placeholder="Customer name" style={{ ...inpSt, flex: 1, marginBottom: 0, fontSize: 12 }} />
+                      <input value={editForm.job_description} onChange={e => setEditForm(p => ({ ...p, job_description: e.target.value }))}
+                        placeholder="Description" style={{ ...inpSt, flex: 1, marginBottom: 0, fontSize: 12 }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 4 }}>
+                          {statusPresets.map(s => (
+                            <button key={s} type="button" onClick={() => setEditForm(p => ({ ...p, status: s }))} style={{
+                              padding: '2px 7px', borderRadius: 3, fontSize: 9, fontWeight: editForm.status === s ? 700 : 400,
+                              background: editForm.status === s ? theme.accent : 'transparent',
+                              color: editForm.status === s ? '#fff' : theme.mutedText,
+                              border: `1px solid ${editForm.status === s ? theme.accent : theme.border}`,
+                              cursor: 'pointer', fontFamily: "'SF Mono', monospace"
+                            }}>{s}</button>
+                          ))}
+                        </div>
+                        <input value={editForm.status} onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}
+                          placeholder="Status" style={{ ...inpSt, marginBottom: 0, fontSize: 11, padding: 6 }} />
+                      </div>
+                      <select value={editForm.deptId} onChange={e => setEditForm(p => ({ ...p, deptId: e.target.value }))}
+                        style={{ ...inpSt, marginBottom: 0, fontSize: 11, flex: 1 }}>
+                        <option value="">No department</option>
+                        {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input type="date" value={editForm.dueDate} onChange={e => setEditForm(p => ({ ...p, dueDate: e.target.value }))}
+                        style={{ ...inpSt, marginBottom: 0, fontSize: 11, flex: 1, padding: 6 }} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer', color: editForm.isRush ? '#C62828' : theme.mutedText }}>
+                        <input type="checkbox" checked={editForm.isRush} onChange={e => setEditForm(p => ({ ...p, isRush: e.target.checked }))} />
+                        🔴 Rush
+                      </label>
+                      <button onClick={handleEditSave} style={{
+                        padding: '6px 14px', background: '#2E7D32', color: '#fff', border: 'none',
+                        borderRadius: 4, cursor: 'pointer', fontWeight: 700, fontSize: 11
+                      }}>💾 Save</button>
+                      <button onClick={() => setEditingAssigned(null)} style={{
+                        padding: '6px 10px', background: 'transparent', border: `1px solid ${theme.border}`,
+                        borderRadius: 4, cursor: 'pointer', color: theme.mutedText, fontSize: 11
+                      }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

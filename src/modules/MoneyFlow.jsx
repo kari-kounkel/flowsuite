@@ -1,66 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { createClient } from '@supabase/supabase-js'
 
-// ─── SEED TASK CARDS ─────────────────────────────────────────────────────────
-// Replace or extend this array as needed. Nothing hardwired to MMP forever.
-const SEED_TASKS = [
-  {
-    id: 1,
-    entity: 'omega',
-    type: 'AP',
-    name: 'Property Taxes 2024',
-    dueDate: '2026-03-15',
-    description: 'Confirm 2024 property taxes were paid. Post payment entry if needed.',
-    resources: 'DR 20000 Accounts Payable / CR 10100 Checking Old National',
-    docs: 'Hennepin County tax records 2024',
-    status: 'open',
-  },
-  {
-    id: 2,
-    entity: 'omega',
-    type: 'AP',
-    name: 'Property Taxes 2025',
-    dueDate: '2026-04-01',
-    description: 'Obtain Hennepin County bills for 4024 & 4026 Washington. Record expense.',
-    resources: 'DR 69060 Property Taxes / CR 20000 Accounts Payable',
-    docs: 'Hennepin County bills — 4024 Washington, 4026 Washington',
-    status: 'open',
-  },
-  {
-    id: 3,
-    entity: 'omega',
-    type: 'Admin',
-    name: 'Hub COA Cleanup',
-    dueDate: '2026-03-31',
-    description: 'Audit and clean Omega chart of accounts. Add 66500 Management Fees. Remove orphaned accounts.',
-    resources: 'QBO Chart of Accounts — Omega',
-    docs: 'Current COA export from QBO',
-    status: 'open',
-  },
-  {
-    id: 4,
-    entity: 'omega',
-    type: 'Admin',
-    name: 'Management Agreement',
-    dueDate: '2026-04-15',
-    description: 'Finalize management agreement between CARES Consulting Inc. and Omega.',
-    resources: 'Account 66500 Management Fees (add to COA first)',
-    docs: 'Draft management agreement',
-    status: 'open',
-  },
-  {
-    id: 5,
-    entity: 'iaz',
-    type: 'Admin',
-    name: 'Remaining Month-End Entries',
-    dueDate: '2026-03-31',
-    description: 'Complete remaining IAZ month-end journal entries after Omega close is finished.',
-    resources: 'QBO — I A Z Corporation dba Minuteman Press Uptown',
-    docs: 'Flex AR report, bank statements',
-    status: 'open',
-  },
-]
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://keegxjuckohhtxllqxak.supabase.co'
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// ─── RECURRING JE DEFINITIONS ────────────────────────────────────────────────
+// ─── RECURRING JE DEFINITIONS (unchanged) ────────────────────────────────────
 const RECURRING_JES = [
   {
     id: 'depr',
@@ -133,31 +79,270 @@ const TYPE_COLORS = {
 function fmt(n) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-
 function mmPad(n) { return String(n).padStart(2, '0') }
 
+// ─── ADVANCE DATE HELPER ──────────────────────────────────────────────────────
+// When a recurring task is marked done, advance due_date by recur_interval days
+function advanceDueDate(dueDateStr, intervalDays) {
+  if (!intervalDays || intervalDays <= 0) return dueDateStr
+  const d = new Date(dueDateStr + 'T00:00:00')
+  d.setDate(d.getDate() + intervalDays)
+  return d.toISOString().split('T')[0]
+}
+
+// ─── TASK FORM MODAL ─────────────────────────────────────────────────────────
+const BLANK_FORM = {
+  entity: 'omega',
+  type: 'AP',
+  name: '',
+  due_date: new Date().toISOString().split('T')[0],
+  description: '',
+  resources: '',
+  docs: '',
+  status: 'open',
+  is_recurring: false,
+  recur_interval: 30,
+}
+
+function TaskFormModal({ task, orgId, C, onSave, onClose, onDelete }) {
+  const isEdit = !!task?.id
+  const [form, setForm] = useState(isEdit ? {
+    entity: task.entity || 'omega',
+    type: task.type || 'AP',
+    name: task.name || '',
+    due_date: task.due_date || '',
+    description: task.description || '',
+    resources: task.resources || '',
+    docs: task.docs || '',
+    status: task.status || 'open',
+    is_recurring: task.is_recurring || false,
+    recur_interval: task.recur_interval || 30,
+  } : { ...BLANK_FORM })
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  async function handleSave() {
+    if (!form.name.trim()) return
+    setSaving(true)
+    if (isEdit) {
+      const { error } = await supabase
+        .from('moneyflow_tasks')
+        .update({ ...form, updated_at: new Date().toISOString() })
+        .eq('id', task.id)
+      if (!error) onSave()
+    } else {
+      const { error } = await supabase
+        .from('moneyflow_tasks')
+        .insert([{ ...form, org_id: orgId }])
+      if (!error) onSave()
+    }
+    setSaving(false)
+  }
+
+  async function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    setDeleting(true)
+    const { error } = await supabase
+      .from('moneyflow_tasks')
+      .delete()
+      .eq('id', task.id)
+    if (!error) onDelete()
+    setDeleting(false)
+  }
+
+  const inputStyle = {
+    width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
+    color: C.w, borderRadius: 6, padding: '7px 10px',
+    fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const labelStyle = {
+    fontSize: 10, color: C.g, display: 'block', marginBottom: 4,
+    textTransform: 'uppercase', letterSpacing: '0.8px',
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 1000, padding: 16,
+    }}>
+      <div style={{
+        background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 14,
+        width: '100%', maxWidth: 500, maxHeight: '90vh', overflowY: 'auto',
+        padding: 24, boxShadow: '0 8px 40px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, color: C.go, fontSize: 15, fontWeight: 700 }}>
+            {isEdit ? '✏️ Edit Task' : '➕ New Task'}
+          </h3>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: C.g, fontSize: 18,
+            cursor: 'pointer', lineHeight: 1, padding: '0 4px',
+          }}>✕</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Entity</label>
+            <select value={form.entity} onChange={e => set('entity', e.target.value)} style={inputStyle}>
+              <option value="omega">Omega</option>
+              <option value="iaz">I A Z</option>
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Type</label>
+            <select value={form.type} onChange={e => set('type', e.target.value)} style={inputStyle}>
+              {['AP','AR','PR','Admin'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Task Name *</label>
+          <input
+            value={form.name}
+            onChange={e => set('name', e.target.value)}
+            placeholder="e.g. Property Taxes 2025"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Due Date</label>
+          <input
+            type="date"
+            value={form.due_date}
+            onChange={e => set('due_date', e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Description</label>
+          <textarea
+            value={form.description}
+            onChange={e => set('description', e.target.value)}
+            rows={3}
+            placeholder="What needs to happen..."
+            style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Accounts / Resources</label>
+          <input
+            value={form.resources}
+            onChange={e => set('resources', e.target.value)}
+            placeholder="DR 20000 AP / CR 10100 Checking..."
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Docs Needed</label>
+          <input
+            value={form.docs}
+            onChange={e => set('docs', e.target.value)}
+            placeholder="Bank statement, Hennepin County bill..."
+            style={inputStyle}
+          />
+        </div>
+
+        {/* Recurring toggle */}
+        <div style={{
+          marginBottom: 16, padding: '12px 14px',
+          background: C.bg, borderRadius: 8, border: `1px solid ${C.bdr}`,
+        }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={form.is_recurring}
+              onChange={e => set('is_recurring', e.target.checked)}
+              style={{ accentColor: C.go, width: 15, height: 15 }}
+            />
+            <span style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>Recurring task</span>
+          </label>
+          {form.is_recurring && (
+            <div style={{ marginTop: 10 }}>
+              <label style={labelStyle}>Advance due date by (days) when marked done</label>
+              <input
+                type="number"
+                value={form.recur_interval}
+                onChange={e => set('recur_interval', parseInt(e.target.value) || 30)}
+                min={1}
+                style={{ ...inputStyle, width: 100 }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {isEdit && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                style={{
+                  background: confirmDelete ? '#c04040' : 'transparent',
+                  border: `1px solid ${confirmDelete ? '#c04040' : '#c04040'}`,
+                  color: confirmDelete ? '#fff' : '#c04040',
+                  padding: '7px 16px', borderRadius: 7, cursor: 'pointer',
+                  fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+                }}
+              >
+                {deleting ? 'Deleting…' : confirmDelete ? 'Confirm Delete' : '🗑 Delete'}
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={onClose} style={{
+              background: 'transparent', border: `1px solid ${C.bdr}`,
+              color: C.g, padding: '7px 16px', borderRadius: 7,
+              cursor: 'pointer', fontSize: 11, fontFamily: 'inherit',
+            }}>Cancel</button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !form.name.trim()}
+              style={{
+                background: C.go, border: 'none', color: '#fff',
+                padding: '7px 20px', borderRadius: 7, cursor: 'pointer',
+                fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+                opacity: (!form.name.trim()) ? 0.5 : 1,
+              }}
+            >{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Task'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── FLIP CARD ───────────────────────────────────────────────────────────────
-function TaskCard({ task, C, onToggleDone }) {
+function TaskCard({ task, C, onToggleDone, onEdit }) {
   const [flipped, setFlipped] = useState(false)
-  const ec = ENTITY_COLORS[task.entity]
-  const tc = TYPE_COLORS[task.type]
+  const ec = ENTITY_COLORS[task.entity] || ENTITY_COLORS.omega
+  const tc = TYPE_COLORS[task.type] || '#a0a0a0'
   const done = task.status === 'done'
 
   return (
-    <div
-      onClick={() => setFlipped(f => !f)}
-      style={{
-        width: 200, height: 220, cursor: 'pointer', perspective: 800,
-        opacity: done ? 0.5 : 1, transition: 'opacity 0.3s',
-        flexShrink: 0,
-      }}
-    >
-      <div style={{
-        position: 'relative', width: '100%', height: '100%',
-        transformStyle: 'preserve-3d',
-        transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
-        transition: 'transform 0.45s cubic-bezier(.4,0,.2,1)',
-      }}>
+    <div style={{
+      width: 200, height: 220, cursor: 'pointer', perspective: 800,
+      opacity: done ? 0.5 : 1, transition: 'opacity 0.3s',
+      flexShrink: 0,
+    }}>
+      <div
+        onClick={() => setFlipped(f => !f)}
+        style={{
+          position: 'relative', width: '100%', height: '100%',
+          transformStyle: 'preserve-3d',
+          transform: flipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
+          transition: 'transform 0.45s cubic-bezier(.4,0,.2,1)',
+        }}
+      >
         {/* FRONT */}
         <div style={{
           position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
@@ -167,34 +352,38 @@ function TaskCard({ task, C, onToggleDone }) {
           boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
           display: 'flex', flexDirection: 'column',
         }}>
-          {/* Entity color bar */}
           <div style={{ background: ec.bg, height: 8, width: '100%' }} />
-          {/* Type accent stripe */}
-          <div style={{
-            background: tc, height: 3, width: '100%',
-            marginBottom: 2,
-          }} />
+          <div style={{ background: tc, height: 3, width: '100%', marginBottom: 2 }} />
           <div style={{ padding: '10px 12px', flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {/* Entity + type badges */}
-            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-              <span style={{
-                background: ec.bg, color: '#fff', fontSize: 9, fontWeight: 700,
-                padding: '2px 6px', borderRadius: 4, letterSpacing: '0.5px',
-                textTransform: 'uppercase',
-              }}>{ec.label}</span>
-              <span style={{
-                background: tc + '33', color: tc, fontSize: 9, fontWeight: 700,
-                padding: '2px 6px', borderRadius: 4, letterSpacing: '0.5px',
-              }}>{task.type}</span>
+            <div style={{ display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: 5 }}>
+                <span style={{
+                  background: ec.bg, color: '#fff', fontSize: 9, fontWeight: 700,
+                  padding: '2px 6px', borderRadius: 4, letterSpacing: '0.5px',
+                  textTransform: 'uppercase',
+                }}>{ec.label}</span>
+                <span style={{
+                  background: tc + '33', color: tc, fontSize: 9, fontWeight: 700,
+                  padding: '2px 6px', borderRadius: 4, letterSpacing: '0.5px',
+                }}>{task.type}</span>
+              </div>
+              {/* Edit button — stops propagation so card doesn't flip */}
+              <button
+                onClick={e => { e.stopPropagation(); onEdit(task) }}
+                style={{
+                  background: 'none', border: 'none', color: C.g, cursor: 'pointer',
+                  fontSize: 12, padding: '0 2px', lineHeight: 1, opacity: 0.7,
+                }}
+                title="Edit task"
+              >✏️</button>
             </div>
-            {/* Task name */}
             <div style={{
               fontSize: 13, fontWeight: 600, color: C.w,
               lineHeight: 1.3, flex: 1,
             }}>{task.name}</div>
-            {/* Due date */}
             <div style={{ fontSize: 10, color: C.g, fontFamily: "'DM Mono', monospace" }}>
-              Due {task.dueDate}
+              Due {task.due_date}
+              {task.is_recurring && <span style={{ marginLeft: 5, color: C.go, fontSize: 9 }}>↻</span>}
             </div>
             <div style={{ fontSize: 9, color: C.g, opacity: 0.6 }}>tap to flip →</div>
           </div>
@@ -223,14 +412,14 @@ function TaskCard({ task, C, onToggleDone }) {
               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9 }}>{task.resources}</span>
             </div>
             <button
-              onClick={e => { e.stopPropagation(); onToggleDone(task.id) }}
+              onClick={e => { e.stopPropagation(); onToggleDone(task) }}
               style={{
                 background: done ? C.gD : ec.bg,
                 color: done ? C.g : '#fff',
                 border: 'none', borderRadius: 6, padding: '5px 0',
                 fontSize: 10, fontWeight: 700, cursor: 'pointer', width: '100%',
               }}
-            >{done ? '↩ Reopen' : '✓ Mark Done'}</button>
+            >{done ? '↩ Reopen' : task.is_recurring ? '✓ Done — advance date' : '✓ Mark Done'}</button>
           </div>
         </div>
       </div>
@@ -238,13 +427,12 @@ function TaskCard({ task, C, onToggleDone }) {
   )
 }
 
-// ─── JE DISPLAY ──────────────────────────────────────────────────────────────
+// ─── JE DISPLAY (unchanged) ───────────────────────────────────────────────────
 function JEOutput({ je, month, year, utilAmounts, C }) {
   const mm = mmPad(month)
   const journalNum = `KK ${je.code} ${year} ${mm}`
   const monthName = MONTHS[month - 1]
 
-  // Resolve lines (utilities need live amounts)
   const lines = je.lines.map(l => {
     if (l.isTotal) {
       const total = (utilAmounts.xcel || 0) + (utilAmounts.cp || 0) + (utilAmounts.water || 0)
@@ -265,7 +453,6 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
       background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
       padding: '16px 20px', fontFamily: "'DM Mono', monospace",
     }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.go, letterSpacing: '1px' }}>
@@ -282,7 +469,6 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
         </div>
       </div>
 
-      {/* Lines table */}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
@@ -327,9 +513,15 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
 // ─── MAIN MODULE ─────────────────────────────────────────────────────────────
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('tasks')
-  const [tasks, setTasks] = useState(SEED_TASKS)
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [filterEntity, setFilterEntity] = useState('all')
   const [filterType, setFilterType] = useState('all')
+
+  // Modal state
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingTask, setEditingTask] = useState(null) // null = new task
 
   // JE Generator state
   const [selectedJE, setSelectedJE] = useState(RECURRING_JES[0].id)
@@ -337,18 +529,90 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [jeYear, setJeYear] = useState(new Date().getFullYear())
   const [utilAmounts, setUtilAmounts] = useState({ xcel: '', cp: '', water: '' })
 
-  function toggleDone(id) {
-    setTasks(ts => ts.map(t => t.id === id
-      ? { ...t, status: t.status === 'done' ? 'open' : 'done' }
-      : t
-    ))
+  // ── LOAD TASKS ──
+  const loadTasks = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const { data, error: err } = await supabase
+        .from('moneyflow_tasks')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('due_date', { ascending: true })
+      if (err) throw err
+      setTasks(data || [])
+    } catch (e) {
+      setError(e.message || 'Failed to load tasks')
+    } finally {
+      setLoading(false)
+    }
+  }, [orgId])
+
+  useEffect(() => { loadTasks() }, [loadTasks])
+
+  // ── TOGGLE DONE ──
+  // If recurring + marking done → advance due_date by recur_interval, keep status 'open'
+  // If not recurring → toggle between open/done
+  async function toggleDone(task) {
+    const isDone = task.status === 'done'
+
+    if (!isDone && task.is_recurring && task.recur_interval > 0) {
+      // Advance the date, keep open
+      const newDate = advanceDueDate(task.due_date, task.recur_interval)
+      const { error: err } = await supabase
+        .from('moneyflow_tasks')
+        .update({ due_date: newDate, updated_at: new Date().toISOString() })
+        .eq('id', task.id)
+      if (!err) {
+        setTasks(ts => ts.map(t =>
+          t.id === task.id ? { ...t, due_date: newDate } : t
+        ))
+      }
+    } else {
+      // Toggle status
+      const newStatus = isDone ? 'open' : 'done'
+      const { error: err } = await supabase
+        .from('moneyflow_tasks')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', task.id)
+      if (!err) {
+        setTasks(ts => ts.map(t =>
+          t.id === task.id ? { ...t, status: newStatus } : t
+        ))
+      }
+    }
+  }
+
+  function openNewTask() {
+    setEditingTask(null)
+    setModalOpen(true)
+  }
+
+  function openEditTask(task) {
+    setEditingTask(task)
+    setModalOpen(true)
+  }
+
+  function closeModal() {
+    setModalOpen(false)
+    setEditingTask(null)
+  }
+
+  function handleSaved() {
+    closeModal()
+    loadTasks()
+  }
+
+  function handleDeleted() {
+    closeModal()
+    loadTasks()
   }
 
   const filtered = tasks.filter(t => {
     if (filterEntity !== 'all' && t.entity !== filterEntity) return false
     if (filterType !== 'all' && t.type !== filterType) return false
     return true
-  }).sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+  })
 
   const activeJE = RECURRING_JES.find(j => j.id === selectedJE)
 
@@ -364,6 +628,18 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   return (
     <div style={{ fontFamily: "'Outfit', sans-serif" }}>
+      {/* Modal */}
+      {modalOpen && (
+        <TaskFormModal
+          task={editingTask}
+          orgId={orgId}
+          C={C}
+          onSave={handleSaved}
+          onClose={closeModal}
+          onDelete={handleDeleted}
+        />
+      )}
+
       {/* Module header */}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
@@ -384,8 +660,8 @@ export default function MoneyFlowModule({ orgId, C }) {
       {/* ── TASK CARDS TAB ── */}
       {tab === 'tasks' && (
         <div>
-          {/* Filters */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+          {/* Filters + Add button */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
             {['all','omega','iaz'].map(e => pill(
               e === 'all' ? 'All Entities' : ENTITY_COLORS[e].label,
               filterEntity === e,
@@ -397,17 +673,41 @@ export default function MoneyFlowModule({ orgId, C }) {
               filterType === t,
               () => setFilterType(t)
             ))}
+            <span style={{ flex: 1 }} />
+            <button onClick={openNewTask} style={{
+              background: C.go, border: 'none', color: '#fff',
+              padding: '6px 16px', borderRadius: 20, cursor: 'pointer',
+              fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+            }}>+ Add Task</button>
           </div>
 
+          {/* Loading / Error */}
+          {loading && (
+            <p style={{ color: C.g, fontSize: 13 }}>Loading tasks…</p>
+          )}
+          {error && (
+            <div style={{ color: '#e07070', fontSize: 12, marginBottom: 12 }}>
+              ⚠ {error}
+            </div>
+          )}
+
           {/* Cards */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            {filtered.length === 0 && (
-              <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>
-            )}
-            {filtered.map(task => (
-              <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} />
-            ))}
-          </div>
+          {!loading && (
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              {filtered.length === 0 && (
+                <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>
+              )}
+              {filtered.map(task => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  C={C}
+                  onToggleDone={toggleDone}
+                  onEdit={openEditTask}
+                />
+              ))}
+            </div>
+          )}
 
           {/* Sidebar note */}
           <div style={{
@@ -415,7 +715,7 @@ export default function MoneyFlowModule({ orgId, C }) {
             background: (C.gD), borderRadius: '0 8px 8px 0',
             fontSize: 11, color: C.g, maxWidth: 500,
           }}>
-            <strong style={{ color: C.go }}>Sidebar:</strong> Flip a card to see accounts + docs needed. Mark done when posted. Nothing leaves until QBO says so.
+            <strong style={{ color: C.go }}>Sidebar:</strong> Flip a card to see accounts + docs needed. Mark done when posted. Recurring tasks advance their own due date. Nothing leaves until QBO says so.
           </div>
         </div>
       )}
@@ -432,7 +732,6 @@ export default function MoneyFlowModule({ orgId, C }) {
               GENERATE JE
             </div>
 
-            {/* JE type selector */}
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Entry Type</label>
               {RECURRING_JES.map(j => (
@@ -450,7 +749,6 @@ export default function MoneyFlowModule({ orgId, C }) {
               ))}
             </div>
 
-            {/* Month/Year */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
               <div style={{ flex: 2 }}>
                 <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Month</label>
@@ -472,7 +770,6 @@ export default function MoneyFlowModule({ orgId, C }) {
               </div>
             </div>
 
-            {/* Utility amounts if UTIL selected */}
             {activeJE?.isUtilities && (
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actual Utility Amounts</label>

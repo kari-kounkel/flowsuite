@@ -162,9 +162,9 @@ function TaskCard({ task, C, onToggleDone }) {
         <div style={{
           position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
           borderRadius: 12, overflow: 'hidden',
-          background: C.card || '#2a211a',
+          background: C.bg2,
           border: `1px solid ${C.bdr}`,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
           display: 'flex', flexDirection: 'column',
         }}>
           {/* Entity color bar */}
@@ -205,9 +205,9 @@ function TaskCard({ task, C, onToggleDone }) {
           position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
           transform: 'rotateY(180deg)',
           borderRadius: 12, overflow: 'hidden',
-          background: C.card || '#2a211a',
+          background: C.ch,
           border: `1px solid ${C.bdr}`,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.25)',
+          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
           display: 'flex', flexDirection: 'column',
         }}>
           <div style={{ background: ec.light, height: 5, width: '100%' }} />
@@ -262,16 +262,16 @@ function JEOutput({ je, month, year, utilAmounts }) {
 
   return (
     <div style={{
-      background: '#1a1310', border: '1px solid #3a2e26', borderRadius: 10,
+      background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
       padding: '16px 20px', fontFamily: "'DM Mono', monospace",
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#c4956a', letterSpacing: '1px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.go, letterSpacing: '1px' }}>
             {journalNum}
           </div>
-          <div style={{ fontSize: 10, color: '#7a6f65', marginTop: 2 }}>
+          <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>
             {je.timing === 'Last day of month'
               ? `Last day of ${monthName} ${year}`
               : `15th of ${monthName} ${year}`}
@@ -285,39 +285,39 @@ function JEOutput({ je, month, year, utilAmounts }) {
       {/* Lines table */}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
-          <tr style={{ borderBottom: '1px solid #3a2e26' }}>
-            <th style={{ textAlign: 'left', color: '#7a6f65', padding: '4px 0', width: 60 }}>Acct #</th>
-            <th style={{ textAlign: 'left', color: '#7a6f65', padding: '4px 8px' }}>Account Name</th>
-            <th style={{ textAlign: 'right', color: '#7a6f65', padding: '4px 0', width: 90 }}>Debit</th>
-            <th style={{ textAlign: 'right', color: '#7a6f65', padding: '4px 0 4px 12px', width: 90 }}>Credit</th>
+          <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
+            <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', width: 60 }}>Acct #</th>
+            <th style={{ textAlign: 'left', color: C.g, padding: '4px 8px' }}>Account Name</th>
+            <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 90 }}>Debit</th>
+            <th style={{ textAlign: 'right', color: C.g, padding: '4px 0 4px 12px', width: 90 }}>Credit</th>
           </tr>
         </thead>
         <tbody>
           {lines.map((l, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid #2a201a' }}>
-              <td style={{ color: '#c4956a', padding: '5px 0', fontSize: 10 }}>{l.acct}</td>
-              <td style={{ color: '#e8ddd5', padding: '5px 8px', paddingLeft: l.dr ? 8 : 24 }}>
+            <tr key={i} style={{ borderBottom: `1px solid ${C.bdrF}` }}>
+              <td style={{ color: C.go, padding: '5px 0', fontSize: 10 }}>{l.acct}</td>
+              <td style={{ color: C.w, padding: '5px 8px', paddingLeft: l.dr ? 8 : 24 }}>
                 {l.name}
               </td>
-              <td style={{ textAlign: 'right', color: '#e8ddd5', padding: '5px 0' }}>
+              <td style={{ textAlign: 'right', color: C.w, padding: '5px 0' }}>
                 {l.dr && l.amount > 0 ? fmt(l.amount) : ''}
               </td>
-              <td style={{ textAlign: 'right', color: '#e8ddd5', padding: '5px 0 5px 12px' }}>
+              <td style={{ textAlign: 'right', color: C.w, padding: '5px 0 5px 12px' }}>
                 {!l.dr && l.amount > 0 ? fmt(l.amount) : ''}
               </td>
             </tr>
           ))}
         </tbody>
         <tfoot>
-          <tr style={{ borderTop: '1px solid #3a2e26' }}>
-            <td colSpan={2} style={{ color: '#7a6f65', fontSize: 10, padding: '5px 0' }}>TOTALS</td>
-            <td style={{ textAlign: 'right', color: '#c4956a', fontWeight: 700, padding: '5px 0' }}>{fmt(totalDr)}</td>
-            <td style={{ textAlign: 'right', color: '#c4956a', fontWeight: 700, padding: '5px 0 5px 12px' }}>{fmt(totalCr)}</td>
+          <tr style={{ borderTop: `1px solid ${C.bdr}` }}>
+            <td colSpan={2} style={{ color: C.g, fontSize: 10, padding: '5px 0' }}>TOTALS</td>
+            <td style={{ textAlign: 'right', color: C.go, fontWeight: 700, padding: '5px 0' }}>{fmt(totalDr)}</td>
+            <td style={{ textAlign: 'right', color: C.go, fontWeight: 700, padding: '5px 0 5px 12px' }}>{fmt(totalCr)}</td>
           </tr>
         </tfoot>
       </table>
 
-      <div style={{ fontSize: 10, color: '#7a6f65', marginTop: 10, borderTop: '1px solid #2a201a', paddingTop: 8 }}>
+      <div style={{ fontSize: 10, color: C.g, marginTop: 10, borderTop: `1px solid ${C.bdr}`, paddingTop: 8 }}>
         Memo: {je.label} — {monthName} {year} — Enter manually in QBO
       </div>
     </div>
@@ -354,9 +354,9 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   const pill = (label, active, onClick) => (
     <button onClick={onClick} style={{
-      background: active ? (C.gD || '#2a1f18') : 'transparent',
-      border: `1px solid ${active ? (C.go || '#c4956a') : (C.bdrF || '#3a2e26')}`,
-      color: active ? (C.go || '#c4956a') : (C.g || '#7a6f65'),
+      background: active ? (C.gD) : 'transparent',
+      border: `1px solid ${active ? (C.go) : (C.bdrF)}`,
+      color: active ? (C.go) : (C.g),
       padding: '5px 14px', borderRadius: 20, cursor: 'pointer',
       fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
     }}>{label}</button>
@@ -367,10 +367,10 @@ export default function MoneyFlowModule({ orgId, C }) {
       {/* Module header */}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: C.go || '#c4956a' }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: C.go }}>
             💰 MoneyFlow
           </h2>
-          <p style={{ margin: '2px 0 0', fontSize: 11, color: C.g || '#7a6f65' }}>
+          <p style={{ margin: '2px 0 0', fontSize: 11, color: C.g }}>
             Accounting tasks &amp; journal entry generator
           </p>
         </div>
@@ -391,7 +391,7 @@ export default function MoneyFlowModule({ orgId, C }) {
               filterEntity === e,
               () => setFilterEntity(e)
             ))}
-            <span style={{ width: 1, background: C.bdr || '#3a2e26', margin: '0 4px' }} />
+            <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
             {['all','AP','AR','PR','Admin'].map(t => pill(
               t === 'all' ? 'All Types' : t,
               filterType === t,
@@ -411,11 +411,11 @@ export default function MoneyFlowModule({ orgId, C }) {
 
           {/* Sidebar note */}
           <div style={{
-            marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go || '#c4956a'}`,
-            background: (C.gD || '#2a1f18'), borderRadius: '0 8px 8px 0',
-            fontSize: 11, color: C.g || '#7a6f65', maxWidth: 500,
+            marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+            background: (C.gD), borderRadius: '0 8px 8px 0',
+            fontSize: 11, color: C.g, maxWidth: 500,
           }}>
-            <strong style={{ color: C.go || '#c4956a' }}>Sidebar:</strong> Flip a card to see accounts + docs needed. Mark done when posted. Nothing leaves until QBO says so.
+            <strong style={{ color: C.go }}>Sidebar:</strong> Flip a card to see accounts + docs needed. Mark done when posted. Nothing leaves until QBO says so.
           </div>
         </div>
       )}
@@ -425,10 +425,10 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {/* Left: controls */}
           <div style={{
-            background: C.card || '#1a1310', border: `1px solid ${C.bdr || '#3a2e26'}`,
+            background: C.bg2, border: `1px solid ${C.bdr}`,
             borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
           }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.go || '#c4956a', marginBottom: 12, letterSpacing: '0.5px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
               GENERATE JE
             </div>
 
@@ -438,9 +438,9 @@ export default function MoneyFlowModule({ orgId, C }) {
               {RECURRING_JES.map(j => (
                 <button key={j.id} onClick={() => setSelectedJE(j.id)} style={{
                   display: 'block', width: '100%', textAlign: 'left',
-                  background: selectedJE === j.id ? (C.gD || '#2a1f18') : 'transparent',
-                  border: `1px solid ${selectedJE === j.id ? (C.go || '#c4956a') : (C.bdrF || '#3a2e26')}`,
-                  color: selectedJE === j.id ? (C.go || '#c4956a') : (C.w || '#e8ddd5'),
+                  background: selectedJE === j.id ? (C.gD) : 'transparent',
+                  border: `1px solid ${selectedJE === j.id ? (C.go) : (C.bdrF)}`,
+                  color: selectedJE === j.id ? (C.go) : (C.w),
                   padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
                   fontSize: 11, fontFamily: 'inherit', marginBottom: 5,
                 }}>
@@ -455,8 +455,8 @@ export default function MoneyFlowModule({ orgId, C }) {
               <div style={{ flex: 2 }}>
                 <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Month</label>
                 <select value={jeMonth} onChange={e => setJeMonth(Number(e.target.value))} style={{
-                  width: '100%', background: C.bg || '#12100e', border: `1px solid ${C.bdr || '#3a2e26'}`,
-                  color: C.w || '#e8ddd5', borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
+                  width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
+                  color: C.w, borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
                 }}>
                   {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
                 </select>
@@ -464,8 +464,8 @@ export default function MoneyFlowModule({ orgId, C }) {
               <div style={{ flex: 1 }}>
                 <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
                 <select value={jeYear} onChange={e => setJeYear(Number(e.target.value))} style={{
-                  width: '100%', background: C.bg || '#12100e', border: `1px solid ${C.bdr || '#3a2e26'}`,
-                  color: C.w || '#e8ddd5', borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
+                  width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
+                  color: C.w, borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
                 }}>
                   {[2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
@@ -489,9 +489,9 @@ export default function MoneyFlowModule({ orgId, C }) {
                       value={utilAmounts[u.key]}
                       onChange={e => setUtilAmounts(prev => ({ ...prev, [u.key]: parseFloat(e.target.value) || 0 }))}
                       style={{
-                        width: '100%', background: C.bg || '#12100e',
-                        border: `1px solid ${C.bdr || '#3a2e26'}`,
-                        color: C.w || '#e8ddd5', borderRadius: 6, padding: '6px 8px',
+                        width: '100%', background: C.bg,
+                        border: `1px solid ${C.bdr}`,
+                        color: C.w, borderRadius: 6, padding: '6px 8px',
                         fontSize: 11, fontFamily: "'DM Mono', monospace", boxSizing: 'border-box',
                       }}
                     />
@@ -500,7 +500,7 @@ export default function MoneyFlowModule({ orgId, C }) {
               </div>
             )}
 
-            <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr || '#3a2e26'}`, paddingTop: 10, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6 }}>
               No CSV. No import.<br/>Key directly into QBO.
             </div>
           </div>
@@ -517,11 +517,11 @@ export default function MoneyFlowModule({ orgId, C }) {
             )}
             <div style={{
               marginTop: 12, padding: '10px 14px',
-              borderLeft: `3px solid ${C.go || '#c4956a'}`,
-              background: (C.gD || '#2a1f18'), borderRadius: '0 8px 8px 0',
-              fontSize: 11, color: C.g || '#7a6f65',
+              borderLeft: `3px solid ${C.go}`,
+              background: (C.gD), borderRadius: '0 8px 8px 0',
+              fontSize: 11, color: C.g,
             }}>
-              <strong style={{ color: C.go || '#c4956a' }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Generate here, key there.
+              <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Generate here, key there.
             </div>
           </div>
         </div>

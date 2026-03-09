@@ -3,6 +3,7 @@ import { themes, ThemeCtx } from './theme.jsx'
 import PeopleFlowModule from './modules/PeopleFlow.jsx'
 import PaperFlowModule from './modules/PaperFlow.jsx'
 import TaskFlowModule from './modules/TaskFlow.jsx'
+import MoneyFlowModule from './modules/MoneyFlow.jsx'
 import AdminPanel from './modules/AdminPanel.jsx'
 import ScanFlowModule from './scanflow/index.jsx'
 
@@ -133,6 +134,10 @@ export default function App({ user, orgCtx, onLogout }) {
 
           {orgId && activeModule === 'taskflow' && enabledModules.includes('taskflow') && (
             <TaskFlowModule orgId={orgId} C={C} user={user} userRole={role} />
+          )}
+
+          {orgId && activeModule === 'moneyflow' && enabledModules.includes('moneyflow') && (
+            <MoneyFlowModule orgId={orgId} C={C} />
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

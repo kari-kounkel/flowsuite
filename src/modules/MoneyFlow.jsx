@@ -239,7 +239,7 @@ function TaskCard({ task, C, onToggleDone }) {
 }
 
 // ─── JE DISPLAY ──────────────────────────────────────────────────────────────
-function JEOutput({ je, month, year, utilAmounts }) {
+function JEOutput({ je, month, year, utilAmounts, C }) {
   const mm = mmPad(month)
   const journalNum = `KK ${je.code} ${year} ${mm}`
   const monthName = MONTHS[month - 1]
@@ -513,6 +513,7 @@ export default function MoneyFlowModule({ orgId, C }) {
                 month={jeMonth}
                 year={jeYear}
                 utilAmounts={utilAmounts}
+                C={C}
               />
             )}
             <div style={{

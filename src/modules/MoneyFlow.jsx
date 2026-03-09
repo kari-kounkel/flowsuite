@@ -6,58 +6,42 @@ const SUPABASE_URL = 'https://keegxjuckohhtxllqxak.supabase.co'
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-// ─── RECURRING JE DEFINITIONS (unchanged) ────────────────────────────────────
-const RECURRING_JES = [
-  {
-    id: 'depr',
-    entity: 'omega',
-    label: 'Depreciation & Amortization',
-    code: 'DEPR',
-    timing: 'Last day of month',
-    lines: [
-      { dr: true,  acct: '62400', name: 'Depreciation Expense',      amount: 5894.85 },
-      { dr: false, acct: '19000', name: 'Accumulated Depreciation',   amount: 5894.85 },
-      { dr: true,  acct: '60100', name: 'Amortization Expense',       amount: 561.62  },
-      { dr: false, acct: '19500', name: 'Accumulated Amortization',   amount: 561.62  },
-    ],
-  },
-  {
-    id: 'int',
-    entity: 'omega',
-    label: 'MEDA Interest',
-    code: 'INT',
-    timing: 'Last day of month',
-    lines: [
-      { dr: true,  acct: '63400', name: 'Interest Expense',           amount: 11714.06 },
-      { dr: false, acct: '21750', name: 'MEDA Note 310204 Mortgage',  amount: 11714.06 },
-    ],
-  },
-  {
-    id: 'mtg',
-    entity: 'omega',
-    label: 'MEDA Mortgage Payment',
-    code: 'MTG',
-    timing: '15th of month',
-    lines: [
-      { dr: true,  acct: '21750', name: 'MEDA Note 310204 Mortgage',  amount: 11714.06 },
-      { dr: false, acct: '10100', name: 'Checking Old National',       amount: 11714.06 },
-    ],
-  },
-  {
-    id: 'util',
-    entity: 'omega',
-    label: 'Utilities Allocation',
-    code: 'UTIL',
-    timing: 'Last day of month',
-    isUtilities: true,
-    lines: [
-      { dr: true,  acct: '68610', name: 'Electric — Xcel',            amount: 0, editable: true  },
-      { dr: true,  acct: '68630', name: 'Gas — CenterPoint',          amount: 0, editable: true  },
-      { dr: true,  acct: '68690', name: 'Water/Sewer — Minneapolis',  amount: 0, editable: true  },
-      { dr: false, acct: '21000', name: 'Due to I A Z Corporation',   amount: 0, isTotal: true   },
-    ],
-  },
-]
+// ─── IIF PARSER ──────────────────────────────────────────────────────────────
+// Parses a raw IIF file string into transaction groups
+// Returns: { transactions: [{trns, spls}], accounts: Set<string> }
+function parseIIF(raw) {
+  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean)
+  const transactions = []
+  const accounts = new Set()
+  let current = null
+
+  for (const line of lines) {
+    const cols = line.split('\t')
+    const rowType = cols[0]
+
+    if (rowType === '!TRNS' || rowType === '!SPL' || rowType === '!ENDTRNS') continue
+    if (rowType === 'ENDTRNS') {
+      if (current) { transactions.push(current); current = null }
+      continue
+    }
+
+    if (rowType === 'TRNS') {
+      // Header cols: TRNSID TRNSTYPE DATE ACCNT NAME CLASS AMOUNT DOCNUM MEMO CLEAR
+      const [, trnsid, trnstype, date, accnt, name, cls, amount, docnum, memo] = cols
+      current = {
+        trns: { trnsid, trnstype, date, accnt, name, class: cls, amount: parseFloat(amount) || 0, docnum, memo },
+        spls: [],
+      }
+      if (accnt) accounts.add(accnt)
+    } else if (rowType === 'SPL' && current) {
+      const [, trnsid, trnstype, date, accnt, name, cls, amount, docnum, memo] = cols
+      current.spls.push({ trnsid, trnstype, date, accnt, name, class: cls, amount: parseFloat(amount) || 0, docnum, memo })
+      if (accnt) accounts.add(accnt)
+    }
+  }
+  if (current) transactions.push(current)
+  return { transactions, accounts }
+}
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -427,25 +411,10 @@ function TaskCard({ task, C, onToggleDone, onEdit }) {
   )
 }
 
-// ─── JE DISPLAY (unchanged) ───────────────────────────────────────────────────
-function JEOutput({ je, month, year, utilAmounts, C }) {
-  const mm = mmPad(month)
-  const journalNum = `KK ${je.code} ${year} ${mm}`
-  const monthName = MONTHS[month - 1]
-
-  const lines = je.lines.map(l => {
-    if (l.isTotal) {
-      const total = (utilAmounts.xcel || 0) + (utilAmounts.cp || 0) + (utilAmounts.water || 0)
-      return { ...l, amount: total }
-    }
-    if (l.acct === '68610') return { ...l, amount: utilAmounts.xcel || 0 }
-    if (l.acct === '68630') return { ...l, amount: utilAmounts.cp || 0 }
-    if (l.acct === '68690') return { ...l, amount: utilAmounts.water || 0 }
-    return l
-  })
-
-  const totalDr = lines.filter(l => l.dr).reduce((s, l) => s + l.amount, 0)
-  const totalCr = lines.filter(l => !l.dr).reduce((s, l) => s + l.amount, 0)
+// ─── JE TABLE (shared display) ───────────────────────────────────────────────
+function JETable({ lines, C, memo, journalNum, dateLabel }) {
+  const totalDr = lines.filter(l => l.dr).reduce((s, l) => s + (l.amount || 0), 0)
+  const totalCr = lines.filter(l => !l.dr).reduce((s, l) => s + (l.amount || 0), 0)
   const balanced = Math.abs(totalDr - totalCr) < 0.01
 
   return (
@@ -455,20 +424,13 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.go, letterSpacing: '1px' }}>
-            {journalNum}
-          </div>
-          <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>
-            {je.timing === 'Last day of month'
-              ? `Last day of ${monthName} ${year}`
-              : `15th of ${monthName} ${year}`}
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.go, letterSpacing: '1px' }}>{journalNum}</div>
+          <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{dateLabel}</div>
         </div>
         <div style={{ fontSize: 10, color: balanced ? '#6ab87a' : '#e07070', fontWeight: 700 }}>
           {balanced ? '✓ BALANCED' : '⚠ UNBALANCED'}
         </div>
       </div>
-
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
@@ -481,15 +443,15 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
         <tbody>
           {lines.map((l, i) => (
             <tr key={i} style={{ borderBottom: `1px solid ${C.bdrF}` }}>
-              <td style={{ color: C.go, padding: '5px 0', fontSize: 10 }}>{l.acct}</td>
-              <td style={{ color: C.w, padding: '5px 8px', paddingLeft: l.dr ? 8 : 24 }}>
-                {l.name}
+              <td style={{ color: C.go, padding: '5px 0', fontSize: 10 }}>{l.acct || l.source_account || ''}</td>
+              <td style={{ color: l.unmapped ? '#e07070' : C.w, padding: '5px 8px', paddingLeft: l.dr ? 8 : 24, fontSize: 11 }}>
+                {l.unmapped ? `⚠ UNMAPPED: ${l.acct || l.source_account}` : l.name}
               </td>
               <td style={{ textAlign: 'right', color: C.w, padding: '5px 0' }}>
-                {l.dr && l.amount > 0 ? fmt(l.amount) : ''}
+                {l.dr && (l.amount || 0) > 0 ? fmt(l.amount) : ''}
               </td>
               <td style={{ textAlign: 'right', color: C.w, padding: '5px 0 5px 12px' }}>
-                {!l.dr && l.amount > 0 ? fmt(l.amount) : ''}
+                {!l.dr && (l.amount || 0) > 0 ? fmt(l.amount) : ''}
               </td>
             </tr>
           ))}
@@ -502,9 +464,459 @@ function JEOutput({ je, month, year, utilAmounts, C }) {
           </tr>
         </tfoot>
       </table>
+      {memo && (
+        <div style={{ fontSize: 10, color: C.g, marginTop: 10, borderTop: `1px solid ${C.bdr}`, paddingTop: 8 }}>
+          Memo: {memo}
+        </div>
+      )}
+    </div>
+  )
+}
 
-      <div style={{ fontSize: 10, color: C.g, marginTop: 10, borderTop: `1px solid ${C.bdr}`, paddingTop: 8 }}>
-        Memo: {je.label} — {monthName} {year} — Enter manually in QBO
+// ─── IIF FACTORY TAB ─────────────────────────────────────────────────────────
+function IIFFactory({ orgId, C }) {
+  const [parsedData, setParsedData] = useState(null)   // { transactions, accounts }
+  const [accountMap, setAccountMap] = useState([])      // rows from iif_account_map
+  const [history, setHistory] = useState([])            // rows from iif_je_history
+  const [period, setPeriod] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${mmPad(d.getMonth() + 1)}`
+  })
+  const [fileName, setFileName] = useState('')
+  const [loadingMap, setLoadingMap] = useState(false)
+  const [posting, setPosting] = useState(false)
+  const [postMsg, setPostMsg] = useState(null)
+  const [newMappings, setNewMappings] = useState({})    // { source_account: qbo_account } for inline adds
+  const [showMapEditor, setShowMapEditor] = useState(false)
+
+  // Load account map + history for this org + period
+  useEffect(() => {
+    async function load() {
+      setLoadingMap(true)
+      const [{ data: mapData }, { data: histData }] = await Promise.all([
+        supabase.from('iif_account_map').select('*').eq('org_id', orgId),
+        supabase.from('iif_je_history').select('*').eq('org_id', orgId).eq('period', period),
+      ])
+      setAccountMap(mapData || [])
+      setHistory(histData || [])
+      setLoadingMap(false)
+    }
+    load()
+  }, [orgId, period])
+
+  function handleFileUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setFileName(file.name)
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const result = parseIIF(ev.target.result)
+      setParsedData(result)
+      setPostMsg(null)
+      setNewMappings({})
+    }
+    reader.readAsText(file)
+  }
+
+  // Build JE lines from parsed IIF, applying account map + delta calc
+  function buildJELines() {
+    if (!parsedData) return []
+    const mapLookup = {}
+    accountMap.forEach(r => { mapLookup[r.source_account] = r.qbo_account })
+    // Apply inline new mappings too
+    Object.entries(newMappings).forEach(([src, qbo]) => { if (qbo.trim()) mapLookup[src] = qbo.trim() })
+
+    // Sum all IIF amounts by source_account
+    const rawTotals = {}
+    parsedData.transactions.forEach(tx => {
+      const trnsAcct = tx.trns.accnt
+      if (trnsAcct) rawTotals[trnsAcct] = (rawTotals[trnsAcct] || 0) + tx.trns.amount
+      tx.spls.forEach(s => {
+        if (s.accnt) rawTotals[s.accnt] = (rawTotals[s.accnt] || 0) + s.amount
+      })
+    })
+
+    // Subtract already-posted amounts for same org+period
+    const postedTotals = {}
+    history.forEach(r => {
+      postedTotals[r.source_account] = (postedTotals[r.source_account] || 0) + r.amount
+    })
+
+    const lines = []
+    Object.entries(rawTotals).forEach(([srcAcct, rawAmt]) => {
+      const delta = rawAmt - (postedTotals[srcAcct] || 0)
+      if (Math.abs(delta) < 0.005) return // already fully posted
+      const qboAcct = mapLookup[srcAcct]
+      lines.push({
+        source_account: srcAcct,
+        acct: qboAcct || srcAcct,
+        name: qboAcct || srcAcct,
+        dr: delta > 0,
+        amount: Math.abs(delta),
+        unmapped: !qboAcct,
+      })
+    })
+    return lines
+  }
+
+  const jeLines = buildJELines()
+  const hasUnmapped = jeLines.some(l => l.unmapped)
+  const unmappedAccounts = [...new Set(jeLines.filter(l => l.unmapped).map(l => l.source_account))]
+
+  async function handlePost() {
+    if (hasUnmapped) return
+    setPosting(true)
+    setPostMsg(null)
+
+    // Save any inline new mappings to iif_account_map
+    const newMapRows = Object.entries(newMappings)
+      .filter(([, qbo]) => qbo.trim())
+      .map(([src, qbo]) => ({ org_id: orgId, source_account: src, qbo_account: qbo.trim() }))
+    if (newMapRows.length) {
+      await supabase.from('iif_account_map').upsert(newMapRows, { onConflict: 'org_id,source_account' })
+    }
+
+    // Insert history rows
+    const historyRows = jeLines.map(l => ({
+      org_id: orgId,
+      period,
+      source_account: l.source_account,
+      qbo_account: l.acct,
+      amount: l.dr ? l.amount : -l.amount,
+      file_name: fileName,
+      posted_at: new Date().toISOString(),
+    }))
+    const { error } = await supabase.from('iif_je_history').insert(historyRows)
+    if (error) {
+      setPostMsg({ ok: false, msg: error.message })
+    } else {
+      setPostMsg({ ok: true, msg: `Posted ${historyRows.length} lines to history for ${period}.` })
+      // Reload history
+      const { data: newHist } = await supabase.from('iif_je_history').select('*').eq('org_id', orgId).eq('period', period)
+      setHistory(newHist || [])
+    }
+    setPosting(false)
+  }
+
+  const inputStyle = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '6px 10px', fontSize: 11,
+    fontFamily: "'DM Mono', monospace", boxSizing: 'border-box',
+  }
+
+  return (
+    <div>
+      {/* Controls row */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Period (YYYY-MM)</label>
+          <input
+            type="month"
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+            style={{ ...inputStyle, width: 150 }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Upload .IIF File</label>
+          <input type="file" accept=".iif,.IIF" onChange={handleFileUpload} style={{ fontSize: 11, color: C.w }} />
+        </div>
+        {parsedData && (
+          <div style={{ fontSize: 10, color: C.g }}>
+            {parsedData.transactions.length} transactions · {parsedData.accounts.size} accounts · {history.length} lines already posted this period
+          </div>
+        )}
+      </div>
+
+      {loadingMap && <p style={{ fontSize: 12, color: C.g }}>Loading account map…</p>}
+
+      {/* Unmapped account inline resolver */}
+      {unmappedAccounts.length > 0 && (
+        <div style={{
+          background: '#3a1a1a', border: '1px solid #c04040', borderRadius: 8,
+          padding: '12px 16px', marginBottom: 16,
+        }}>
+          <div style={{ fontSize: 12, color: '#e07070', fontWeight: 700, marginBottom: 8 }}>
+            ⚠ {unmappedAccounts.length} unmapped account{unmappedAccounts.length > 1 ? 's' : ''} — map them here to proceed
+          </div>
+          {unmappedAccounts.map(src => (
+            <div key={src} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: '#e07070', fontFamily: "'DM Mono', monospace", minWidth: 260 }}>{src}</span>
+              <span style={{ fontSize: 11, color: C.g }}>→</span>
+              <input
+                placeholder="QBO account name"
+                value={newMappings[src] || ''}
+                onChange={e => setNewMappings(m => ({ ...m, [src]: e.target.value }))}
+                style={{ ...inputStyle, flex: 1 }}
+              />
+            </div>
+          ))}
+          <div style={{ fontSize: 10, color: C.g, marginTop: 6 }}>Mappings save to iif_account_map when you post.</div>
+        </div>
+      )}
+
+      {/* JE Preview */}
+      {jeLines.length > 0 && (
+        <>
+          <JETable
+            lines={jeLines}
+            C={C}
+            journalNum={`IIF ${period} — ${fileName || 'upload'}`}
+            dateLabel={`Delta vs. prior postings · Period ${period}`}
+            memo={`IIF import · ${fileName} · org ${orgId} · ${period}`}
+          />
+          <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button
+              onClick={handlePost}
+              disabled={hasUnmapped || posting}
+              style={{
+                background: hasUnmapped ? C.bdr : C.go, border: 'none', color: '#fff',
+                padding: '8px 24px', borderRadius: 7, cursor: hasUnmapped ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                opacity: hasUnmapped ? 0.5 : 1,
+              }}
+            >{posting ? 'Posting…' : 'Post to History'}</button>
+            {postMsg && (
+              <span style={{ fontSize: 11, color: postMsg.ok ? '#6ab87a' : '#e07070' }}>
+                {postMsg.ok ? '✓' : '⚠'} {postMsg.msg}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {parsedData && jeLines.length === 0 && (
+        <div style={{ fontSize: 12, color: '#6ab87a', padding: '12px 0' }}>
+          ✓ All accounts fully posted for period {period}. Nothing new to post.
+        </div>
+      )}
+
+      {/* Account map viewer toggle */}
+      {accountMap.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <button
+            onClick={() => setShowMapEditor(v => !v)}
+            style={{
+              background: 'transparent', border: `1px solid ${C.bdrF}`,
+              color: C.g, padding: '5px 14px', borderRadius: 20,
+              cursor: 'pointer', fontSize: 11, fontFamily: 'inherit',
+            }}
+          >{showMapEditor ? '▲ Hide' : '▼ View'} Account Map ({accountMap.length} entries)</button>
+          {showMapEditor && (
+            <div style={{
+              marginTop: 10, background: C.bg2, border: `1px solid ${C.bdr}`,
+              borderRadius: 8, overflow: 'hidden',
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+                <thead>
+                  <tr style={{ background: C.bg }}>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>IIF Source Account</th>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>QBO Account</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountMap.map((r, i) => (
+                    <tr key={r.id} style={{ borderTop: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? 'transparent' : C.bg + '88' }}>
+                      <td style={{ color: '#e07070', padding: '5px 12px' }}>{r.source_account}</td>
+                      <td style={{ color: C.w, padding: '5px 12px' }}>{r.qbo_account}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+        background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g,
+      }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> IIF is cumulative. Delta logic subtracts what's already in history so you don't double-post. Unmapped accounts block posting. Map once, never again.
+      </div>
+    </div>
+  )
+}
+
+// ─── RECURRING JE TAB (Supabase-live) ────────────────────────────────────────
+function RecurringJETab({ orgId, C }) {
+  const [templates, setTemplates] = useState([])
+  const [lines, setLines] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedId, setSelectedId] = useState(null)
+  const [jeMonth, setJeMonth] = useState(new Date().getMonth() + 1)
+  const [jeYear, setJeYear] = useState(new Date().getFullYear())
+  const [utilOverrides, setUtilOverrides] = useState({}) // line_id → amount
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const [{ data: tmplData }, { data: lineData }] = await Promise.all([
+        supabase.from('recurring_je_templates').select('*').eq('org_id', orgId).order('code'),
+        supabase.from('recurring_je_lines').select('*').eq('org_id', orgId).order('sort_order'),
+      ])
+      setTemplates(tmplData || [])
+      setLines(lineData || [])
+      if (tmplData?.length) setSelectedId(tmplData[0].id)
+      setLoading(false)
+    }
+    load()
+  }, [orgId])
+
+  const activeTemplate = templates.find(t => t.id === selectedId)
+  const activeLines = lines.filter(l => l.template_id === selectedId)
+
+  // Build display lines — editable ones use utilOverrides
+  const displayLines = activeLines.map(l => ({
+    acct: l.account_number,
+    name: l.account_name,
+    dr: l.is_debit,
+    amount: l.editable
+      ? (parseFloat(utilOverrides[l.id]) || 0)
+      : (l.is_total
+          ? activeLines.filter(x => x.editable).reduce((s, x) => s + (parseFloat(utilOverrides[x.id]) || 0), 0)
+          : (l.amount || 0)),
+    editable: l.editable,
+    is_total: l.is_total,
+    id: l.id,
+  }))
+
+  const mm = mmPad(jeMonth)
+  const monthName = MONTHS[jeMonth - 1]
+  const journalNum = activeTemplate ? `KK ${activeTemplate.code} ${jeYear} ${mm}` : ''
+  const timing = activeTemplate?.timing || ''
+  const dateLabel = timing === 'Last day of month'
+    ? `Last day of ${monthName} ${jeYear}`
+    : `15th of ${monthName} ${jeYear}`
+
+  const inputStyle = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '6px 8px', fontSize: 11,
+    fontFamily: "'DM Mono', monospace", width: '100%', boxSizing: 'border-box',
+  }
+
+  if (loading) return <p style={{ fontSize: 12, color: C.g }}>Loading recurring entries…</p>
+
+  return (
+    <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+      {/* Left: selector + month/year */}
+      <div style={{
+        background: C.bg2, border: `1px solid ${C.bdr}`,
+        borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
+          GENERATE JE
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Entry Type</label>
+          {templates.map(t => (
+            <button key={t.id} onClick={() => setSelectedId(t.id)} style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              background: selectedId === t.id ? C.gD : 'transparent',
+              border: `1px solid ${selectedId === t.id ? C.go : C.bdrF}`,
+              color: selectedId === t.id ? C.go : C.w,
+              padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
+              fontSize: 11, fontFamily: 'inherit', marginBottom: 5,
+            }}>
+              <div style={{ fontWeight: 600 }}>{t.label}</div>
+              <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>{t.timing}</div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <div style={{ flex: 2 }}>
+            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Month</label>
+            <select value={jeMonth} onChange={e => setJeMonth(Number(e.target.value))} style={inputStyle}>
+              {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
+            <select value={jeYear} onChange={e => setJeYear(Number(e.target.value))} style={inputStyle}>
+              {[2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Editable utility inputs if template has editable lines */}
+        {activeLines.some(l => l.editable) && (
+          <div>
+            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actual Amounts</label>
+            {activeLines.filter(l => l.editable).map(l => (
+              <div key={l.id} style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 3 }}>{l.account_name}</label>
+                <input
+                  type="number"
+                  placeholder="0.00"
+                  value={utilOverrides[l.id] || ''}
+                  onChange={e => setUtilOverrides(prev => ({ ...prev, [l.id]: e.target.value }))}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6, marginTop: 8 }}>
+          No CSV. No import.<br/>Key directly into QBO.
+        </div>
+      </div>
+
+      {/* Right: JE output */}
+      <div style={{ flex: 1, minWidth: 320 }}>
+        {activeTemplate && (
+          <JETable
+            lines={displayLines}
+            C={C}
+            journalNum={journalNum}
+            dateLabel={dateLabel}
+            memo={`${activeTemplate.label} — ${monthName} ${jeYear} — Enter manually in QBO`}
+          />
+        )}
+        <div style={{
+          marginTop: 12, padding: '10px 14px',
+          borderLeft: `3px solid ${C.go}`,
+          background: C.gD, borderRadius: '0 8px 8px 0',
+          fontSize: 11, color: C.g,
+        }}>
+          <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Amounts live in Supabase — no code deploy to change a number.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── AMORTIZATION TAB (placeholder) ──────────────────────────────────────────
+function AmortizationTab({ C }) {
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={{
+        background: C.bg2, border: `2px dashed ${C.bdr}`,
+        borderRadius: 12, padding: '40px 32px', textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.go, marginBottom: 8 }}>
+          Amortization Schedule Import
+        </div>
+        <div style={{ fontSize: 12, color: C.g, lineHeight: 1.6, marginBottom: 20 }}>
+          Drop your schedule here when it arrives.<br/>
+          This tab will parse loan schedules and generate<br/>
+          principal/interest split JEs for each payment period.
+        </div>
+        <div style={{
+          border: `2px dashed ${C.bdrF}`, borderRadius: 8,
+          padding: '20px 24px', color: C.g, fontSize: 11,
+        }}>
+          Upload zone coming soon — waiting on schedules
+        </div>
+      </div>
+      <div style={{
+        marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+        background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g,
+      }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> When the MEDA schedule lands, this tab will split every payment into principal vs. interest without you doing the math. It's waiting patiently.
       </div>
     </div>
   )
@@ -521,13 +933,10 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
-  const [editingTask, setEditingTask] = useState(null) // null = new task
+  const [editingTask, setEditingTask] = useState(null)
 
-  // JE Generator state
-  const [selectedJE, setSelectedJE] = useState(RECURRING_JES[0].id)
-  const [jeMonth, setJeMonth] = useState(new Date().getMonth() + 1)
-  const [jeYear, setJeYear] = useState(new Date().getFullYear())
-  const [utilAmounts, setUtilAmounts] = useState({ xcel: '', cp: '', water: '' })
+  // JE Generator sub-tab
+  const [jeSubTab, setJeSubTab] = useState('iif')
 
   // ── LOAD TASKS ──
   const loadTasks = useCallback(async () => {
@@ -614,14 +1023,22 @@ export default function MoneyFlowModule({ orgId, C }) {
     return true
   })
 
-  const activeJE = RECURRING_JES.find(j => j.id === selectedJE)
-
   const pill = (label, active, onClick) => (
     <button onClick={onClick} style={{
       background: active ? (C.gD) : 'transparent',
       border: `1px solid ${active ? (C.go) : (C.bdrF)}`,
       color: active ? (C.go) : (C.g),
       padding: '5px 14px', borderRadius: 20, cursor: 'pointer',
+      fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+    }}>{label}</button>
+  )
+
+  const subPill = (label, active, onClick) => (
+    <button onClick={onClick} style={{
+      background: active ? C.go : 'transparent',
+      border: `1px solid ${active ? C.go : C.bdrF}`,
+      color: active ? '#fff' : C.g,
+      padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
       fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
     }}>{label}</button>
   )
@@ -681,35 +1098,18 @@ export default function MoneyFlowModule({ orgId, C }) {
             }}>+ Add Task</button>
           </div>
 
-          {/* Loading / Error */}
-          {loading && (
-            <p style={{ color: C.g, fontSize: 13 }}>Loading tasks…</p>
-          )}
-          {error && (
-            <div style={{ color: '#e07070', fontSize: 12, marginBottom: 12 }}>
-              ⚠ {error}
-            </div>
-          )}
+          {loading && <p style={{ color: C.g, fontSize: 13 }}>Loading tasks…</p>}
+          {error && <div style={{ color: '#e07070', fontSize: 12, marginBottom: 12 }}>⚠ {error}</div>}
 
-          {/* Cards */}
           {!loading && (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              {filtered.length === 0 && (
-                <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>
-              )}
+              {filtered.length === 0 && <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>}
               {filtered.map(task => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  C={C}
-                  onToggleDone={toggleDone}
-                  onEdit={openEditTask}
-                />
+                <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} />
               ))}
             </div>
           )}
 
-          {/* Sidebar note */}
           <div style={{
             marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
             background: (C.gD), borderRadius: '0 8px 8px 0',
@@ -722,106 +1122,17 @@ export default function MoneyFlowModule({ orgId, C }) {
 
       {/* ── JE GENERATOR TAB ── */}
       {tab === 'je' && (
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          {/* Left: controls */}
-          <div style={{
-            background: C.bg2, border: `1px solid ${C.bdr}`,
-            borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
-          }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
-              GENERATE JE
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Entry Type</label>
-              {RECURRING_JES.map(j => (
-                <button key={j.id} onClick={() => setSelectedJE(j.id)} style={{
-                  display: 'block', width: '100%', textAlign: 'left',
-                  background: selectedJE === j.id ? (C.gD) : 'transparent',
-                  border: `1px solid ${selectedJE === j.id ? (C.go) : (C.bdrF)}`,
-                  color: selectedJE === j.id ? (C.go) : (C.w),
-                  padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
-                  fontSize: 11, fontFamily: 'inherit', marginBottom: 5,
-                }}>
-                  <div style={{ fontWeight: 600 }}>{j.label}</div>
-                  <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>{j.timing}</div>
-                </button>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-              <div style={{ flex: 2 }}>
-                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Month</label>
-                <select value={jeMonth} onChange={e => setJeMonth(Number(e.target.value))} style={{
-                  width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
-                  color: C.w, borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
-                }}>
-                  {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
-                </select>
-              </div>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
-                <select value={jeYear} onChange={e => setJeYear(Number(e.target.value))} style={{
-                  width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
-                  color: C.w, borderRadius: 6, padding: '6px 8px', fontSize: 11, fontFamily: 'inherit',
-                }}>
-                  {[2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {activeJE?.isUtilities && (
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actual Utility Amounts</label>
-                {[
-                  { key: 'xcel', label: 'Xcel Electric' },
-                  { key: 'cp',   label: 'CenterPoint Gas' },
-                  { key: 'water',label: 'Water/Sewer' },
-                ].map(u => (
-                  <div key={u.key} style={{ marginBottom: 8 }}>
-                    <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 3 }}>{u.label}</label>
-                    <input
-                      type="number"
-                      placeholder="0.00"
-                      value={utilAmounts[u.key]}
-                      onChange={e => setUtilAmounts(prev => ({ ...prev, [u.key]: parseFloat(e.target.value) || 0 }))}
-                      style={{
-                        width: '100%', background: C.bg,
-                        border: `1px solid ${C.bdr}`,
-                        color: C.w, borderRadius: 6, padding: '6px 8px',
-                        fontSize: 11, fontFamily: "'DM Mono', monospace", boxSizing: 'border-box',
-                      }}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6 }}>
-              No CSV. No import.<br/>Key directly into QBO.
-            </div>
+        <div>
+          {/* Sub-tab bar */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
+            {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
+            {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
+            {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
           </div>
 
-          {/* Right: JE output */}
-          <div style={{ flex: 1, minWidth: 320 }}>
-            {activeJE && (
-              <JEOutput
-                je={activeJE}
-                month={jeMonth}
-                year={jeYear}
-                utilAmounts={utilAmounts}
-                C={C}
-              />
-            )}
-            <div style={{
-              marginTop: 12, padding: '10px 14px',
-              borderLeft: `3px solid ${C.go}`,
-              background: (C.gD), borderRadius: '0 8px 8px 0',
-              fontSize: 11, color: C.g,
-            }}>
-              <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Generate here, key there.
-            </div>
-          </div>
+          {jeSubTab === 'iif' && <IIFFactory orgId={orgId} C={C} />}
+          {jeSubTab === 'recurring' && <RecurringJETab orgId={orgId} C={C} />}
+          {jeSubTab === 'amort' && <AmortizationTab C={C} />}
         </div>
       )}
     </div>

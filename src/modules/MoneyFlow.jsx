@@ -7,35 +7,64 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 // ─── IIF PARSER ──────────────────────────────────────────────────────────────
-// Parses a raw IIF file string into transaction groups
+// Parses a raw IIF file string into transaction groups.
+// Reads column positions dynamically from !TRNS / !SPL header rows.
 // Returns: { transactions: [{trns, spls}], accounts: Set<string> }
 function parseIIF(raw) {
-  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean)
+  // Normalize line endings
+  const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
   const transactions = []
   const accounts = new Set()
   let current = null
+  let trnsColMap = {}  // field name → col index for TRNS rows
+  let splColMap  = {}  // field name → col index for SPL rows
+
+  function colMap(cols) {
+    const map = {}
+    cols.forEach((c, i) => { map[c.trim().toUpperCase()] = i })
+    return map
+  }
+  function pick(map, cols, field) {
+    const idx = map[field]
+    return idx !== undefined ? (cols[idx] || '').trim() : ''
+  }
 
   for (const line of lines) {
     const cols = line.split('\t')
-    const rowType = cols[0]
+    const rowType = cols[0].trim().toUpperCase()
 
-    if (rowType === '!TRNS' || rowType === '!SPL' || rowType === '!ENDTRNS') continue
+    if (rowType === '!TRNS') { trnsColMap = colMap(cols); continue }
+    if (rowType === '!SPL')  { splColMap  = colMap(cols); continue }
+    if (rowType === '!ENDTRNS') continue
+
     if (rowType === 'ENDTRNS') {
       if (current) { transactions.push(current); current = null }
       continue
     }
 
     if (rowType === 'TRNS') {
-      // Header cols: TRNSID TRNSTYPE DATE ACCNT NAME CLASS AMOUNT DOCNUM MEMO CLEAR
-      const [, trnsid, trnstype, date, accnt, name, cls, amount, docnum, memo] = cols
+      const accnt  = pick(trnsColMap, cols, 'ACCNT')
+      const amount = parseFloat(pick(trnsColMap, cols, 'AMOUNT')) || 0
       current = {
-        trns: { trnsid, trnstype, date, accnt, name, class: cls, amount: parseFloat(amount) || 0, docnum, memo },
+        trns: {
+          trnstype: pick(trnsColMap, cols, 'TRNSTYPE'),
+          date:     pick(trnsColMap, cols, 'DATE'),
+          accnt, amount,
+          memo:     pick(trnsColMap, cols, 'MEMO'),
+          docnum:   pick(trnsColMap, cols, 'DOCNUM'),
+        },
         spls: [],
       }
       if (accnt) accounts.add(accnt)
     } else if (rowType === 'SPL' && current) {
-      const [, trnsid, trnstype, date, accnt, name, cls, amount, docnum, memo] = cols
-      current.spls.push({ trnsid, trnstype, date, accnt, name, class: cls, amount: parseFloat(amount) || 0, docnum, memo })
+      const accnt  = pick(splColMap, cols, 'ACCNT')
+      const amount = parseFloat(pick(splColMap, cols, 'AMOUNT')) || 0
+      current.spls.push({
+        trnstype: pick(splColMap, cols, 'TRNSTYPE'),
+        date:     pick(splColMap, cols, 'DATE'),
+        accnt, amount,
+        memo:     pick(splColMap, cols, 'MEMO'),
+      })
       if (accnt) accounts.add(accnt)
     }
   }
@@ -86,9 +115,10 @@ const BLANK_FORM = {
   status: 'open',
   is_recurring: false,
   recur_interval: 30,
+  resource_ids: [],
 }
 
-function TaskFormModal({ task, orgId, C, onSave, onClose, onDelete }) {
+function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete }) {
   const isEdit = !!task?.id
   const [form, setForm] = useState(isEdit ? {
     entity: task.entity || 'omega',
@@ -101,6 +131,7 @@ function TaskFormModal({ task, orgId, C, onSave, onClose, onDelete }) {
     status: task.status || 'open',
     is_recurring: task.is_recurring || false,
     recur_interval: task.recur_interval || 30,
+    resource_ids: task.resource_ids || [],
   } : { ...BLANK_FORM })
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -250,18 +281,60 @@ function TaskFormModal({ task, orgId, C, onSave, onClose, onDelete }) {
             <span style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>Recurring task</span>
           </label>
           {form.is_recurring && (
-            <div style={{ marginTop: 10 }}>
-              <label style={labelStyle}>Advance due date by (days) when marked done</label>
-              <input
-                type="number"
-                value={form.recur_interval}
-                onChange={e => set('recur_interval', parseInt(e.target.value) || 30)}
-                min={1}
-                style={{ ...inputStyle, width: 100 }}
-              />
+            <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <label style={labelStyle}>Next due date</label>
+                <input
+                  type="date"
+                  value={form.due_date}
+                  onChange={e => set('due_date', e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 100 }}>
+                <label style={labelStyle}>Repeat every (days)</label>
+                <input
+                  type="number"
+                  value={form.recur_interval}
+                  onChange={e => set('recur_interval', parseInt(e.target.value) || 30)}
+                  min={1}
+                  style={inputStyle}
+                />
+              </div>
             </div>
           )}
         </div>
+
+        {/* Linked Resources */}
+        {allResources.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={labelStyle}>Linked Resources</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {allResources.map(r => {
+                const linked = (form.resource_ids || []).includes(r.id)
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => set('resource_ids', linked
+                      ? (form.resource_ids || []).filter(id => id !== r.id)
+                      : [...(form.resource_ids || []), r.id]
+                    )}
+                    style={{
+                      background: linked ? C.gD : 'transparent',
+                      border: `1px solid ${linked ? C.go : C.bdrF}`,
+                      color: linked ? C.go : C.g,
+                      borderRadius: 6, padding: '4px 10px',
+                      fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >{linked ? '✓ ' : ''}{r.label}</button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>
+              Selected resources appear as login buttons on the card back.
+            </div>
+          </div>
+        )}
 
         {/* Buttons */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -306,11 +379,12 @@ function TaskFormModal({ task, orgId, C, onSave, onClose, onDelete }) {
 }
 
 // ─── FLIP CARD ───────────────────────────────────────────────────────────────
-function TaskCard({ task, C, onToggleDone, onEdit }) {
+function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
   const [flipped, setFlipped] = useState(false)
   const ec = ENTITY_COLORS[task.entity] || ENTITY_COLORS.omega
   const tc = TYPE_COLORS[task.type] || '#a0a0a0'
   const done = task.status === 'done'
+  const linkedResources = (allResources || []).filter(r => (task.resource_ids || []).includes(r.id))
 
   return (
     <div style={{
@@ -395,6 +469,24 @@ function TaskCard({ task, C, onToggleDone, onEdit }) {
               <strong style={{ color: ec.light }}>Accounts:</strong><br />
               <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 9 }}>{task.resources}</span>
             </div>
+            {linkedResources.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {linkedResources.map(r => r.url ? (
+                  <a key={r.id} href={r.url} target="_blank" rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      background: ec.bg, color: '#fff', borderRadius: 5,
+                      padding: '3px 8px', fontSize: 9, fontWeight: 700,
+                      textDecoration: 'none', display: 'inline-block',
+                    }}>{r.label} ↗</a>
+                ) : (
+                  <span key={r.id} style={{
+                    background: C.bg, color: C.g, borderRadius: 5,
+                    padding: '3px 8px', fontSize: 9, border: `1px solid ${C.bdrF}`,
+                  }}>{r.label}</span>
+                ))}
+              </div>
+            )}
             <button
               onClick={e => { e.stopPropagation(); onToggleDone(task) }}
               style={{
@@ -519,24 +611,25 @@ function IIFFactory({ orgId, C }) {
   }
 
   // Build JE lines from parsed IIF, applying account map + delta calc
+  // IIF convention: TRNS amount is positive (DR), SPL amounts are negative (CR)
+  // We track debit totals and credit totals separately per account
   function buildJELines() {
     if (!parsedData) return []
     const mapLookup = {}
     accountMap.forEach(r => { mapLookup[r.source_account] = r.qbo_account })
-    // Apply inline new mappings too
     Object.entries(newMappings).forEach(([src, qbo]) => { if (qbo.trim()) mapLookup[src] = qbo.trim() })
 
-    // Sum all IIF amounts by source_account
+    // Sum raw IIF amounts per account (preserving sign: DR positive, CR negative)
     const rawTotals = {}
     parsedData.transactions.forEach(tx => {
-      const trnsAcct = tx.trns.accnt
-      if (trnsAcct) rawTotals[trnsAcct] = (rawTotals[trnsAcct] || 0) + tx.trns.amount
+      const a = tx.trns.accnt
+      if (a) rawTotals[a] = (rawTotals[a] || 0) + tx.trns.amount
       tx.spls.forEach(s => {
         if (s.accnt) rawTotals[s.accnt] = (rawTotals[s.accnt] || 0) + s.amount
       })
     })
 
-    // Subtract already-posted amounts for same org+period
+    // Subtract already-posted signed amounts for same org+period
     const postedTotals = {}
     history.forEach(r => {
       postedTotals[r.source_account] = (postedTotals[r.source_account] || 0) + r.amount
@@ -544,8 +637,9 @@ function IIFFactory({ orgId, C }) {
 
     const lines = []
     Object.entries(rawTotals).forEach(([srcAcct, rawAmt]) => {
+      if (Math.abs(rawAmt) < 0.005) return  // skip zero-amount accounts
       const delta = rawAmt - (postedTotals[srcAcct] || 0)
-      if (Math.abs(delta) < 0.005) return // already fully posted
+      if (Math.abs(delta) < 0.005) return   // already fully posted
       const qboAcct = mapLookup[srcAcct]
       lines.push({
         source_account: srcAcct,
@@ -768,15 +862,15 @@ function RecurringJETab({ orgId, C }) {
 
   // Build display lines — editable ones use utilOverrides
   const displayLines = activeLines.map(l => ({
-    acct: l.account_number,
-    name: l.account_name,
+    acct: l.acct_number,
+    name: l.acct_name,
     dr: l.is_debit,
-    amount: l.editable
+    amount: l.is_editable
       ? (parseFloat(utilOverrides[l.id]) || 0)
       : (l.is_total
-          ? activeLines.filter(x => x.editable).reduce((s, x) => s + (parseFloat(utilOverrides[x.id]) || 0), 0)
+          ? activeLines.filter(x => x.is_editable).reduce((s, x) => s + (parseFloat(utilOverrides[x.id]) || 0), 0)
           : (l.amount || 0)),
-    editable: l.editable,
+    editable: l.is_editable,
     is_total: l.is_total,
     id: l.id,
   }))
@@ -841,12 +935,12 @@ function RecurringJETab({ orgId, C }) {
         </div>
 
         {/* Editable utility inputs if template has editable lines */}
-        {activeLines.some(l => l.editable) && (
+        {activeLines.some(l => l.is_editable) && (
           <div>
             <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actual Amounts</label>
-            {activeLines.filter(l => l.editable).map(l => (
+            {activeLines.filter(l => l.is_editable).map(l => (
               <div key={l.id} style={{ marginBottom: 8 }}>
-                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 3 }}>{l.account_name}</label>
+                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 3 }}>{l.acct_name}</label>
                 <input
                   type="number"
                   placeholder="0.00"
@@ -922,7 +1016,248 @@ function AmortizationTab({ C }) {
   )
 }
 
-// ─── MAIN MODULE ─────────────────────────────────────────────────────────────
+// ─── RESOURCE LIBRARY ────────────────────────────────────────────────────────
+function CopyBtn({ value, label, C }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    navigator.clipboard.writeText(value || '').then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button onClick={copy} style={{
+      background: copied ? '#6ab87a22' : C.bg,
+      border: `1px solid ${copied ? '#6ab87a' : C.bdrF}`,
+      color: copied ? '#6ab87a' : C.g,
+      borderRadius: 5, padding: '3px 8px', fontSize: 10,
+      cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+    }}>
+      {copied ? '✓ Copied' : `Copy ${label}`}
+    </button>
+  )
+}
+
+function ResourceCard({ res, C, onEdit, onDelete }) {
+  const [showCreds, setShowCreds] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  return (
+    <div style={{
+      background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
+      padding: '14px 16px', minWidth: 220, maxWidth: 280, flex: '0 0 auto',
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.go }}>{res.label}</div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => onEdit(res)} style={{
+            background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 12, padding: '0 2px',
+          }}>✏️</button>
+          <button onClick={() => {
+            if (!confirmDel) { setConfirmDel(true); setTimeout(() => setConfirmDel(false), 3000) }
+            else onDelete(res.id)
+          }} style={{
+            background: 'none', border: 'none',
+            color: confirmDel ? '#e07070' : C.g,
+            cursor: 'pointer', fontSize: 11, padding: '0 2px',
+          }}>{confirmDel ? '✓ sure?' : '🗑'}</button>
+        </div>
+      </div>
+
+      {/* URL button */}
+      {res.url && (
+        <a href={res.url} target="_blank" rel="noreferrer" style={{
+          display: 'inline-block', background: C.go, color: '#fff',
+          borderRadius: 6, padding: '5px 14px', fontSize: 11, fontWeight: 700,
+          textDecoration: 'none', marginBottom: 10,
+        }}>{res.label} ↗</a>
+      )}
+
+      {/* Creds toggle + copy buttons */}
+      {(res.username || res.password || res.pin) && (
+        <div>
+          <button onClick={() => setShowCreds(v => !v)} style={{
+            background: 'transparent', border: `1px solid ${C.bdrF}`,
+            color: C.g, borderRadius: 5, padding: '3px 10px',
+            fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 8,
+          }}>{showCreds ? '🙈 Hide' : '👁 Show'} credentials</button>
+
+          {showCreds && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {res.username && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: C.g, minWidth: 60 }}>Username</span>
+                  <span style={{ fontSize: 11, color: C.w, fontFamily: "'DM Mono', monospace", flex: 1, wordBreak: 'break-all' }}>{res.username}</span>
+                  <CopyBtn value={res.username} label="User" C={C} />
+                </div>
+              )}
+              {res.password && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: C.g, minWidth: 60 }}>Password</span>
+                  <span style={{ fontSize: 11, color: C.w, fontFamily: "'DM Mono', monospace", flex: 1 }}>••••••••</span>
+                  <CopyBtn value={res.password} label="Pass" C={C} />
+                </div>
+              )}
+              {res.pin && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: C.g, minWidth: 60 }}>PIN</span>
+                  <span style={{ fontSize: 11, color: C.w, fontFamily: "'DM Mono', monospace", flex: 1 }}>••••</span>
+                  <CopyBtn value={res.pin} label="PIN" C={C} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {res.notes && (
+        <div style={{ fontSize: 10, color: C.g, marginTop: 8, borderTop: `1px solid ${C.bdrF}`, paddingTop: 6 }}>
+          {res.notes}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const BLANK_RES = { label: '', url: '', username: '', password: '', pin: '', notes: '' }
+
+function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
+  const isEdit = !!res?.id
+  const [form, setForm] = useState(isEdit ? {
+    label: res.label || '', url: res.url || '',
+    username: res.username || '', password: res.password || '',
+    pin: res.pin || '', notes: res.notes || '',
+  } : { ...BLANK_RES })
+  const [showPass, setShowPass] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  async function handleSave() {
+    if (!form.label.trim()) return
+    setSaving(true)
+    if (isEdit) {
+      await supabase.from('moneyflow_resources').update({ ...form, updated_at: new Date().toISOString() }).eq('id', res.id)
+    } else {
+      await supabase.from('moneyflow_resources').insert([{ ...form, org_id: orgId }])
+    }
+    setSaving(false)
+    onSave()
+  }
+
+  const iStyle = {
+    width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
+    color: C.w, borderRadius: 6, padding: '7px 10px',
+    fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const lStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+      <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 14, width: '100%', maxWidth: 440, maxHeight: '90vh', overflowY: 'auto', padding: 24, boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, color: C.go, fontSize: 15, fontWeight: 700 }}>{isEdit ? '✏️ Edit Resource' : '➕ New Resource'}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.g, fontSize: 18, cursor: 'pointer' }}>✕</button>
+        </div>
+
+        {[
+          { key: 'label', label: 'Display Name *', placeholder: 'e.g. Xcel Energy' },
+          { key: 'url',   label: 'URL',             placeholder: 'https://...' },
+          { key: 'username', label: 'Username',     placeholder: '' },
+          { key: 'pin',   label: 'PIN',             placeholder: '' },
+          { key: 'notes', label: 'Notes',           placeholder: 'Account #, tips...' },
+        ].map(f => (
+          <div key={f.key} style={{ marginBottom: 12 }}>
+            <label style={lStyle}>{f.label}</label>
+            <input value={form[f.key]} onChange={e => set(f.key, e.target.value)} placeholder={f.placeholder} style={iStyle} />
+          </div>
+        ))}
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={lStyle}>Password</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type={showPass ? 'text' : 'password'}
+              value={form.password}
+              onChange={e => set('password', e.target.value)}
+              style={{ ...iStyle, flex: 1 }}
+            />
+            <button onClick={() => setShowPass(v => !v)} style={{
+              background: C.bg, border: `1px solid ${C.bdr}`, color: C.g,
+              borderRadius: 6, padding: '0 10px', cursor: 'pointer', fontSize: 11,
+            }}>{showPass ? '🙈' : '👁'}</button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose} style={{ background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !form.label.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: !form.label.trim() ? 0.5 : 1 }}>
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Resource'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ResourceLibraryTab({ orgId, C }) {
+  const [resources, setResources] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase.from('moneyflow_resources').select('*').eq('org_id', orgId).order('label')
+    setResources(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [orgId])
+
+  async function handleDelete(id) {
+    await supabase.from('moneyflow_resources').delete().eq('id', id)
+    setResources(r => r.filter(x => x.id !== id))
+  }
+
+  function handleEdit(res) { setEditing(res); setModalOpen(true) }
+  function handleNew()     { setEditing(null); setModalOpen(true) }
+  function handleSaved()   { setModalOpen(false); setEditing(null); load() }
+
+  return (
+    <div>
+      {modalOpen && (
+        <ResourceFormModal res={editing} orgId={orgId} C={C} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: C.g }}>
+          Login links, credentials, and vendor portals — all in one place.
+        </div>
+        <button onClick={handleNew} style={{
+          background: C.go, border: 'none', color: '#fff',
+          padding: '6px 16px', borderRadius: 20, cursor: 'pointer',
+          fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+        }}>+ Add Resource</button>
+      </div>
+
+      {loading && <p style={{ fontSize: 12, color: C.g }}>Loading…</p>}
+
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        {!loading && resources.length === 0 && (
+          <p style={{ fontSize: 12, color: C.g }}>No resources yet. Add your first one — Xcel, CenterPoint, QBO, wherever you log in.</p>
+        )}
+        {resources.map(res => (
+          <ResourceCard key={res.id} res={res} C={C} onEdit={handleEdit} onDelete={handleDelete} />
+        ))}
+      </div>
+
+      <div style={{ marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 500 }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Passwords never display on screen — copy-only. Credentials live in Supabase behind your org_id. You can also attach resources to task cards so the login button lives right on the back of the card.
+      </div>
+    </div>
+  )
+}
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('tasks')
   const [tasks, setTasks] = useState([])
@@ -930,6 +1265,7 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [error, setError] = useState(null)
   const [filterEntity, setFilterEntity] = useState('all')
   const [filterType, setFilterType] = useState('all')
+  const [allResources, setAllResources] = useState([])
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
@@ -938,7 +1274,15 @@ export default function MoneyFlowModule({ orgId, C }) {
   // JE Generator sub-tab
   const [jeSubTab, setJeSubTab] = useState('iif')
 
-  // ── LOAD TASKS ──
+  // ── LOAD RESOURCES (for task attachment) ──
+  const loadResources = useCallback(async () => {
+    const { data } = await supabase
+      .from('moneyflow_resources').select('id,label,url,username,password,pin')
+      .eq('org_id', orgId).order('label')
+    setAllResources(data || [])
+  }, [orgId])
+
+  useEffect(() => { loadResources() }, [loadResources])
   const loadTasks = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -1051,6 +1395,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           task={editingTask}
           orgId={orgId}
           C={C}
+          allResources={allResources}
           onSave={handleSaved}
           onClose={closeModal}
           onDelete={handleDeleted}
@@ -1071,6 +1416,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div style={{ display: 'flex', gap: 6 }}>
           {pill('Task Cards', tab === 'tasks', () => setTab('tasks'))}
           {pill('JE Generator', tab === 'je', () => setTab('je'))}
+          {pill('🔗 Resources', tab === 'resources', () => setTab('resources'))}
         </div>
       </div>
 
@@ -1105,7 +1451,11 @@ export default function MoneyFlowModule({ orgId, C }) {
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
               {filtered.length === 0 && <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>}
               {filtered.map(task => (
-                <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} />
+                <TaskCard
+                  key={task.id} task={task} C={C}
+                  onToggleDone={toggleDone} onEdit={openEditTask}
+                  allResources={allResources}
+                />
               ))}
             </div>
           )}
@@ -1135,6 +1485,9 @@ export default function MoneyFlowModule({ orgId, C }) {
           {jeSubTab === 'amort' && <AmortizationTab C={C} />}
         </div>
       )}
+
+      {/* ── RESOURCES TAB ── */}
+      {tab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
     </div>
   )
 }

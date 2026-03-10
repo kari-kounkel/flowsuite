@@ -30,6 +30,25 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
   const inputRef = useRef(null)
   const fileInputRefs = useRef({})
 
+  // MoneyFlow summary banner
+  const [mfSummary, setMfSummary] = useState(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    async function loadMFSummary() {
+      const today = new Date().toISOString().split('T')[0]
+      const { data } = await supabase
+        .from('moneyflow_tasks')
+        .select('id, name, due_date, status, type, entity')
+        .eq('org_id', orgId)
+        .eq('status', 'open')
+      if (!data) return
+      const overdue = data.filter(t => t.due_date && t.due_date < today).length
+      setMfSummary({ open: data.length, overdue })
+    }
+    loadMFSummary()
+  }, [orgId])
+
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
   useEffect(() => { if (orgId) loadEmployees() }, [orgId])
@@ -332,6 +351,25 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
         ))}
         <span style={{ fontSize: 10, color: C.g, marginLeft: 'auto', alignSelf: 'center' }}>{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
       </div>
+
+      {/* MoneyFlow read-only summary banner */}
+      {mfSummary && mfSummary.open > 0 && (
+        <div style={{
+          marginBottom: 14, padding: '10px 14px',
+          background: mfSummary.overdue > 0 ? '#3a1a1a' : C.gD,
+          border: `1px solid ${mfSummary.overdue > 0 ? '#c04040' : C.go}`,
+          borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 14 }}>💰</span>
+            <span style={{ fontSize: 11, color: mfSummary.overdue > 0 ? '#e07070' : C.go, fontWeight: 600 }}>
+              MoneyFlow: {mfSummary.open} open finance task{mfSummary.open !== 1 ? 's' : ''}
+              {mfSummary.overdue > 0 && <span style={{ color: '#e07070' }}> — {mfSummary.overdue} overdue</span>}
+            </span>
+          </div>
+          <span style={{ fontSize: 10, color: C.g, fontStyle: 'italic' }}>View in MoneyFlow → Task Cards</span>
+        </div>
+      )}
 
       <Card C={C} style={{ marginBottom: 16, padding: '12px 14px' }}>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>

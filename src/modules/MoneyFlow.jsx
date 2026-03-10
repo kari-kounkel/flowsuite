@@ -566,15 +566,9 @@ function JETable({ lines, C, memo, journalNum, dateLabel }) {
 }
 
 // ─── IIF FACTORY TAB ─────────────────────────────────────────────────────────
-function IIFFactory({ orgId, C }) {
-  const [parsedData, setParsedData] = useState(null)   // { transactions, accounts }
+function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName, period, setPeriod }) {
   const [accountMap, setAccountMap] = useState([])      // rows from iif_account_map
   const [history, setHistory] = useState([])            // rows from iif_je_history
-  const [period, setPeriod] = useState(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${mmPad(d.getMonth() + 1)}`
-  })
-  const [fileName, setFileName] = useState('')
   const [loadingMap, setLoadingMap] = useState(false)
   const [posting, setPosting] = useState(false)
   const [postMsg, setPostMsg] = useState(null)
@@ -1258,6 +1252,343 @@ function ResourceLibraryTab({ orgId, C }) {
     </div>
   )
 }
+
+// ─── PAYROLL PAYMENTS TAB ────────────────────────────────────────────────
+// Wage garnishments, child support, tax levies, creditor orders
+// Each payment type links to a resource (SDU portal, court system, etc.)
+// Per-employee, per-order tracking with remittance deadlines
+
+const PAYMENT_TYPE_DEFAULTS = [
+  { name: 'Child Support', destination: 'MN Child Support Payment Center', url: 'https://childsupportmn.org', frequency: 'Per payroll', color: '#9a6ac4' },
+  { name: 'Wage Garnishment', destination: 'Issuing Court / Creditor', url: '', frequency: 'Per payroll', color: '#c4956a' },
+  { name: 'Tax Levy (IRS)', destination: 'IRS', url: 'https://eftps.gov', frequency: 'Per payroll', color: '#e07070' },
+  { name: 'Tax Levy (State)', destination: 'MN Dept of Revenue', url: 'https://www.revenue.state.mn.us', frequency: 'Per payroll', color: '#e07070' },
+  { name: 'Student Loan', destination: 'Dept of Education / Servicer', url: '', frequency: 'Per payroll', color: '#6ab87a' },
+]
+
+const BLANK_ORDER = {
+  employee_name: '',
+  payment_type: 'Child Support',
+  case_number: '',
+  destination: '',
+  destination_url: '',
+  amount_per_period: '',
+  frequency: 'Per payroll',
+  start_date: '',
+  end_date: '',
+  status: 'active',
+  notes: '',
+}
+
+function PayrollOrderModal({ order, orgId, C, onSave, onClose }) {
+  const isEdit = !!order?.id
+  const [form, setForm] = useState(isEdit ? {
+    employee_name: order.employee_name || '',
+    payment_type: order.payment_type || 'Child Support',
+    case_number: order.case_number || '',
+    destination: order.destination || '',
+    destination_url: order.destination_url || '',
+    amount_per_period: order.amount_per_period || '',
+    frequency: order.frequency || 'Per payroll',
+    start_date: order.start_date || '',
+    end_date: order.end_date || '',
+    status: order.status || 'active',
+    notes: order.notes || '',
+  } : { ...BLANK_ORDER })
+  const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Auto-fill destination when payment type changes
+  function handleTypeChange(type) {
+    const def = PAYMENT_TYPE_DEFAULTS.find(d => d.name === type)
+    set('payment_type', type)
+    if (def && !isEdit) {
+      setForm(f => ({
+        ...f,
+        payment_type: type,
+        destination: def.destination,
+        destination_url: def.url,
+        frequency: def.frequency,
+      }))
+    }
+  }
+
+  async function handleSave() {
+    if (!form.employee_name.trim() || !form.payment_type) return
+    setSaving(true)
+    const payload = { ...form, org_id: orgId, amount_per_period: parseFloat(form.amount_per_period) || 0 }
+    if (isEdit) {
+      await supabase.from('payroll_payment_orders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', order.id)
+    } else {
+      await supabase.from('payroll_payment_orders').insert([payload])
+    }
+    setSaving(false)
+    onSave()
+  }
+
+  async function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    setDeleting(true)
+    await supabase.from('payroll_payment_orders').delete().eq('id', order.id)
+    setDeleting(false)
+    onSave()
+  }
+
+  const iStyle = {
+    width: '100%', background: C.bg, border: `1px solid ${C.bdr}`,
+    color: C.w, borderRadius: 6, padding: '7px 10px',
+    fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const lStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+      <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 14, width: '100%', maxWidth: 500, maxHeight: '92vh', overflowY: 'auto', padding: 24, boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, color: C.go, fontSize: 15, fontWeight: 700 }}>{isEdit ? '✏️ Edit Payment Order' : '➕ New Payment Order'}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.g, fontSize: 18, cursor: 'pointer' }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={lStyle}>Employee Name *</label>
+          <input value={form.employee_name} onChange={e => set('employee_name', e.target.value)} placeholder="Last, First" style={iStyle} />
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Payment Type *</label>
+            <select value={form.payment_type} onChange={e => handleTypeChange(e.target.value)} style={iStyle}>
+              {PAYMENT_TYPE_DEFAULTS.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Frequency</label>
+            <select value={form.frequency} onChange={e => set('frequency', e.target.value)} style={iStyle}>
+              {['Per payroll', 'Monthly', 'Weekly', 'Bi-weekly'].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={lStyle}>Case / Order Number</label>
+          <input value={form.case_number} onChange={e => set('case_number', e.target.value)} placeholder="e.g. 27-FA-24-001234" style={iStyle} />
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 2 }}>
+            <label style={lStyle}>Destination / Payee</label>
+            <input value={form.destination} onChange={e => set('destination', e.target.value)} placeholder="MN Child Support Payment Center..." style={iStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Amount Per Period ($)</label>
+            <input type="number" value={form.amount_per_period} onChange={e => set('amount_per_period', e.target.value)} min={0} step="0.01" style={iStyle} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={lStyle}>Portal / Website URL</label>
+          <input value={form.destination_url} onChange={e => set('destination_url', e.target.value)} placeholder="https://..." style={iStyle} />
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Start Date</label>
+            <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)} style={iStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>End Date (if known)</label>
+            <input type="date" value={form.end_date} onChange={e => set('end_date', e.target.value)} style={iStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Status</label>
+            <select value={form.status} onChange={e => set('status', e.target.value)} style={iStyle}>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={lStyle}>Notes</label>
+          <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Court info, account numbers, remittance instructions..." style={{ ...iStyle, resize: 'vertical', lineHeight: 1.5 }} />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            {isEdit && (
+              <button onClick={handleDelete} disabled={deleting} style={{ background: confirmDelete ? '#c04040' : 'transparent', border: `1px solid #c04040`, color: confirmDelete ? '#fff' : '#c04040', padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'inherit' }}>
+                {deleting ? 'Deleting…' : confirmDelete ? 'Confirm Delete' : '🗑 Delete'}
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={onClose} style={{ background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+            <button onClick={handleSave} disabled={saving || !form.employee_name.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: !form.employee_name.trim() ? 0.5 : 1 }}>
+              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Order'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PayrollPaymentsTab({ orgId, C }) {
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [filterStatus, setFilterStatus] = useState('active')
+  const [filterType, setFilterType] = useState('all')
+
+  async function load() {
+    setLoading(true)
+    const { data } = await supabase.from('payroll_payment_orders').select('*').eq('org_id', orgId).order('employee_name')
+    setOrders(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [orgId])
+
+  function handleNew() { setEditing(null); setModalOpen(true) }
+  function handleEdit(o) { setEditing(o); setModalOpen(true) }
+  function handleSaved() { setModalOpen(false); setEditing(null); load() }
+
+  const STATUS_COLORS = { active: '#6ab87a', suspended: '#c4956a', closed: '#a0a0a0' }
+
+  const filtered = orders.filter(o => {
+    if (filterStatus !== 'all' && o.status !== filterStatus) return false
+    if (filterType !== 'all' && o.payment_type !== filterType) return false
+    return true
+  })
+
+  const allTypes = [...new Set(orders.map(o => o.payment_type))].sort()
+  const totalActive = orders.filter(o => o.status === 'active').reduce((s, o) => s + (o.amount_per_period || 0), 0)
+
+  const pill = (label, active, onClick) => (
+    <button onClick={onClick} style={{
+      background: active ? C.gD : 'transparent',
+      border: `1px solid ${active ? C.go : C.bdrF}`,
+      color: active ? C.go : C.g,
+      padding: '5px 14px', borderRadius: 20, cursor: 'pointer',
+      fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+    }}>{label}</button>
+  )
+
+  return (
+    <div>
+      {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
+
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 12, color: C.g }}>Garnishments, child support, levies — one place to track what goes where and when.</div>
+          {totalActive > 0 && (
+            <div style={{ fontSize: 11, color: C.go, marginTop: 4, fontWeight: 600 }}>
+              Active per-period total: ${fmt(totalActive)} &nbsp;&bull;&nbsp; {orders.filter(o => o.status === 'active').length} active order{orders.filter(o => o.status === 'active').length !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
+        <button onClick={handleNew} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>+ Add Order</button>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
+        {['active', 'suspended', 'closed', 'all'].map(s => pill(s === 'all' ? 'All Statuses' : s.charAt(0).toUpperCase() + s.slice(1), filterStatus === s, () => setFilterStatus(s)))}
+        {allTypes.length > 1 && <>
+          <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
+          {pill('All Types', filterType === 'all', () => setFilterType('all'))}
+          {allTypes.map(t => pill(t, filterType === t, () => setFilterType(t)))}
+        </>}
+      </div>
+
+      {loading && <p style={{ fontSize: 12, color: C.g }}>Loading…</p>}
+
+      {/* Order rows */}
+      {!loading && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {filtered.length === 0 && <p style={{ fontSize: 12, color: C.g }}>No orders match this filter.</p>}
+          {filtered.map(o => {
+            const typeDef = PAYMENT_TYPE_DEFAULTS.find(d => d.name === o.payment_type)
+            const typeColor = typeDef?.color || '#a0a0a0'
+            const statusColor = STATUS_COLORS[o.status] || '#a0a0a0'
+            return (
+              <div key={o.id} onClick={() => handleEdit(o)} style={{
+                background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
+                padding: '12px 16px', cursor: 'pointer', display: 'flex', gap: 12,
+                alignItems: 'flex-start', flexWrap: 'wrap',
+                transition: 'border-color 0.15s',
+              }}
+                onMouseOver={e => e.currentTarget.style.borderColor = C.go}
+                onMouseOut={e => e.currentTarget.style.borderColor = C.bdr}
+              >
+                {/* Left accent */}
+                <div style={{ width: 4, alignSelf: 'stretch', background: typeColor, borderRadius: 2, flexShrink: 0 }} />
+
+                {/* Main info */}
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.w }}>{o.employee_name}</span>
+                    <span style={{ fontSize: 10, background: typeColor + '33', color: typeColor, padding: '2px 7px', borderRadius: 4, fontWeight: 600 }}>{o.payment_type}</span>
+                    <span style={{ fontSize: 10, color: statusColor, fontWeight: 600 }}>● {o.status}</span>
+                  </div>
+                  {o.case_number && <div style={{ fontSize: 11, color: C.g, marginTop: 3 }}>Case: {o.case_number}</div>}
+                  {o.destination && <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>→ {o.destination}</div>}
+                  {o.notes && <div style={{ fontSize: 10, color: C.g, marginTop: 4, fontStyle: 'italic' }}>{o.notes}</div>}
+                </div>
+
+                {/* Right: amount + portal */}
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                  {o.amount_per_period > 0 && (
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.go }}>${fmt(o.amount_per_period)}</div>
+                  )}
+                  <div style={{ fontSize: 10, color: C.g }}>{o.frequency}</div>
+                  {o.destination_url && (
+                    <a href={o.destination_url} target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      style={{ display: 'inline-block', marginTop: 6, fontSize: 10, color: C.go, textDecoration: 'none', border: `1px solid ${C.go}`, padding: '2px 8px', borderRadius: 4 }}>
+                      🔗 Portal
+                    </a>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Reference links */}
+      <div style={{ marginTop: 24, padding: '12px 16px', background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>Quick Reference Links</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { label: 'MN Child Support', url: 'https://childsupportmn.org' },
+            { label: 'MN Child Support Employer Guide', url: 'https://childsupportmn.org/employers/' },
+            { label: 'IRS Levy Guidelines', url: 'https://www.irs.gov/businesses/small-businesses-self-employed/levy' },
+            { label: 'EFTPS', url: 'https://www.eftps.gov' },
+            { label: 'MN Revenue', url: 'https://www.revenue.state.mn.us' },
+            { label: 'DOL Garnishment Rules', url: 'https://www.dol.gov/agencies/whd/wage-garnishment' },
+          ].map(l => (
+            <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" style={{
+              fontSize: 10, color: C.go, textDecoration: 'none',
+              border: `1px solid ${C.bdrF}`, padding: '4px 10px',
+              borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}>🔗 {l.label}</a>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 500 }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Each order lives on its employee record. Portal button goes straight to the remittance site. Click any row to edit. Active orders total updates automatically.
+      </div>
+    </div>
+  )
+}
+
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('tasks')
   const [tasks, setTasks] = useState([])
@@ -1273,6 +1604,14 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   // JE Generator sub-tab
   const [jeSubTab, setJeSubTab] = useState('iif')
+
+  // ── LIFTED IIF STATE (persists across tab switches) ──
+  const [iifParsedData, setIifParsedData] = useState(null)
+  const [iifFileName, setIifFileName] = useState('')
+  const [iifPeriod, setIifPeriod] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
 
   // ── LOAD RESOURCES (for task attachment) ──
   const loadResources = useCallback(async () => {
@@ -1338,11 +1677,13 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   function openNewTask() {
     setEditingTask(null)
+    loadResources()
     setModalOpen(true)
   }
 
   function openEditTask(task) {
     setEditingTask(task)
+    loadResources()
     setModalOpen(true)
   }
 
@@ -1417,6 +1758,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           {pill('Task Cards', tab === 'tasks', () => setTab('tasks'))}
           {pill('JE Generator', tab === 'je', () => setTab('je'))}
           {pill('🔗 Resources', tab === 'resources', () => setTab('resources'))}
+          {pill('💸 Payroll Payments', tab === 'payroll', () => setTab('payroll'))}
         </div>
       </div>
 
@@ -1480,7 +1822,14 @@ export default function MoneyFlowModule({ orgId, C }) {
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
           </div>
 
-          {jeSubTab === 'iif' && <IIFFactory orgId={orgId} C={C} />}
+          {jeSubTab === 'iif' && (
+            <IIFFactory
+              orgId={orgId} C={C}
+              parsedData={iifParsedData} setParsedData={setIifParsedData}
+              fileName={iifFileName} setFileName={setIifFileName}
+              period={iifPeriod} setPeriod={setIifPeriod}
+            />
+          )}
           {jeSubTab === 'recurring' && <RecurringJETab orgId={orgId} C={C} />}
           {jeSubTab === 'amort' && <AmortizationTab C={C} />}
         </div>
@@ -1488,6 +1837,9 @@ export default function MoneyFlowModule({ orgId, C }) {
 
       {/* ── RESOURCES TAB ── */}
       {tab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
+
+      {/* ── PAYROLL PAYMENTS TAB ── */}
+      {tab === 'payroll' && <PayrollPaymentsTab orgId={orgId} C={C} />}
     </div>
   )
 }

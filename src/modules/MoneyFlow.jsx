@@ -940,13 +940,17 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
 
 // ─── RECURRING JE TAB (Supabase-live) ────────────────────────────────────────
 function RecurringJETab({ orgId, C }) {
-  const [templates, setTemplates] = useState([])
-  const [lines, setLines] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [templates, setTemplates]   = useState([])
+  const [lines, setLines]           = useState([])
+  const [loading, setLoading]       = useState(true)
   const [selectedId, setSelectedId] = useState(null)
-  const [jeMonth, setJeMonth] = useState(new Date().getMonth() + 1)
-  const [jeYear, setJeYear] = useState(new Date().getFullYear())
-  const [utilOverrides, setUtilOverrides] = useState({}) // line_id → amount
+  const [jeMonth, setJeMonth]       = useState(new Date().getMonth() + 1)
+  const [jeYear, setJeYear]         = useState(new Date().getFullYear())
+  const [utilOverrides, setUtilOverrides] = useState({})
+  // ── Pencil edit for fixed-amount lines ──
+  const [editingLine, setEditingLine] = useState(null)
+  const [editAmt, setEditAmt]         = useState('')
+  const [savingLine, setSavingLine]   = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -964,52 +968,65 @@ function RecurringJETab({ orgId, C }) {
   }, [orgId])
 
   const activeTemplate = templates.find(t => t.id === selectedId)
-  const activeLines = lines.filter(l => l.template_id === selectedId)
+  const activeLines    = lines.filter(l => l.template_id === selectedId)
 
-  // Build display lines — editable ones use utilOverrides
   const displayLines = activeLines.map(l => ({
-    acct: l.acct_number,
-    name: l.acct_name,
-    dr: l.is_debit,
-    amount: l.is_editable
+    acct:     l.acct_number,
+    name:     l.acct_name,
+    dr:       l.is_debit,
+    amount:   l.is_editable
       ? (parseFloat(utilOverrides[l.id]) || 0)
-      : (l.is_total
-          ? activeLines.filter(x => x.is_editable).reduce((s, x) => s + (parseFloat(utilOverrides[x.id]) || 0), 0)
-          : (l.amount || 0)),
+      : l.is_total
+        ? activeLines.filter(x => x.is_editable).reduce((s, x) => s + (parseFloat(utilOverrides[x.id]) || 0), 0)
+        : (l.amount || 0),
     editable: l.is_editable,
     is_total: l.is_total,
-    id: l.id,
+    id:       l.id,
   }))
 
-  const mm = mmPad(jeMonth)
+  const mm        = mmPad(jeMonth)
   const monthName = MONTHS[jeMonth - 1]
   const journalNum = activeTemplate ? `KK ${activeTemplate.code} ${jeYear} ${mm}` : ''
-  const timing = activeTemplate?.timing || ''
-  const dateLabel = timing === 'Last day of month'
+  const timing     = activeTemplate?.timing || ''
+  const dateLabel  = timing === 'Last day of month'
     ? `Last day of ${monthName} ${jeYear}`
     : `15th of ${monthName} ${jeYear}`
+
+  async function saveLineEdit(lineId) {
+    setSavingLine(true)
+    const newAmt = parseFloat(editAmt)
+    if (!isNaN(newAmt)) {
+      const { error } = await supabase
+        .from('recurring_je_lines')
+        .update({ amount: newAmt })
+        .eq('id', lineId)
+      if (!error) setLines(prev => prev.map(l => l.id === lineId ? { ...l, amount: newAmt } : l))
+    }
+    setEditingLine(null)
+    setEditAmt('')
+    setSavingLine(false)
+  }
 
   const inputStyle = {
     background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
     borderRadius: 6, padding: '6px 8px', fontSize: 11,
     fontFamily: "'DM Mono', monospace", width: '100%', boxSizing: 'border-box',
   }
+  const labelStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
 
   if (loading) return <p style={{ fontSize: 12, color: C.g }}>Loading recurring entries…</p>
 
   return (
     <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-      {/* Left: selector + month/year */}
+      {/* Left panel */}
       <div style={{
         background: C.bg2, border: `1px solid ${C.bdr}`,
         borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
       }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
-          GENERATE JE
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>GENERATE JE</div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Entry Type</label>
+          <label style={labelStyle}>Entry Type</label>
           {templates.map(t => (
             <button key={t.id} onClick={() => setSelectedId(t.id)} style={{
               display: 'block', width: '100%', textAlign: 'left',
@@ -1027,29 +1044,29 @@ function RecurringJETab({ orgId, C }) {
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
           <div style={{ flex: 2 }}>
-            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Month</label>
+            <label style={labelStyle}>Month</label>
             <select value={jeMonth} onChange={e => setJeMonth(Number(e.target.value))} style={inputStyle}>
               {MONTHS.map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
             </select>
           </div>
           <div style={{ flex: 1 }}>
-            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
+            <label style={labelStyle}>Year</label>
             <select value={jeYear} onChange={e => setJeYear(Number(e.target.value))} style={inputStyle}>
-              {[2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+              {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
         </div>
 
-        {/* Editable utility inputs if template has editable lines */}
+        {/* UTIL session inputs */}
         {activeLines.some(l => l.is_editable) && (
-          <div>
-            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actual Amounts</label>
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>This Month's Allocation</label>
+            <div style={{ fontSize: 9, color: C.g, marginBottom: 6, lineHeight: 1.5 }}>From your monthly FLEX export.</div>
             {activeLines.filter(l => l.is_editable).map(l => (
               <div key={l.id} style={{ marginBottom: 8 }}>
                 <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 3 }}>{l.acct_name}</label>
                 <input
-                  type="number"
-                  placeholder="0.00"
+                  type="number" step="0.01" placeholder="0.00"
                   value={utilOverrides[l.id] || ''}
                   onChange={e => setUtilOverrides(prev => ({ ...prev, [l.id]: e.target.value }))}
                   style={inputStyle}
@@ -1059,30 +1076,523 @@ function RecurringJETab({ orgId, C }) {
           </div>
         )}
 
-        <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6, marginTop: 8 }}>
-          No CSV. No import.<br/>Key directly into QBO.
+        <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6 }}>
+          No CSV. No import.<br />Key directly into QBO.
         </div>
       </div>
 
-      {/* Right: JE output */}
+      {/* Right panel */}
       <div style={{ flex: 1, minWidth: 320 }}>
         {activeTemplate && (
           <JETable
-            lines={displayLines}
-            C={C}
-            journalNum={journalNum}
-            dateLabel={dateLabel}
+            lines={displayLines} C={C}
+            journalNum={journalNum} dateLabel={dateLabel}
             memo={`${activeTemplate.label} — ${monthName} ${jeYear} — Enter manually in QBO`}
           />
         )}
+
+        {/* ── Fixed-amount line editor ── */}
+        {activeLines.filter(l => !l.is_editable && !l.is_total).length > 0 && (
+          <div style={{
+            marginTop: 14, background: C.bg2, border: `1px solid ${C.bdr}`,
+            borderRadius: 10, padding: '12px 16px',
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 6 }}>✏️ Edit Fixed Amounts</div>
+            <div style={{ fontSize: 10, color: C.g, marginBottom: 10, lineHeight: 1.5 }}>
+              Saves to Supabase permanently — update when CPA gives you new numbers.
+            </div>
+            {activeLines.filter(l => !l.is_editable && !l.is_total).map(l => (
+              <div key={l.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 0', borderBottom: `1px solid ${C.bdrF}`,
+              }}>
+                <span style={{ flex: 1, fontSize: 11, color: C.w }}>{l.acct_name}</span>
+                {editingLine === l.id ? (
+                  <>
+                    <input
+                      type="number" step="0.01"
+                      value={editAmt}
+                      onChange={e => setEditAmt(e.target.value)}
+                      autoFocus
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') saveLineEdit(l.id)
+                        if (e.key === 'Escape') { setEditingLine(null); setEditAmt('') }
+                      }}
+                      style={{ ...inputStyle, width: 110, padding: '4px 8px' }}
+                    />
+                    <button onClick={() => saveLineEdit(l.id)} disabled={savingLine} style={{
+                      background: C.go, border: 'none', color: '#fff',
+                      borderRadius: 5, padding: '4px 10px', fontSize: 10,
+                      cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                    }}>{savingLine ? '…' : 'Save'}</button>
+                    <button onClick={() => { setEditingLine(null); setEditAmt('') }} style={{
+                      background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g,
+                      borderRadius: 5, padding: '4px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                    }}>✕</button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", minWidth: 90, textAlign: 'right' }}>
+                      ${fmt(l.amount || 0)}
+                    </span>
+                    <button onClick={() => { setEditingLine(l.id); setEditAmt(String(l.amount || 0)) }} style={{
+                      background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g,
+                      borderRadius: 5, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                    }}>✏️</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={{
           marginTop: 12, padding: '10px 14px',
           borderLeft: `3px solid ${C.go}`,
-          background: C.gD, borderRadius: '0 8px 8px 0',
-          fontSize: 11, color: C.g,
+          background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g,
         }}>
-          <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Amounts live in Supabase — no code deploy to change a number.
+          <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Fixed amounts save to Supabase — no deploy needed to change a number.
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── MONTHLY CLOSE CHECKLIST TAB ─────────────────────────────────────────────
+function CloseChecklistTab({ orgId, C }) {
+  const [templates, setTemplates]   = useState([])
+  const [lines, setLines]           = useState([])   // recurring_je_lines
+  const [log, setLog]               = useState([])   // moneyflow_close_log
+  const [loading, setLoading]       = useState(true)
+  const [period, setPeriod]         = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+
+  // Util expand state + session amounts
+  const [utilOpen, setUtilOpen]         = useState(false)
+  const [utilAmounts, setUtilAmounts]   = useState({})   // line_id → amount
+
+  // Posting state: entryKey → { posting, noteOpen, noteText }
+  const [postState, setPostState]       = useState({})
+
+  // Add one-off
+  const [addingOneoff, setAddingOneoff] = useState(false)
+  const [oneoffForm, setOneoffForm]     = useState({ label: '', amount: '', note: '' })
+  const [savingOneoff, setSavingOneoff] = useState(false)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const [{ data: tmplData }, { data: lineData }, { data: logData }] = await Promise.all([
+        supabase.from('recurring_je_templates').select('*').eq('org_id', orgId).order('code'),
+        supabase.from('recurring_je_lines').select('*').eq('org_id', orgId).order('sort_order'),
+        supabase.from('moneyflow_close_log').select('*').eq('org_id', orgId).eq('period', period).order('created_at'),
+      ])
+      setTemplates(tmplData || [])
+      setLines(lineData || [])
+      setLog(logData || [])
+      setLoading(false)
+    }
+    load()
+  }, [orgId, period])
+
+  // ── Helpers ──
+  function logKey(type, templateId) { return `${type}::${templateId || 'oneoff'}` }
+
+  function getLogEntry(type, templateId) {
+    return log.find(r => r.entry_type === type && (r.template_id === templateId || (!r.template_id && !templateId)))
+  }
+
+  function ps(key) { return postState[key] || {} }
+  function setPs(key, patch) { setPostState(prev => ({ ...prev, [key]: { ...ps(key), ...patch } })) }
+
+  async function markPosted(entryType, templateId, label, amount) {
+    const key = logKey(entryType, templateId)
+    const note = ps(key).noteText || ''
+    setPs(key, { posting: true })
+    const row = {
+      org_id: orgId, period,
+      entry_type: entryType,
+      template_id: templateId || null,
+      label, amount: amount || null,
+      note: note.trim() || null,
+      posted_at: new Date().toISOString(),
+    }
+    const { data, error } = await supabase.from('moneyflow_close_log').insert([row]).select()
+    if (!error && data) {
+      setLog(prev => [...prev, data[0]])
+      setPs(key, { posting: false, noteOpen: false, noteText: '' })
+    } else {
+      setPs(key, { posting: false })
+    }
+  }
+
+  async function unpost(logId) {
+    await supabase.from('moneyflow_close_log').delete().eq('id', logId)
+    setLog(prev => prev.filter(r => r.id !== logId))
+  }
+
+  async function saveOneoff() {
+    if (!oneoffForm.label.trim()) return
+    setSavingOneoff(true)
+    const row = {
+      org_id: orgId, period,
+      entry_type: 'oneoff',
+      template_id: null,
+      label: oneoffForm.label.trim(),
+      amount: oneoffForm.amount ? parseFloat(oneoffForm.amount) : null,
+      note: oneoffForm.note.trim() || null,
+      posted_at: null,
+    }
+    const { data, error } = await supabase.from('moneyflow_close_log').insert([row]).select()
+    if (!error && data) {
+      setLog(prev => [...prev, data[0]])
+      setOneoffForm({ label: '', amount: '', note: '' })
+      setAddingOneoff(false)
+    }
+    setSavingOneoff(false)
+  }
+
+  async function postOneoff(entry) {
+    const key = logKey('oneoff-post', entry.id)
+    const note = ps(key).noteText || ''
+    setPs(key, { posting: true })
+    const { error } = await supabase
+      .from('moneyflow_close_log')
+      .update({ posted_at: new Date().toISOString(), note: note.trim() || entry.note || null })
+      .eq('id', entry.id)
+    if (!error) {
+      setLog(prev => prev.map(r => r.id === entry.id ? { ...r, posted_at: new Date().toISOString() } : r))
+      setPs(key, { posting: false, noteOpen: false, noteText: '' })
+    } else {
+      setPs(key, { posting: false })
+    }
+  }
+
+  // ── Derived ──
+  const recurringEntries = templates.map(t => {
+    const posted = getLogEntry('recurring', t.id)
+    const isUtil = lines.filter(l => l.template_id === t.id).some(l => l.is_editable)
+    const fixedLines = lines.filter(l => l.template_id === t.id && !l.is_editable && !l.is_total)
+    const amount = isUtil
+      ? lines.filter(l => l.template_id === t.id && l.is_editable).reduce((s, l) => s + (parseFloat(utilAmounts[l.id]) || 0), 0)
+      : fixedLines.reduce((s, l) => s + Math.abs(l.amount || 0), 0)
+    return { ...t, posted, isUtil, amount, utilLines: lines.filter(l => l.template_id === t.id && l.is_editable) }
+  })
+
+  const oneoffEntries = log.filter(r => r.entry_type === 'oneoff')
+  const totalItems = recurringEntries.length + oneoffEntries.length
+  const postedCount = recurringEntries.filter(e => e.posted).length + oneoffEntries.filter(e => e.posted_at).length
+
+  const inputStyle = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '6px 10px', fontSize: 11,
+    fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const labelStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  // ── Row renderer ──
+  function EntryRow({ label, amount, posted, postedAt, postedNote, entryKey, onPost, onUnpost, isUtil, utilLines }) {
+    const state = ps(entryKey)
+    const amtDisplay = isUtil
+      ? (amount > 0 ? `$${fmt(amount)}` : null)
+      : (amount > 0 ? `$${fmt(amount)}` : null)
+
+    return (
+      <div style={{
+        background: posted ? `${C.go}11` : C.bg2,
+        border: `1px solid ${posted ? C.go : C.bdr}`,
+        borderRadius: 10, padding: '12px 16px', marginBottom: 8,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {/* Status dot */}
+          <div style={{
+            width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+            background: posted ? '#6ab87a' : '#555',
+          }} />
+
+          {/* Label + amount */}
+          <div style={{ flex: 1, minWidth: 150 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: posted ? '#6ab87a' : C.w }}>{label}</div>
+            {amtDisplay
+              ? <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace" }}>{amtDisplay}</div>
+              : isUtil && amount === 0
+                ? <div style={{ fontSize: 10, color: '#e0a050' }}>⚠ Enter amounts below</div>
+                : null
+            }
+          </div>
+
+          {/* Posted badge or post button */}
+          {posted ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 10, color: '#6ab87a' }}>
+                ✓ Posted {new Date(postedAt).toLocaleDateString()}
+                {postedNote && <span style={{ color: C.g }}> · {postedNote}</span>}
+              </div>
+              <button onClick={onUnpost} style={{
+                background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g,
+                borderRadius: 5, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+              }}>↩ Undo</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {state.noteOpen ? (
+                <>
+                  <input
+                    placeholder="Note (optional)"
+                    value={state.noteText || ''}
+                    onChange={e => setPs(entryKey, { noteText: e.target.value })}
+                    style={{ ...inputStyle, width: 180, padding: '4px 8px' }}
+                    autoFocus
+                  />
+                  <button onClick={onPost} disabled={state.posting} style={{
+                    background: C.go, border: 'none', color: '#fff',
+                    borderRadius: 5, padding: '5px 12px', fontSize: 10,
+                    cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                  }}>{state.posting ? '…' : '✓ Post'}</button>
+                  <button onClick={() => setPs(entryKey, { noteOpen: false, noteText: '' })} style={{
+                    background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g,
+                    borderRadius: 5, padding: '5px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✕</button>
+                </>
+              ) : (
+                <button onClick={() => setPs(entryKey, { noteOpen: true })} style={{
+                  background: C.go, border: 'none', color: '#fff',
+                  borderRadius: 6, padding: '5px 14px', fontSize: 10,
+                  cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                }}>Mark Posted</button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* UTIL inline expander */}
+        {isUtil && !posted && (
+          <div style={{ marginTop: 10 }}>
+            <button onClick={() => setUtilOpen(v => !v)} style={{
+              background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.go,
+              borderRadius: 5, padding: '3px 10px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+            }}>{utilOpen ? '▲ Hide' : '▼ Enter Amounts'}</button>
+            {utilOpen && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {utilLines.map(l => (
+                  <div key={l.id} style={{ minWidth: 140 }}>
+                    <label style={{ ...labelStyle, textTransform: 'none' }}>{l.acct_name}</label>
+                    <input
+                      type="number" step="0.01" placeholder="0.00"
+                      value={utilAmounts[l.id] || ''}
+                      onChange={e => setUtilAmounts(prev => ({ ...prev, [l.id]: e.target.value }))}
+                      style={{ ...inputStyle, width: '100%' }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (loading) return <p style={{ fontSize: 12, color: C.g }}>Loading close checklist…</p>
+
+  return (
+    <div>
+      {/* Period picker + progress */}
+      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 20 }}>
+        <div>
+          <label style={labelStyle}>Period</label>
+          <input
+            type="month" value={period}
+            onChange={e => setPeriod(e.target.value)}
+            style={{ ...inputStyle, width: 160 }}
+          />
+        </div>
+        <div style={{
+          background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8,
+          padding: '10px 16px', display: 'flex', gap: 20, alignItems: 'center',
+        }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Progress</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: postedCount === totalItems && totalItems > 0 ? '#6ab87a' : C.go }}>
+              {postedCount} of {totalItems} posted
+            </div>
+          </div>
+          {postedCount === totalItems && totalItems > 0 && (
+            <div style={{ fontSize: 13, color: '#6ab87a', fontWeight: 700 }}>✓ Close complete!</div>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {totalItems > 0 && (
+        <div style={{ background: C.bdr, borderRadius: 4, height: 6, marginBottom: 20, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%', borderRadius: 4, background: C.go,
+            width: `${(postedCount / totalItems) * 100}%`,
+            transition: 'width 0.4s ease',
+          }} />
+        </div>
+      )}
+
+      {/* ── RECURRING SECTION ── */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10, letterSpacing: '0.5px' }}>
+        RECURRING ENTRIES
+      </div>
+      {recurringEntries.map(entry => {
+        const key = logKey('recurring', entry.id)
+        return (
+          <EntryRow
+            key={entry.id}
+            label={entry.label}
+            amount={entry.amount}
+            posted={!!entry.posted}
+            postedAt={entry.posted?.posted_at}
+            postedNote={entry.posted?.note}
+            entryKey={key}
+            isUtil={entry.isUtil}
+            utilLines={entry.utilLines}
+            onPost={() => markPosted('recurring', entry.id, entry.label, entry.amount || null)}
+            onUnpost={() => unpost(entry.posted.id)}
+          />
+        )
+      })}
+
+      {/* ── ONE-OFF SECTION ── */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.go, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
+        ONE-OFF ENTRIES
+        <span style={{ fontSize: 10, color: C.g, fontWeight: 400, marginLeft: 8 }}>CPA adjustments, FLEX surprises, anything extra this month</span>
+      </div>
+
+      {oneoffEntries.length === 0 && !addingOneoff && (
+        <div style={{ fontSize: 11, color: C.g, marginBottom: 10 }}>No one-off entries this period.</div>
+      )}
+
+      {oneoffEntries.map(entry => {
+        const isPosted = !!entry.posted_at
+        const key = logKey('oneoff-post', entry.id)
+        const state = ps(key)
+        return (
+          <div key={entry.id} style={{
+            background: isPosted ? `${C.go}11` : C.bg2,
+            border: `1px solid ${isPosted ? C.go : C.bdr}`,
+            borderRadius: 10, padding: '12px 16px', marginBottom: 8,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: isPosted ? '#6ab87a' : '#555' }} />
+              <div style={{ flex: 1, minWidth: 150 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: isPosted ? '#6ab87a' : C.w }}>{entry.label}</div>
+                {entry.amount && <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(entry.amount)}</div>}
+                {entry.note && !isPosted && <div style={{ fontSize: 10, color: C.g }}>{entry.note}</div>}
+              </div>
+              {isPosted ? (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ fontSize: 10, color: '#6ab87a' }}>
+                    ✓ Posted {new Date(entry.posted_at).toLocaleDateString()}
+                    {entry.note && <span style={{ color: C.g }}> · {entry.note}</span>}
+                  </div>
+                  <button onClick={() => unpost(entry.id)} style={{
+                    background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g,
+                    borderRadius: 5, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>↩ Undo</button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {state.noteOpen ? (
+                    <>
+                      <input
+                        placeholder="Note (optional)"
+                        value={state.noteText || ''}
+                        onChange={e => setPs(key, { noteText: e.target.value })}
+                        style={{ ...inputStyle, width: 180, padding: '4px 8px' }}
+                        autoFocus
+                      />
+                      <button onClick={() => postOneoff(entry)} disabled={state.posting} style={{
+                        background: C.go, border: 'none', color: '#fff',
+                        borderRadius: 5, padding: '5px 12px', fontSize: 10,
+                        cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                      }}>{state.posting ? '…' : '✓ Post'}</button>
+                      <button onClick={() => setPs(key, { noteOpen: false, noteText: '' })} style={{
+                        background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g,
+                        borderRadius: 5, padding: '5px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                      }}>✕</button>
+                    </>
+                  ) : (
+                    <button onClick={() => setPs(key, { noteOpen: true })} style={{
+                      background: C.go, border: 'none', color: '#fff',
+                      borderRadius: 6, padding: '5px 14px', fontSize: 10,
+                      cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                    }}>Mark Posted</button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Add one-off form */}
+      {addingOneoff ? (
+        <div style={{
+          background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
+          padding: '14px 16px', marginBottom: 8,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 12 }}>+ New One-Off Entry</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: 2, minWidth: 160 }}>
+              <label style={labelStyle}>Label *</label>
+              <input
+                placeholder="e.g. CPA year-end adjustment"
+                value={oneoffForm.label}
+                onChange={e => setOneoffForm(f => ({ ...f, label: e.target.value }))}
+                style={{ ...inputStyle, width: '100%' }}
+              />
+            </div>
+            <div style={{ minWidth: 110 }}>
+              <label style={labelStyle}>Amount</label>
+              <input
+                type="number" step="0.01" placeholder="0.00"
+                value={oneoffForm.amount}
+                onChange={e => setOneoffForm(f => ({ ...f, amount: e.target.value }))}
+                style={{ ...inputStyle, width: '100%' }}
+              />
+            </div>
+            <div style={{ flex: 2, minWidth: 160 }}>
+              <label style={labelStyle}>Note</label>
+              <input
+                placeholder="Optional"
+                value={oneoffForm.note}
+                onChange={e => setOneoffForm(f => ({ ...f, note: e.target.value }))}
+                style={{ ...inputStyle, width: '100%' }}
+              />
+            </div>
+            <button onClick={saveOneoff} disabled={savingOneoff || !oneoffForm.label.trim()} style={{
+              background: C.go, border: 'none', color: '#fff',
+              borderRadius: 6, padding: '7px 16px', fontSize: 11,
+              cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+              opacity: !oneoffForm.label.trim() ? 0.5 : 1,
+            }}>{savingOneoff ? 'Adding…' : 'Add Entry'}</button>
+            <button onClick={() => setAddingOneoff(false)} style={{
+              background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g,
+              borderRadius: 6, padding: '7px 12px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setAddingOneoff(true)} style={{
+          background: 'transparent', border: `1px dashed ${C.bdrF}`, color: C.go,
+          borderRadius: 8, padding: '8px 18px', fontSize: 11,
+          cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, marginBottom: 8,
+        }}>+ Add One-Off Entry</button>
+      )}
+
+      {/* Sidebar */}
+      <div style={{
+        marginTop: 20, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+        background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 560,
+      }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Pick the period, work down the list, mark each one posted when it hits QBO. One-offs don't carry forward — every month starts clean. Undo is always one click away.
       </div>
     </div>
   )
@@ -2431,7 +2941,7 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [editingTask, setEditingTask] = useState(null)
 
   // JE Generator sub-tab
-  const [jeSubTab, setJeSubTab] = useState('iif')
+  const [jeSubTab, setJeSubTab] = useState('checklist')
 
   // ── LIFTED IIF STATE (persists across tab switches) ──
   const [iifParsedData, setIifParsedData] = useState(null)
@@ -2584,7 +3094,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         {/* Tab switcher */}
         <div style={{ display: 'flex', gap: 6 }}>
           {pill('Task Cards', tab === 'tasks', () => setTab('tasks'))}
-          {pill('JE Generator', tab === 'je', () => setTab('je'))}
+          {pill('Monthly Close', tab === 'je', () => setTab('je'))}
           {pill('📋 JE History', tab === 'history', () => setTab('history'))}
           {pill('🔗 Resources', tab === 'resources', () => setTab('resources'))}
           {pill('💸 Payroll Payments', tab === 'payroll', () => setTab('payroll'))}
@@ -2646,11 +3156,13 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div>
           {/* Sub-tab bar */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
+            {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
           </div>
 
+          {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory
               orgId={orgId} C={C}

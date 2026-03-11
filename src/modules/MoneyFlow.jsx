@@ -1130,10 +1130,25 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
   async function handleSave() {
     if (!form.label.trim()) return
     setSaving(true)
+    const payload = {
+      label: form.label.trim(),
+      url: form.url.trim(),
+      username: form.username,
+      password: form.password,
+      pin: form.pin,
+      notes: form.notes,
+    }
     if (isEdit) {
-      await supabase.from('moneyflow_resources').update({ ...form, updated_at: new Date().toISOString() }).eq('id', res.id)
+      const { error } = await supabase
+        .from('moneyflow_resources')
+        .update(payload)
+        .eq('id', res.id)
+      if (error) { console.error('Resource update error:', error); setSaving(false); return }
     } else {
-      await supabase.from('moneyflow_resources').insert([{ ...form, org_id: orgId }])
+      const { error } = await supabase
+        .from('moneyflow_resources')
+        .insert([{ ...payload, org_id: orgId }])
+      if (error) { console.error('Resource insert error:', error); setSaving(false); return }
     }
     setSaving(false)
     onSave()

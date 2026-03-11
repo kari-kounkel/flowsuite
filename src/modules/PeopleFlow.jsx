@@ -675,7 +675,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {k:'dashboard',l:'Home',i:'◆'},
     {k:'employees',l:'Team',i:'◉'},
     {k:'orgchart',l:'Org',i:'⊞'},
-    {k:'workplace',l:'Workplace',i:'⚡'},
+    {k:'workplace',l:'HR Inbox',i:'⚡'},
     {k:'onboard',l:'Onb',i:'★'},
     {k:'union',l:'Union',i:'⊕'},
     {k:'documents',l:'Docs',i:'▤'},
@@ -1064,6 +1064,12 @@ function ReportsSubView({reports,saveReport,setReports,emps,ac,mod,setMod,C,isAd
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Submitted By</span><div>{r.submitted_by_name||r.submitted_by_email||'—'}</div></div>
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Routed To</span><div>{r.routed_to ? (emps.find(e=>e.id===r.routed_to) ? gn(emps.find(e=>e.id===r.routed_to)) : r.routed_to) : '—'}</div></div>
             <div style={{fontSize:11,gridColumn:'1/-1'}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Full Description</span><div style={{whiteSpace:'pre-wrap',lineHeight:1.5}}>{r.description||'—'}</div></div>
+            {(r.attachments||[]).length > 0 && <div style={{fontSize:11,gridColumn:'1/-1'}}>
+              <span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Attachments</span>
+              <div style={{display:'flex',flexDirection:'column',gap:3,marginTop:4}}>
+                {(r.attachments||[]).map((att,i)=><div key={i} style={{fontSize:11,color:C.w}}>📎 {att.name||att}</div>)}
+              </div>
+            </div>}
           </div>
           {(isHR || (isManager && r.routed_to === userEmpRecord?.id)) && <div style={{display:'flex',gap:4,marginTop:8}}>
             {REPORT_STATUSES.filter(s=>s.v!==r.status).map(s=>
@@ -1136,6 +1142,28 @@ function ReportModal({onSave,onClose,C,emps,userEmail,userEmpRecord,allEmps}){
 
       <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Description</label>
       <textarea value={f.description||''} onChange={e=>setF(p=>({...p,description:e.target.value}))} rows={4} placeholder="Describe the concern, incident, safety issue, or praise..." style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:12,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
+
+      <div style={{marginBottom:12}}>
+        <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:6}}>Attachments <span style={{fontWeight:400,textTransform:'none'}}>(doctor notes, supporting docs)</span></label>
+        <div style={{border:`1px dashed ${C.bdr}`,borderRadius:8,padding:'10px 12px',background:'rgba(255,255,255,0.02)'}}>
+          {(f.attachments||[]).length > 0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
+            {(f.attachments||[]).map((att,i) => (
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:'rgba(255,255,255,0.04)',borderRadius:4,border:`1px solid ${C.bdr}`}}>
+                <span style={{fontSize:11}}>📎 {att.name}</span>
+                <button onClick={()=>setF(p=>({...p,attachments:(p.attachments||[]).filter((_,j)=>j!==i)}))} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,lineHeight:1}}>×</button>
+              </div>
+            ))}
+          </div>}
+          <label style={{display:'inline-flex',alignItems:'center',gap:6,color:C.go,fontSize:11,fontWeight:600,cursor:'pointer'}}>
+            <span>+ Add File</span>
+            <input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt" onChange={e=>{
+              const files=Array.from(e.target.files).map(file=>({name:file.name,size:file.size,type:file.type}))
+              setF(p=>({...p,attachments:[...(p.attachments||[]),...files]}))
+              e.target.value=''
+            }} style={{display:'none'}}/>
+          </label>
+        </div>
+      </div>
 
       <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
@@ -2011,6 +2039,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
   const [viewSep, setViewSep] = useState(null)
   const [letterModal, setLetterModal] = useState(null) // { letterType, record }
+  const [editingSep, setEditingSep] = useState(null)
   const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
 
   return(<div>
@@ -2093,6 +2122,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
                 setEmps(p=>p.map(e=>e.id===s.employee_id?{...e,status:'laid_off',recall_date:null}:e))
               }
             }}} style={{background:'transparent',color:'#EF4444',border:'1px solid #EF4444',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↺ Undo Recall</button>}
+            <button onClick={(e)=>{e.stopPropagation();setEditingSep(s);setMod('separation')}} style={{background:'transparent',color:C.go,border:`1px solid ${C.go}`,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>✏️ Edit</button>
             {s.employee_name&&s.effective_date&&(()=>{
               const lt = s.separation_type==='layoff'?'layoff':s.separation_type==='termination_cause'?'termination':null
               if(!lt) return null
@@ -2108,9 +2138,10 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
     {sorted.length===0&&<Card C={C} style={{textAlign:'center',color:C.g,padding:30}}>No separation records.</Card>}
 
     {mod==='separation'&&<SeparationFormModal
-      onSave={saveSeparation} onClose={()=>setMod(null)} C={C}
+      onSave={saveSeparation} onClose={()=>{setMod(null);setEditingSep(null)}} C={C}
       emps={[...ac,...emps.filter(e=>e.status==='laid_off')] } allEmps={emps} disc={disc}
       userEmail={userEmail} userEmpRecord={userEmpRecord} setEmps={setEmps}
+      sep={editingSep}
     />}
     {letterModal && <LetterTemplateModal
       letterType={letterModal.letterType}
@@ -2172,8 +2203,13 @@ const generateLayoffLetter = (s) => {
 }
 
 // ── Separation Form Modal ──
-function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userEmpRecord,setEmps}){
-  const [f, setF] = useState({
+function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userEmpRecord,setEmps,sep}){
+  const isEdit = !!sep?.id
+  const [f, setF] = useState(isEdit ? {
+    ...sep,
+    union_notified: sep.union_notified || false,
+    equipment_returned: sep.equipment_returned || '[]',
+  } : {
     status:'active',
     effective_date: new Date().toISOString().split('T')[0],
     prepared_by: userEmpRecord ? gn(userEmpRecord) : (userEmail||''),
@@ -2181,7 +2217,10 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
     union_notified: false,
     equipment_returned: '[]'
   })
-  const [equipChecked, setEquipChecked] = useState([])
+  const [equipChecked, setEquipChecked] = useState(() => {
+    if (!isEdit) return []
+    try { return typeof sep.equipment_returned === 'string' ? JSON.parse(sep.equipment_returned) : (sep.equipment_returned || []) } catch(e) { return [] }
+  })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
   const handleEmpChange = (empId) => {
@@ -2219,8 +2258,8 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
     <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
         <div>
-          <div style={{fontSize:9,color:sepType?.c||C.go,textTransform:'uppercase',letterSpacing:2}}>Minuteman Press Uptown</div>
-          <h3 style={{margin:'2px 0 0',fontSize:16}}>Employee Separation</h3>
+          <div style={{fontSize:9,color:sepType?.c||C.go,textTransform:'uppercase',letterSpacing:2}}>FlowSuite PeopleFlow</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>{isEdit ? '✏️ Edit Separation Record' : 'New Employee Separation'}</h3>
         </div>
         <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
       </div>
@@ -2334,7 +2373,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
 
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
-        <Btn gold small onClick={handleSave} C={C}>Save Separation</Btn>
+        <Btn gold small onClick={handleSave} C={C}>{isEdit ? 'Save Changes' : 'Save Separation'}</Btn>
       </div>
     </div>
   </div>)

@@ -2131,6 +2131,294 @@ function PayrollPaymentsTab({ orgId, C }) {
   )
 }
 
+// ─── JE HISTORY TAB ──────────────────────────────────────────────────────────
+// Reads all iif_je_history rows for this org, groups by period,
+// shows per-account totals, quarter rollups, and YTD summary.
+function JEHistoryTab({ orgId, C }) {
+  const [rows, setRows]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
+  const [expanded, setExpanded] = useState({})   // { period: bool }
+  const [filterYear, setFilterYear] = useState('all')
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      setError(null)
+      const { data, error: err } = await supabase
+        .from('iif_je_history')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('period', { ascending: true })
+      if (err) { setError(err.message); setLoading(false); return }
+      setRows(data || [])
+      setLoading(false)
+    }
+    load()
+  }, [orgId])
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+  // Group rows by period → { period: { qbo_account: { dr, cr } } }
+  const byPeriod = {}
+  rows.forEach(r => {
+    if (!byPeriod[r.period]) byPeriod[r.period] = {}
+    const acct = r.qbo_account || r.source_account || '(unknown)'
+    if (!byPeriod[r.period][acct]) byPeriod[r.period][acct] = { dr: 0, cr: 0 }
+    if (r.amount >= 0) byPeriod[r.period][acct].dr += r.amount
+    else               byPeriod[r.period][acct].cr += Math.abs(r.amount)
+  })
+
+  const periods = Object.keys(byPeriod).sort()
+
+  // Available years for filter
+  const years = [...new Set(periods.map(p => p.slice(0, 4)))].sort()
+
+  const filteredPeriods = filterYear === 'all'
+    ? periods
+    : periods.filter(p => p.startsWith(filterYear))
+
+  // Quarter buckets: Q1=01-03, Q2=04-06, Q3=07-09, Q4=10-12
+  function getQuarter(period) {
+    const m = parseInt(period.slice(5, 7))
+    return `${period.slice(0, 4)}-Q${Math.ceil(m / 3)}`
+  }
+
+  // Build quarter → { acct: { dr, cr } } from filtered periods
+  const byQuarter = {}
+  filteredPeriods.forEach(p => {
+    const q = getQuarter(p)
+    if (!byQuarter[q]) byQuarter[q] = {}
+    Object.entries(byPeriod[p]).forEach(([acct, v]) => {
+      if (!byQuarter[q][acct]) byQuarter[q][acct] = { dr: 0, cr: 0 }
+      byQuarter[q][acct].dr += v.dr
+      byQuarter[q][acct].cr += v.cr
+    })
+  })
+
+  // YTD (all filtered periods)
+  const ytd = {}
+  filteredPeriods.forEach(p => {
+    Object.entries(byPeriod[p]).forEach(([acct, v]) => {
+      if (!ytd[acct]) ytd[acct] = { dr: 0, cr: 0 }
+      ytd[acct].dr += v.dr
+      ytd[acct].cr += v.cr
+    })
+  })
+  const ytdDr = Object.values(ytd).reduce((s, v) => s + v.dr, 0)
+  const ytdCr = Object.values(ytd).reduce((s, v) => s + v.cr, 0)
+
+  function toggle(p) { setExpanded(e => ({ ...e, [p]: !e[p] })) }
+
+  const inputStyle = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '5px 10px', fontSize: 11,
+    fontFamily: 'inherit',
+  }
+
+  // ── Reusable account breakdown table ──
+  function AcctTable({ accts }) {
+    const totalDr = Object.values(accts).reduce((s, v) => s + v.dr, 0)
+    const totalCr = Object.values(accts).reduce((s, v) => s + v.cr, 0)
+    return (
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+        <thead>
+          <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
+            <th style={{ textAlign: 'left', color: C.g, padding: '4px 8px 4px 0', fontWeight: 600 }}>Account</th>
+            <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 100 }}>Debit</th>
+            <th style={{ textAlign: 'right', color: C.g, padding: '4px 0 4px 12px', width: 100 }}>Credit</th>
+            <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 110 }}>Net</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(accts).sort(([a], [b]) => a.localeCompare(b)).map(([acct, v]) => {
+            const net = v.dr - v.cr
+            return (
+              <tr key={acct} style={{ borderBottom: `1px solid ${C.bdrF}` }}>
+                <td style={{ color: C.w, padding: '5px 8px 5px 0', wordBreak: 'break-word' }}>{acct}</td>
+                <td style={{ textAlign: 'right', color: C.w, padding: '5px 0' }}>{v.dr > 0 ? fmt(v.dr) : ''}</td>
+                <td style={{ textAlign: 'right', color: C.w, padding: '5px 0 5px 12px' }}>{v.cr > 0 ? fmt(v.cr) : ''}</td>
+                <td style={{
+                  textAlign: 'right', padding: '5px 0',
+                  color: net > 0 ? '#6ab87a' : net < 0 ? '#e07070' : C.g,
+                  fontWeight: 600,
+                }}>{fmt(net)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop: `1px solid ${C.bdr}` }}>
+            <td style={{ color: C.g, fontSize: 10, padding: '5px 0' }}>TOTALS</td>
+            <td style={{ textAlign: 'right', color: C.go, fontWeight: 700, padding: '5px 0' }}>{fmt(totalDr)}</td>
+            <td style={{ textAlign: 'right', color: C.go, fontWeight: 700, padding: '5px 0 5px 12px' }}>{fmt(totalCr)}</td>
+            <td style={{
+              textAlign: 'right', fontWeight: 700, padding: '5px 0',
+              color: Math.abs(totalDr - totalCr) < 0.01 ? '#6ab87a' : '#e07070',
+            }}>
+              {fmt(totalDr - totalCr)} {Math.abs(totalDr - totalCr) < 0.01 ? '✓' : '⚠'}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    )
+  }
+
+  if (loading) return <p style={{ color: C.g, fontSize: 13 }}>Loading history…</p>
+  if (error)   return <div style={{ color: '#e07070', fontSize: 12 }}>⚠ {error}</div>
+  if (rows.length === 0) return (
+    <div style={{ color: C.g, fontSize: 13, padding: 20, textAlign: 'center' }}>
+      No posted history yet. Upload an IIF file in the JE Generator → IIF Factory tab to get started.
+    </div>
+  )
+
+  return (
+    <div>
+      {/* Header bar */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 20 }}>
+        <div>
+          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Filter Year</label>
+          <select value={filterYear} onChange={e => setFilterYear(e.target.value)} style={inputStyle}>
+            <option value="all">All Years</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+        <div style={{ fontSize: 11, color: C.g, paddingTop: 18 }}>
+          {filteredPeriods.length} period{filteredPeriods.length !== 1 ? 's' : ''} · {rows.filter(r => filterYear === 'all' || r.period.startsWith(filterYear)).length} rows
+        </div>
+      </div>
+
+      {/* ── YTD SUMMARY BANNER ── */}
+      <div style={{
+        background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
+        padding: '14px 18px', marginBottom: 20,
+        display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'center',
+      }}>
+        <div>
+          <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 3 }}>
+            {filterYear === 'all' ? 'All-Time' : filterYear} Total Debits
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#6ab87a', fontFamily: "'DM Mono', monospace" }}>${fmt(ytdDr)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 3 }}>
+            {filterYear === 'all' ? 'All-Time' : filterYear} Total Credits
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#e07070', fontFamily: "'DM Mono', monospace" }}>${fmt(ytdCr)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 3 }}>Net</div>
+          <div style={{
+            fontSize: 18, fontWeight: 700, fontFamily: "'DM Mono', monospace",
+            color: Math.abs(ytdDr - ytdCr) < 0.01 ? '#6ab87a' : C.go,
+          }}>
+            ${fmt(ytdDr - ytdCr)} {Math.abs(ytdDr - ytdCr) < 0.01 ? '✓ Balanced' : ''}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 3 }}>Periods Posted</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.go, fontFamily: "'DM Mono', monospace" }}>{filteredPeriods.length}</div>
+        </div>
+      </div>
+
+      {/* ── QUARTER ROLLUPS ── */}
+      {Object.keys(byQuarter).length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
+            QUARTER ROLLUPS
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {Object.entries(byQuarter).sort(([a], [b]) => a.localeCompare(b)).map(([q, accts]) => {
+              const qDr = Object.values(accts).reduce((s, v) => s + v.dr, 0)
+              const qCr = Object.values(accts).reduce((s, v) => s + v.cr, 0)
+              const balanced = Math.abs(qDr - qCr) < 0.01
+              return (
+                <div key={q} style={{
+                  background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
+                  padding: '12px 16px', minWidth: 180, flex: '1 1 180px',
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 6 }}>{q}</div>
+                  <div style={{ fontSize: 11, color: C.g }}>DR: <span style={{ color: '#6ab87a', fontFamily: "'DM Mono', monospace" }}>${fmt(qDr)}</span></div>
+                  <div style={{ fontSize: 11, color: C.g }}>CR: <span style={{ color: '#e07070', fontFamily: "'DM Mono', monospace" }}>${fmt(qCr)}</span></div>
+                  <div style={{ fontSize: 10, color: balanced ? '#6ab87a' : '#e07070', marginTop: 6, fontWeight: 700 }}>
+                    {balanced ? '✓ Balanced' : `⚠ Off by ${fmt(Math.abs(qDr - qCr))}`}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── PERIOD-BY-PERIOD DETAIL ── */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>
+        PERIOD DETAIL
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {filteredPeriods.map(p => {
+          const accts = byPeriod[p]
+          const pDr = Object.values(accts).reduce((s, v) => s + v.dr, 0)
+          const pCr = Object.values(accts).reduce((s, v) => s + v.cr, 0)
+          const balanced = Math.abs(pDr - pCr) < 0.01
+          const isOpen = expanded[p]
+          const [year, month] = p.split('-')
+          const monthName = MONTHS[parseInt(month) - 1]
+
+          return (
+            <div key={p} style={{
+              background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, overflow: 'hidden',
+            }}>
+              {/* Period header row — click to expand */}
+              <div
+                onClick={() => toggle(p)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '12px 16px', cursor: 'pointer',
+                  background: isOpen ? C.gD : 'transparent',
+                  borderBottom: isOpen ? `1px solid ${C.bdr}` : 'none',
+                }}
+              >
+                <span style={{ fontSize: 12, color: C.g, width: 16 }}>{isOpen ? '▼' : '▶'}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.go, minWidth: 130 }}>
+                  {monthName} {year}
+                </span>
+                <span style={{ fontSize: 11, color: C.g, fontFamily: "'DM Mono', monospace" }}>
+                  DR: <span style={{ color: '#6ab87a' }}>${fmt(pDr)}</span>
+                  &nbsp;&nbsp;CR: <span style={{ color: '#e07070' }}>${fmt(pCr)}</span>
+                </span>
+                <span style={{
+                  marginLeft: 'auto', fontSize: 10, fontWeight: 700,
+                  color: balanced ? '#6ab87a' : '#e07070',
+                }}>
+                  {balanced ? '✓ BALANCED' : `⚠ OFF ${fmt(Math.abs(pDr - pCr))}`}
+                </span>
+                <span style={{ fontSize: 10, color: C.g }}>
+                  {getQuarter(p)}
+                </span>
+              </div>
+
+              {/* Expanded account breakdown */}
+              {isOpen && (
+                <div style={{ padding: '12px 16px' }}>
+                  <AcctTable accts={accts} />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Sidebar note */}
+      <div style={{
+        marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+        background: C.gD, borderRadius: '0 8px 8px 0',
+        fontSize: 11, color: C.g, maxWidth: 560,
+      }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Upload oldest period first — delta logic builds on what's already here. A balanced ✓ means debits equal credits for that period. Verify each period against your Excel before uploading the next one.
+      </div>
+    </div>
+  )
+}
+
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('tasks')
   const [tasks, setTasks] = useState([])
@@ -2299,6 +2587,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div style={{ display: 'flex', gap: 6 }}>
           {pill('Task Cards', tab === 'tasks', () => setTab('tasks'))}
           {pill('JE Generator', tab === 'je', () => setTab('je'))}
+          {pill('📋 JE History', tab === 'history', () => setTab('history'))}
           {pill('🔗 Resources', tab === 'resources', () => setTab('resources'))}
           {pill('💸 Payroll Payments', tab === 'payroll', () => setTab('payroll'))}
         </div>
@@ -2379,6 +2668,9 @@ export default function MoneyFlowModule({ orgId, C }) {
 
       {/* ── RESOURCES TAB ── */}
       {tab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
+
+      {/* ── JE HISTORY TAB ── */}
+      {tab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
 
       {/* ── PAYROLL PAYMENTS TAB ── */}
       {tab === 'payroll' && <PayrollPaymentsTab orgId={orgId} C={C} />}

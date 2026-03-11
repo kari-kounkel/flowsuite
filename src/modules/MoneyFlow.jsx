@@ -1904,6 +1904,13 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
         </div>
       )}
 
+      {res.mailing_address && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, borderTop: `1px solid ${C.bdrF}`, paddingTop: 6 }}>
+          <span style={{ fontSize: 10, color: C.g, minWidth: 52, flexShrink: 0 }}>Address</span>
+          <span style={{ fontSize: 11, color: C.w, flex: 1, lineHeight: 1.4 }}>{res.mailing_address}</span>
+          <CopyBtn value={res.mailing_address} label="Addr" C={C} />
+        </div>
+      )}
       {res.notes && (
         <div style={{ fontSize: 10, color: C.g, marginTop: 8, borderTop: `1px solid ${C.bdrF}`, paddingTop: 6 }}>
           {res.notes}
@@ -1920,7 +1927,7 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
   const [form, setForm] = useState(isEdit ? {
     label: res.label || '', url: res.url || '',
     username: res.username || '', password: res.password || '',
-    pin: res.pin || '', notes: res.notes || '',
+    pin: res.pin || '', notes: res.notes || '', mailing_address: res.mailing_address || '',
   } : { ...BLANK_RES })
   const [showPass, setShowPass] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1936,6 +1943,7 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
       password: form.password,
       pin: form.pin,
       notes: form.notes,
+      mailing_address: form.mailing_address || '',
     }
     if (isEdit) {
       const { error } = await supabase
@@ -1973,6 +1981,7 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
           { key: 'url',   label: 'URL',             placeholder: 'https://...' },
           { key: 'username', label: 'Username',     placeholder: '' },
           { key: 'pin',   label: 'PIN',             placeholder: '' },
+          { key: 'mailing_address', label: 'Mailing Address', placeholder: 'e.g. PO Box 64306, St Paul MN 55164' },
           { key: 'notes', label: 'Notes',           placeholder: 'Account #, tips...' },
         ].map(f => (
           <div key={f.key} style={{ marginBottom: 12 }}>
@@ -2326,6 +2335,21 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
                   await supabase.from('moneyflow_tasks').update({ due_date: newDate, updated_at: new Date().toISOString() }).eq('id', tasks.id)
                 } else {
                   await supabase.from('moneyflow_tasks').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', tasks.id)
+                }
+              }
+              // Bump times_paid on matching garnishment orders
+              if (order?.payment_type === 'Wage Garnishment') {
+                const matchingOrders = (orders || []).filter(o => o.payment_type === 'Wage Garnishment' && o.status === 'active')
+                for (const mo of matchingOrders) {
+                  const newTimesPaid = (parseInt(mo.times_paid) || 0) + 1
+                  // Auto-close if limit reached
+                  let newStatus = mo.status
+                  if (mo.withhold_limit_type === 'times' && mo.withhold_max_times && newTimesPaid >= parseInt(mo.withhold_max_times)) newStatus = 'closed'
+                  if (mo.withhold_limit_type === 'amount' && mo.withhold_until_amount && mo.amount_per_period) {
+                    const withheld = newTimesPaid * parseFloat(mo.amount_per_period)
+                    if (withheld >= parseFloat(mo.withhold_until_amount)) newStatus = 'closed'
+                  }
+                  await supabase.from('payroll_payment_orders').update({ times_paid: newTimesPaid, status: newStatus, updated_at: new Date().toISOString() }).eq('id', mo.id)
                 }
               }
               setSentKeys(prev => ({ ...prev, [typeKey]: true }))
@@ -2776,6 +2800,12 @@ const BLANK_ORDER = {
   end_date: '',
   status: 'active',
   notes: '',
+  // Garnishment calculator
+  balance_owed: '',
+  withhold_limit_type: 'none', // 'none' | 'times' | 'amount'
+  withhold_max_times: '',
+  withhold_until_amount: '',
+  times_paid: 0,
 }
 
 function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [], onSave, onClose }) {
@@ -2793,6 +2823,11 @@ function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [],
     status: order.status || 'active',
     notes: order.notes || '',
     resource_ids: order.resource_ids || [],
+    balance_owed: order.balance_owed || '',
+    withhold_limit_type: order.withhold_limit_type || 'none',
+    withhold_max_times: order.withhold_max_times || '',
+    withhold_until_amount: order.withhold_until_amount || '',
+    times_paid: order.times_paid || 0,
   } : { ...BLANK_ORDER, resource_ids: [] })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
@@ -2819,12 +2854,29 @@ function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [],
     if (!form.employee_name || !form.payment_type) return
     setSaving(true)
     setSaveError(null)
+    // Auto-close garnishment if limit reached
+    let autoStatus = form.status
+    if (form.payment_type === 'Wage Garnishment') {
+      const timesPaid = parseInt(form.times_paid) || 0
+      if (form.withhold_limit_type === 'times' && form.withhold_max_times && timesPaid >= parseInt(form.withhold_max_times)) {
+        autoStatus = 'closed'
+      }
+      if (form.withhold_limit_type === 'amount' && form.withhold_until_amount && form.amount_per_period) {
+        const totalWithheld = timesPaid * (parseFloat(form.amount_per_period) || 0)
+        if (totalWithheld >= parseFloat(form.withhold_until_amount)) autoStatus = 'closed'
+      }
+    }
     const payload = {
       ...form,
       org_id: orgId,
       amount_per_period: parseFloat(form.amount_per_period) || 0,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
+      status: autoStatus,
+      balance_owed: parseFloat(form.balance_owed) || null,
+      withhold_max_times: parseInt(form.withhold_max_times) || null,
+      withhold_until_amount: parseFloat(form.withhold_until_amount) || null,
+      times_paid: parseInt(form.times_paid) || 0,
     }
     let error
     if (isEdit) {
@@ -2929,6 +2981,63 @@ function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [],
             </select>
           </div>
         </div>
+
+        {/* ── Garnishment Calculator (Wage Garnishment only) ── */}
+        {form.payment_type === 'Wage Garnishment' && (
+          <div style={{ background: `rgba(201,168,76,0.08)`, border: `1px solid ${C.go}`, borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>Garnishment Calculator</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <div>
+                <label style={lStyle}>Total Balance Owed ($)</label>
+                <input type="number" value={form.balance_owed} onChange={e => set('balance_owed', e.target.value)} min={0} placeholder="e.g. 4500.00" style={iStyle} inputMode="decimal" />
+              </div>
+              <div>
+                <label style={lStyle}>Times Paid (auto-tracked)</label>
+                <input type="number" value={form.times_paid || 0} onChange={e => set('times_paid', parseInt(e.target.value) || 0)} min={0} style={iStyle} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={lStyle}>Stop Withholding When</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[{v:'none',l:'No limit'},{v:'times',l:'After N times'},{v:'amount',l:'Balance reached'}].map(opt => (
+                  <button key={opt.v} onClick={() => set('withhold_limit_type', opt.v)} style={{
+                    padding: '5px 12px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                    background: form.withhold_limit_type === opt.v ? C.gD : 'transparent',
+                    border: `1px solid ${form.withhold_limit_type === opt.v ? C.go : C.bdrF}`,
+                    color: form.withhold_limit_type === opt.v ? C.go : C.g,
+                  }}>{opt.l}</button>
+                ))}
+              </div>
+            </div>
+            {form.withhold_limit_type === 'times' && (
+              <div style={{ marginBottom: 6 }}>
+                <label style={lStyle}>Stop After How Many Payrolls?</label>
+                <input type="number" value={form.withhold_max_times} onChange={e => set('withhold_max_times', e.target.value)} min={1} placeholder="e.g. 12" style={iStyle} inputMode="numeric" />
+                {form.times_paid > 0 && form.withhold_max_times && (
+                  <div style={{ fontSize: 10, color: C.go, marginTop: 4 }}>
+                    {form.times_paid} of {form.withhold_max_times} paid — {Math.max(0, parseInt(form.withhold_max_times) - parseInt(form.times_paid))} remaining
+                  </div>
+                )}
+              </div>
+            )}
+            {form.withhold_limit_type === 'amount' && (
+              <div style={{ marginBottom: 6 }}>
+                <label style={lStyle}>Stop When Total Withheld Reaches ($)</label>
+                <input type="number" value={form.withhold_until_amount} onChange={e => set('withhold_until_amount', e.target.value)} min={0} placeholder="e.g. 4500.00" style={iStyle} inputMode="decimal" />
+                {form.times_paid > 0 && form.amount_per_period && form.withhold_until_amount && (
+                  <div style={{ fontSize: 10, color: C.go, marginTop: 4 }}>
+                    ~${(parseFloat(form.times_paid) * parseFloat(form.amount_per_period)).toFixed(2)} withheld of ${parseFloat(form.withhold_until_amount).toFixed(2)} target
+                  </div>
+                )}
+              </div>
+            )}
+            {form.balance_owed && form.amount_per_period && (
+              <div style={{ fontSize: 10, color: C.g, marginTop: 4, fontStyle: 'italic' }}>
+                At ${parseFloat(form.amount_per_period).toFixed(2)}/period — estimated {Math.ceil(parseFloat(form.balance_owed) / parseFloat(form.amount_per_period))} payrolls to satisfy
+              </div>
+            )}
+          </div>
+        )}
 
         <div style={{ marginBottom: 20 }}>
           <label style={lStyle}>Notes</label>
@@ -3112,6 +3221,31 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
                   {o.case_number && <div style={{ fontSize: 11, color: C.g, marginTop: 3 }}>Case: {o.case_number}</div>}
                   {o.destination && <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>→ {o.destination}</div>}
                   {o.notes && <div style={{ fontSize: 10, color: C.g, marginTop: 4, fontStyle: 'italic' }}>{o.notes}</div>}
+                  {/* Garnishment progress */}
+                  {o.payment_type === 'Wage Garnishment' && o.withhold_limit_type && o.withhold_limit_type !== 'none' && (() => {
+                    const paid = parseInt(o.times_paid) || 0
+                    if (o.withhold_limit_type === 'times' && o.withhold_max_times) {
+                      const pct = Math.min(100, Math.round((paid / parseInt(o.withhold_max_times)) * 100))
+                      return <div style={{ marginTop: 6 }}>
+                        <div style={{ fontSize: 10, color: C.g, marginBottom: 3 }}>{paid} / {o.withhold_max_times} payrolls</div>
+                        <div style={{ height: 4, background: C.bdr, borderRadius: 2, overflow: 'hidden', width: 120 }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? '#6ab87a' : C.go, borderRadius: 2, transition: 'width 0.3s' }} />
+                        </div>
+                      </div>
+                    }
+                    if (o.withhold_limit_type === 'amount' && o.withhold_until_amount && o.amount_per_period) {
+                      const withheld = paid * parseFloat(o.amount_per_period)
+                      const target = parseFloat(o.withhold_until_amount)
+                      const pct = Math.min(100, Math.round((withheld / target) * 100))
+                      return <div style={{ marginTop: 6 }}>
+                        <div style={{ fontSize: 10, color: C.g, marginBottom: 3 }}>${withheld.toFixed(0)} / ${target.toFixed(0)} withheld</div>
+                        <div style={{ height: 4, background: C.bdr, borderRadius: 2, overflow: 'hidden', width: 120 }}>
+                          <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? '#6ab87a' : C.go, borderRadius: 2, transition: 'width 0.3s' }} />
+                        </div>
+                      </div>
+                    }
+                    return null
+                  })()}
                 </div>
 
                 {/* Right: amount + portal */}

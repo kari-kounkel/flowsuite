@@ -204,6 +204,253 @@ const getDownline = (managerId, emps) => {
   return all
 }
 
+// ─── LETTER TEMPLATE MODAL ────────────────────────────────────────────────────
+// letterType: 'layoff' | 'termination' | 'garnishment' | 'child_support'
+// record: the separation or payment order object
+// defaults: { companyName, companyAddress, preparedBy } pulled from org/user
+function LetterTemplateModal({ letterType, record, defaults = {}, onClose }) {
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const fmt = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '_______________'
+
+  const LETTER_CONFIGS = {
+    layoff: {
+      title: 'Notice of Temporary Layoff',
+      subject: 'Temporary Layoff',
+      buildBody: (r, h) => {
+        const reasons = { lack_of_work:'lack of work', reduction_in_force:'a reduction in force', seasonal:'seasonal reduction', restructuring:'restructuring', other:'business reasons' }
+        const reason = reasons[r.layoff_reason] || 'lack of work'
+        const recallStr = r.expected_recall_date
+          ? `Your expected recall date is approximately ${fmt(r.expected_recall_date)}. You will be notified in advance when work becomes available.`
+          : 'A specific recall date has not yet been determined. You will be notified as soon as work becomes available.'
+        return `Dear ${(r.employee_name||'').split(' ')[0] || 'Employee'},
+
+This letter is to inform you that, due to ${reason}, your position at ${h.companyName} will be temporarily laid off effective ${fmt(r.effective_date)}.
+
+${recallStr}
+
+Please be advised of the following:
+
+• Your seniority and hire date are preserved during this temporary layoff.
+• Any applicable union membership status remains active per the Collective Bargaining Agreement.
+• Any probationary periods are frozen and will resume upon recall.
+• Please file for unemployment benefits promptly. ${h.companyName} will not contest your claim.
+• Health insurance continuation information will be provided separately.
+${r.notes ? '• ' + r.notes : ''}
+
+We value your contributions and look forward to your return. If you have questions regarding your layoff status, benefits, or recall, please contact ${h.preparedBy || 'HR'}.
+
+Sincerely,
+
+${h.preparedBy || '_______________'}
+${h.companyName}`
+      }
+    },
+    termination: {
+      title: 'Notice of Employment Termination',
+      subject: 'Termination of Employment',
+      buildBody: (r, h) => `Dear ${(r.employee_name||'').split(' ')[0] || 'Employee'},
+
+This letter serves as formal notice that your employment with ${h.companyName} has been terminated effective ${fmt(r.effective_date)}.
+
+The reason for this separation is: ${r.notes || r.separation_type || '_______________'}.
+
+Please be advised of the following:
+
+• You are required to return all company property, including keys, uniforms, tools, and equipment, by your final day.
+• Your final paycheck will be issued in accordance with applicable state law.
+• Information regarding continuation of benefits (COBRA or state equivalent) will be provided separately.
+• Please be aware that the terms of any confidentiality or non-disclosure agreements signed during your employment remain in effect.
+
+If you have questions regarding your final pay, benefits, or the return of personal property, please contact ${h.preparedBy || 'HR'}.
+
+Sincerely,
+
+${h.preparedBy || '_______________'}
+${h.companyName}`
+    },
+    garnishment: {
+      title: 'Notice of Wage Garnishment',
+      subject: 'Wage Garnishment — Court Order',
+      buildBody: (r, h) => `Dear ${r.employee_name || 'Employee'},
+
+This letter is to notify you that ${h.companyName} has received a court order requiring us to withhold a portion of your wages for the following obligation:
+
+Case / Order Number: ${r.case_number || '_______________'}
+Remit To: ${r.destination || '_______________'}
+Amount Per Pay Period: $${parseFloat(r.amount_per_period || 0).toFixed(2)}
+Frequency: ${r.frequency || 'Per payroll'}
+${r.balance_owed ? 'Total Balance Owed: $' + parseFloat(r.balance_owed).toFixed(2) : ''}
+Effective Date: ${fmt(r.start_date)}
+${r.end_date ? 'End Date: ' + fmt(r.end_date) : ''}
+
+As required by law, ${h.companyName} is obligated to comply with this court order. This withholding will begin on your next scheduled pay date and continue until the obligation is satisfied or the order is modified or released by the issuing court.
+
+Federal law limits the amount that can be garnished from your disposable earnings. You have the right to contact the issuing court if you believe this order was issued in error or if your circumstances have changed.
+
+If you have questions about this garnishment, please contact ${h.preparedBy || 'HR'} or the issuing court directly.
+
+Sincerely,
+
+${h.preparedBy || '_______________'}
+${h.companyName}`
+    },
+    child_support: {
+      title: 'Notice of Income Withholding for Child/Spousal Support',
+      subject: 'Child / Spousal Support Withholding',
+      buildBody: (r, h) => `Dear ${r.employee_name || 'Employee'},
+
+This letter is to notify you that ${h.companyName} has received an income withholding order requiring us to deduct child/spousal support from your wages.
+
+Case / Order Number: ${r.case_number || '_______________'}
+Remit To: ${r.destination || 'MN Child Support Payment Center'}
+Amount Per Pay Period: $${parseFloat(r.amount_per_period || 0).toFixed(2)}
+Frequency: ${r.frequency || 'Per payroll'}
+Effective Date: ${fmt(r.start_date)}
+${r.end_date ? 'End Date: ' + fmt(r.end_date) : ''}
+
+As required by state and federal law, ${h.companyName} is required to honor this income withholding order. Withholding will begin on your next scheduled pay date.
+
+Federal law (Title III of the Consumer Credit Protection Act) limits the maximum amount that may be withheld from your disposable earnings for support purposes. Your employer may not discharge you, discipline you, or otherwise discriminate against you because of this withholding order.
+
+If you believe this order was issued in error, or if you have questions about the underlying support obligation, please contact the issuing agency or your legal representative. For employer-related questions, contact ${h.preparedBy || 'HR'}.
+
+Sincerely,
+
+${h.preparedBy || '_______________'}
+${h.companyName}`
+    },
+  }
+
+  const config = LETTER_CONFIGS[letterType]
+  const [header, setHeader] = useState({
+    companyName: defaults.companyName || '',
+    companyAddress: defaults.companyAddress || '',
+    preparedBy: defaults.preparedBy || '',
+    date: today,
+  })
+  const [body, setBody] = useState(() => config.buildBody(record, {
+    companyName: defaults.companyName || '[Company Name]',
+    companyAddress: defaults.companyAddress || '',
+    preparedBy: defaults.preparedBy || '[Prepared By]',
+  }))
+  const [showPreview, setShowPreview] = useState(false)
+  const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }))
+
+  const buildHtml = () => `<!DOCTYPE html><html><head>
+    <title>${config.title} — ${record.employee_name || ''}</title>
+    <style>
+      body{font-family:Arial,sans-serif;margin:60px;color:#111;font-size:13px;line-height:1.9;max-width:680px}
+      .letterhead{text-align:left;margin-bottom:32px;padding-bottom:16px;border-bottom:2px solid #222}
+      .company{font-size:16px;font-weight:bold;margin-bottom:2px}
+      .address{font-size:11px;color:#555;line-height:1.5}
+      .subject{font-weight:bold;margin:20px 0 4px}
+      .body{white-space:pre-wrap;line-height:1.9}
+      .footer{margin-top:50px;font-size:9px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px}
+      @media print{body{margin:40px}button{display:none}}
+    </style></head><body>
+    <div class="letterhead">
+      <div class="company">${header.companyName || '[Company Name]'}</div>
+      <div class="address">${(header.companyAddress || '').replace(/
+/g,'<br>')}</div>
+    </div>
+    <div>${header.date}</div>
+    <div class="subject">Re: ${config.subject}</div>
+    <br/>
+    <div class="body">${body.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+    <div class="footer">Generated by FlowSuite — ${new Date().toLocaleString()}</div>
+    </body></html>`
+
+  const handlePrint = () => {
+    const win = window.open('', '_blank')
+    win.document.write(buildHtml())
+    win.document.close()
+    setTimeout(() => win.print(), 400)
+  }
+
+  const inp = {
+    width: '100%', background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)',
+    color: '#e2e8f0', borderRadius: 6, padding: '7px 10px',
+    fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const lbl = { fontSize: 10, color: '#94a3b8', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 16 }}>
+      <div style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 14, width: '100%', maxWidth: 700, maxHeight: '94vh', overflowY: 'auto', padding: 28, boxShadow: '0 12px 60px rgba(0,0,0,0.6)' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 10, color: '#C9A84C', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>Letter Generator</div>
+            <h3 style={{ margin: 0, color: '#e2e8f0', fontSize: 16, fontWeight: 700 }}>{config.title}</h3>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>{record.employee_name || ''}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer', flexShrink: 0 }}>✕</button>
+        </div>
+
+        {/* Letterhead fields */}
+        <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#C9A84C', marginBottom: 12 }}>Letterhead</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label style={lbl}>Company Name</label>
+              <input value={header.companyName} onChange={e => setH('companyName', e.target.value)} placeholder="Minuteman Press Uptown" style={inp} />
+            </div>
+            <div>
+              <label style={lbl}>Date</label>
+              <input value={header.date} onChange={e => setH('date', e.target.value)} style={inp} />
+            </div>
+            <div style={{ gridColumn: '1/-1' }}>
+              <label style={lbl}>Company Address</label>
+              <textarea value={header.companyAddress} onChange={e => setH('companyAddress', e.target.value)} rows={2} placeholder="Street, City, State ZIP" style={{ ...inp, resize: 'vertical' }} />
+            </div>
+            <div>
+              <label style={lbl}>Prepared By</label>
+              <input value={header.preparedBy} onChange={e => setH('preparedBy', e.target.value)} placeholder="HR Manager / Name" style={inp} />
+            </div>
+          </div>
+        </div>
+
+        {/* Body editor */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <label style={lbl}>Letter Body — edit freely</label>
+            <button onClick={() => setShowPreview(v => !v)} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', padding: '3px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit' }}>
+              {showPreview ? '✏ Edit' : '👁 Preview'}
+            </button>
+          </div>
+          {showPreview ? (
+            <div style={{ background: '#fff', color: '#111', borderRadius: 8, padding: '24px 28px', fontSize: 13, lineHeight: 1.9, minHeight: 300, whiteSpace: 'pre-wrap', fontFamily: 'Arial, sans-serif' }}>
+              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{header.companyName}</div>
+              <div style={{ fontSize: 11, color: '#555', marginBottom: 16, whiteSpace: 'pre-wrap' }}>{header.companyAddress}</div>
+              <div style={{ marginBottom: 4 }}>{header.date}</div>
+              <div style={{ fontWeight: 700, marginBottom: 16 }}>Re: {config.subject}</div>
+              {body}
+            </div>
+          ) : (
+            <textarea
+              value={body}
+              onChange={e => setBody(e.target.value)}
+              rows={18}
+              style={{ ...inp, resize: 'vertical', lineHeight: 1.8, fontFamily: 'inherit' }}
+            />
+          )}
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', padding: '8px 18px', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>
+            Cancel
+          </button>
+          <button onClick={handlePrint} style={{ background: '#C9A84C', border: 'none', color: '#000', padding: '8px 22px', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }}>
+            🖨 Print / Save as PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 export default function PeopleFlowModule({ orgId, C }) {
   const [emps, setEmps] = useState([])
   const [disc, setDisc] = useState([])
@@ -1763,6 +2010,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 // ═══════════════════════════════════════════
 function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
   const [viewSep, setViewSep] = useState(null)
+  const [letterModal, setLetterModal] = useState(null) // { letterType, record }
   const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
 
   return(<div>
@@ -1845,7 +2093,13 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
                 setEmps(p=>p.map(e=>e.id===s.employee_id?{...e,status:'laid_off',recall_date:null}:e))
               }
             }}} style={{background:'transparent',color:'#EF4444',border:'1px solid #EF4444',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↺ Undo Recall</button>}
-            {s.separation_type==='layoff'&&s.employee_name&&s.effective_date&&<button onClick={(e)=>{e.stopPropagation();generateLayoffLetter(s)}} style={{background:'#6366F1',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>🖨 Print Layoff Notice</button>}
+            {s.employee_name&&s.effective_date&&(()=>{
+              const lt = s.separation_type==='layoff'?'layoff':s.separation_type==='termination_cause'?'termination':null
+              if(!lt) return null
+              return <button onClick={(e)=>{e.stopPropagation();setLetterModal({letterType:lt,record:s})}} style={{background:'#6366F1',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>
+                🖨 {s.separation_type==='layoff'?'Layoff Notice':'Termination Letter'}
+              </button>
+            })()}
           </div>
         </div>}
       </Card></div>
@@ -1857,6 +2111,12 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
       onSave={saveSeparation} onClose={()=>setMod(null)} C={C}
       emps={[...ac,...emps.filter(e=>e.status==='laid_off')] } allEmps={emps} disc={disc}
       userEmail={userEmail} userEmpRecord={userEmpRecord} setEmps={setEmps}
+    />}
+    {letterModal && <LetterTemplateModal
+      letterType={letterModal.letterType}
+      record={letterModal.record}
+      defaults={{ preparedBy: letterModal.record?.prepared_by || userEmail || '' }}
+      onClose={() => setLetterModal(null)}
     />}
   </div>)
 }

@@ -209,7 +209,6 @@ export default function PeopleFlowModule({ orgId, C }) {
   const [reports, setReports] = useState([])
   const [onb, setOnb] = useState({})
   const [docs, setDocs] = useState({})
-  const [pay, setPay] = useState([])
   const [view, setView] = useState('dashboard')
   const [sel, setSel] = useState(null)
   const [mod, setMod] = useState(null)
@@ -252,12 +251,11 @@ export default function PeopleFlowModule({ orgId, C }) {
   useEffect(() => {
     if (!orgId) return
     const load = async () => {
-      const [eR, dR, oR, dcR, pR, rR, sR] = await Promise.all([
+      const [eR, dR, oR, dcR, rR, sR] = await Promise.all([
         supabase.from('employees').select('*').eq('org_id', orgId),
         supabase.from('disciplines').select('*').eq('org_id', orgId),
         supabase.from('onboarding').select('*').eq('org_id', orgId),
         supabase.from('documents').select('*').eq('org_id', orgId),
-        supabase.from('payroll_items').select('*').eq('org_id', orgId),
         supabase.from('workplace_reports').select('*').eq('org_id', orgId),
         supabase.from('separations').select('*').eq('org_id', orgId)
       ])
@@ -266,7 +264,6 @@ export default function PeopleFlowModule({ orgId, C }) {
       setSeparations(sR.data||[])
       const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]=r.completed}); setOnb(om)
       const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]=r.received}); setDocs(dm)
-      setPay(pR.data||[])
       setReports(rR.data||[])
     }
     load()
@@ -344,26 +341,12 @@ export default function PeopleFlowModule({ orgId, C }) {
     else await supabase.from('documents').insert({employee_id:empId,doc_id:docId,received:nv,org_id:orgId})
     setDocs(p=>({...p,[empId]:{...(p[empId]||{}),[docId]:nv}}))
   }
-  const savePay = async(item)=>{
-    if(item.id){await supabase.from('payroll_items').update(item).eq('id',item.id);setPay(p=>p.map(x=>x.id===item.id?item:x))}
-    else{const{data}=await supabase.from('payroll_items').insert({...item,org_id:orgId}).select().single();if(data)setPay(p=>[...p,data])}
-    sh('Payroll updated ✓')
-  }
-  const markAllPay = async()=>{
-    const pnd=pay.filter(p=>p.status==='pending')
-    for(const p of pnd)await supabase.from('payroll_items').update({status:'processed'}).eq('id',p.id)
-    setPay(prev=>prev.map(p=>p.status==='pending'?{...p,status:'processed'}:p))
-    sh(`${pnd.length} items processed ✓`)
-  }
-  const lpr = pay.filter(p=>p.status==='processed').sort((a,b)=>new Date(b.processed_at||b.created_at)-new Date(a.processed_at||a.created_at))[0]
-
   // ── Dashboard Stats (role-filtered) ──
   const sts={
     total:emps.length,active:ac.length,
     union:ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length,
     disc:disc.filter(d=>(d.status||d.st)==='open'&&isDiscActive(d)).length,
     newHires:ac.filter(e=>dbt(e.hire_date||td,td)<=90).length,
-    pP:pay.filter(p=>p.status==='pending').length,
     openReports:reports.filter(r=>r.status!=='closed').length,
     laidOff:emps.filter(e=>e.status==='laid_off').length
   }
@@ -379,9 +362,6 @@ export default function PeopleFlowModule({ orgId, C }) {
       cards.push({l:'Open Disc',v:sts.disc,c:C.rd,k:'disc'})
       cards.push({l:'Reports',v:sts.openReports,c:'#8B5CF6',k:'reports'})
       if (sts.laidOff > 0) cards.push({l:'Laid Off',v:sts.laidOff,c:'#6366F1',k:'laidoff'})
-    }
-    if (isAdmin) {
-      cards.push({l:'Payroll',v:sts.pP,c:C.go,k:'payroll'})
     }
     return cards
   }
@@ -400,10 +380,8 @@ export default function PeopleFlowModule({ orgId, C }) {
       }
     })
   }
-  if (isAdmin && sts.pP>0) alerts.push({t:'Payroll',m:`${sts.pP} pending items`,c:C.rd})
-
   // ── Tab Configuration (role-filtered) ──
-  const ADMIN_TABS = ['onboard','payroll','documents','reports']
+  const ADMIN_TABS = ['onboard','documents','reports']
   const MANAGER_TABS = ['onboard']
   const allTabs=[
     {k:'dashboard',l:'Home',i:'◆'},
@@ -412,7 +390,6 @@ export default function PeopleFlowModule({ orgId, C }) {
     {k:'workplace',l:'Workplace',i:'⚡'},
     {k:'onboard',l:'Onb',i:'★'},
     {k:'union',l:'Union',i:'⊕'},
-    {k:'payroll',l:'PR',i:'$'},
     {k:'documents',l:'Docs',i:'▤'},
     {k:'resources',l:'Resources',i:'◇'},
     {k:'reports',l:'Rpt',i:'◧'}
@@ -437,7 +414,7 @@ export default function PeopleFlowModule({ orgId, C }) {
           cursor:allowed?'pointer':'not-allowed',
           fontSize:10,fontWeight:500,display:'flex',alignItems:'center',gap:2,fontFamily:'inherit',
           opacity:allowed?1:0.4
-        }}>{t.i} {t.l}{t.k==='payroll'&&sts.pP>0&&allowed&&<span style={{background:C.rd,color:'#fff',borderRadius:99,padding:'0 4px',fontSize:8,marginLeft:1}}>{sts.pP}</span>}</button>
+        }}>{t.i} {t.l}</button>
       })}
     </div>
 
@@ -449,7 +426,7 @@ export default function PeopleFlowModule({ orgId, C }) {
       </div>
       {alerts.length>0&&<Card C={C} style={{marginBottom:16}}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>⚠ Alerts</h3>
         {alerts.map((a,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none'}}><span style={{fontSize:12,color:C.w}}>{a.m}</span><Tag c={a.c}>{a.t}</Tag></div>)}</Card>}
-      {isAdmin&&<Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Quick Links</h3><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn small onClick={()=>go('employees')} C={C}>+ Employee</Btn><Btn small onClick={()=>go('workplace')} C={C}>+ Discipline</Btn><Btn small onClick={()=>go('payroll')} C={C}>Run Payroll</Btn></div></Card>}
+      {isAdmin&&<Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Quick Links</h3><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn small onClick={()=>go('employees')} C={C}>+ Employee</Btn><Btn small onClick={()=>go('workplace')} C={C}>+ Discipline</Btn></div></Card>}
     </div>}
 
     {/* TEAM */}
@@ -474,9 +451,6 @@ export default function PeopleFlowModule({ orgId, C }) {
     {/* UNION */}
     {view==='union'&&<UnionView ac={emps.filter(e=>e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='Terminated'&&e.status!=='Inactive')} C={C}/>}
 
-    {/* PAYROLL */}
-    {view==='payroll'&&<PayView pay={pay} sts={sts} lpr={lpr} markAllPay={markAllPay} savePay={savePay} ac={ac} mod={mod} setMod={setMod} C={C}/>}
-
     {/* DOCUMENTS */}
     {view==='documents'&&<DocsView ac={ac} docs={docs} toggleDoc={toggleDoc} C={C}/>}
 
@@ -484,7 +458,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='resources'&&<ResourcesView C={C} isAdmin={isAdmin} isManager={isManager}/>}
 
     {/* REPORTS */}
-    {view==='reports'&&<RptView emps={emps} ac={ac} disc={disc} pay={pay} reports={reports} C={C}/>}
+    {view==='reports'&&<RptView emps={emps} ac={ac} disc={disc} reports={reports} C={C}/>}
 
     {toast&&<div style={{position:'fixed',bottom:20,right:20,background:C.go,color:C.bg,padding:'10px 18px',borderRadius:8,fontWeight:600,fontSize:13,zIndex:1e3}}>{toast}</div>}
   </div>)
@@ -2018,33 +1992,6 @@ function OnbView({ac,onb,toggleOnb,C}){
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>{OBS.filter(s=>s.p===ph).map(s=><label key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',fontSize:10,textDecoration:ed[s.id]?'line-through':'none',color:ed[s.id]?C.g:C.w}}>{ed[s.id]?'✓':'○'} {s.l}</label>)}</div></div>)}</Card>})}</div>)
 }
 
-function PayView({pay,sts,lpr,markAllPay,savePay,ac,mod,setMod,C}){
-  return(<div>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-      <h2 style={{margin:0,fontSize:18}}>Payroll {sts.pP>0&&<Tag c={C.rd}>{sts.pP} pending</Tag>}</h2>
-      <div style={{display:'flex',gap:6}}>{sts.pP>0&&<Btn small gold onClick={markAllPay} C={C}>Process All</Btn>}<Btn small onClick={()=>setMod('pay')} C={C}>+ Add</Btn></div></div>
-    {lpr&&<div style={{fontSize:11,color:C.g,marginBottom:10}}>Last run: {fm(lpr.processed_at||lpr.created_at)}</div>}
-    {pay.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).map(p=><Card key={p.id} C={C} style={{marginBottom:6,padding:'10px 14px'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:600,fontSize:13}}>{p.employee_name||'—'}</div><div style={{fontSize:11,color:C.g}}>{p.description||p.type||'—'} • {fm(p.created_at)}</div></div>
-        <div style={{textAlign:'right'}}><div style={{fontWeight:700,fontSize:14,color:C.go}}>${parseFloat(p.amount||0).toFixed(2)}</div><Tag c={p.status==='processed'?C.gr:C.am}>{p.status}</Tag></div></div></Card>)}
-    {pay.length===0&&<Card C={C} style={{textAlign:'center',color:C.g,padding:30}}>No payroll items.</Card>}
-    {mod==='pay'&&<PayModal onSave={savePay} onClose={()=>setMod(null)} C={C} emps={ac}/>}
-  </div>)
-}
-
-function PayModal({onSave,onClose,C,emps}){
-  const[f,setF]=useState({status:'pending'})
-  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}}>
-    <div style={{background:C.bg2,borderRadius:12,padding:24,width:380,border:`1px solid ${C.bdr}`}}>
-      <h3 style={{margin:'0 0 16px'}}>New Payroll Item</h3>
-      <select value={f.employee_name||''} onChange={e=>setF(p=>({...p,employee_name:e.target.value}))} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,fontFamily:'inherit'}}>
-        <option value="">Select Employee</option>{emps.map(e=><option key={e.id} value={gn(e)}>{gn(e)}</option>)}</select>
-      <input placeholder="Description" value={f.description||''} onChange={e=>setF(p=>({...p,description:e.target.value}))} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit'}}/>
-      <input placeholder="Amount" type="number" value={f.amount||''} onChange={e=>setF(p=>({...p,amount:e.target.value}))} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:8,boxSizing:'border-box',fontFamily:'inherit'}}/>
-      <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><Btn ghost small onClick={onClose} C={C}>Cancel</Btn><Btn gold small onClick={()=>{onSave(f);onClose()}} C={C}>Save</Btn></div>
-    </div></div>)
-}
-
 function DocsView({ac,docs,toggleDoc,C}){
   return(<div><h2 style={{fontSize:18,marginTop:0}}>Document Tracker</h2>
     {ac.map(e=>{const ed=docs[e.id]||{};const dn=DOC_ITEMS.filter(d=>ed[d.id]).length;const pc=Math.round(dn/DOC_ITEMS.length*100);const cats=[...new Set(DOC_ITEMS.map(d=>d.c))]
@@ -2056,7 +2003,7 @@ function DocsView({ac,docs,toggleDoc,C}){
       </Card>})}</div>)
 }
 
-function RptView({emps,ac,disc,pay,reports,C}){
+function RptView({emps,ac,disc,reports,C}){
   const uC=ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length
   const dC={};ac.forEach(e=>{const d=e.dept||'Unassigned';dC[d]=(dC[d]||0)+1})
   const openReports = (reports||[]).filter(r=>r.status!=='closed').length
@@ -2070,9 +2017,6 @@ function RptView({emps,ac,disc,pay,reports,C}){
         <div>Total: <b>{disc.length}</b></div><div>Open: <b style={{color:C.rd}}>{disc.filter(d=>(d.status||d.st)==='open').length}</b></div></div></Card>
       <Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Workplace Reports</h3><div style={{fontSize:12}}>
         <div>Total: <b>{(reports||[]).length}</b></div><div>Open: <b style={{color:'#8B5CF6'}}>{openReports}</b></div></div></Card>
-      <Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Payroll</h3><div style={{fontSize:12}}>
-        <div>Pending: <b style={{color:C.am}}>{pay.filter(p=>p.status==='pending').length}</b></div>
-        <div>Total: <b style={{color:C.go}}>${pay.reduce((s,p)=>s+parseFloat(p.amount||0),0).toFixed(2)}</b></div></div></Card>
     </div></div>)
 }
 

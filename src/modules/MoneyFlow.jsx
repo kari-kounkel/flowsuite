@@ -2400,6 +2400,7 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
     notes: order.notes || '',
   } : { ...BLANK_ORDER })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -2420,15 +2421,21 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
   }
 
   async function handleSave() {
-    if (!form.employee_name.trim() || !form.payment_type) return
+    if (!form.employee_name || !form.payment_type) return
     setSaving(true)
+    setSaveError(null)
     const payload = { ...form, org_id: orgId, amount_per_period: parseFloat(form.amount_per_period) || 0 }
+    let error
     if (isEdit) {
-      await supabase.from('payroll_payment_orders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', order.id)
+      ({ error } = await supabase.from('payroll_payment_orders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', order.id))
     } else {
-      await supabase.from('payroll_payment_orders').insert([payload])
+      ({ error } = await supabase.from('payroll_payment_orders').insert([payload]))
     }
     setSaving(false)
+    if (error) {
+      setSaveError(error.message)
+      return
+    }
     onSave()
   }
 
@@ -2535,9 +2542,12 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
               </button>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {saveError && (
+              <span style={{ fontSize: 11, color: '#e07070' }}>⚠ {saveError}</span>
+            )}
             <button onClick={onClose} style={{ background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
-            <button onClick={handleSave} disabled={saving || !form.employee_name.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: !form.employee_name.trim() ? 0.5 : 1 }}>
+            <button onClick={handleSave} disabled={saving || !form.employee_name} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: !form.employee_name ? 0.5 : 1 }}>
               {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Order'}
             </button>
           </div>

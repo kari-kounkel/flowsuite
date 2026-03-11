@@ -106,6 +106,107 @@ function advanceDueDate(dueDateStr, intervalDays) {
   return d.toISOString().split('T')[0]
 }
 
+// ─── PAYROLL TASK GENERATOR ───────────────────────────────────────────────────
+// Maps payment order frequency → recur_interval days and one-time flag
+const FREQ_MAP = {
+  'Per payroll':  { interval: 14, recurring: true  },
+  'Bi-weekly':    { interval: 14, recurring: true  },
+  'Weekly':       { interval: 7,  recurring: true  },
+  'Monthly':      { interval: 30, recurring: true  },
+  'One-time':     { interval: 0,  recurring: false },
+}
+// Payment types that are one-time / self-terminating
+const ONE_TIME_TYPES = ['Wage Garnishment', 'Cash Advance Repayment']
+
+// Roll up active orders by payment_type, merge resource_ids, sum amounts
+// Returns array of task-ready objects
+function rollupPaymentOrders(orders) {
+  const buckets = {}
+  for (const o of orders) {
+    if (o.status !== 'active') continue
+    const key = o.payment_type
+    if (!buckets[key]) {
+      buckets[key] = {
+        payment_type_key: key,
+        total: 0,
+        frequency: o.frequency || 'Per payroll',
+        resource_ids: [],
+        employees: [],
+        destinations: new Set(),
+      }
+    }
+    buckets[key].total += parseFloat(o.amount_per_period) || 0
+    buckets[key].employees.push(o.employee_name)
+    if (o.destination) buckets[key].destinations.add(o.destination)
+    ;(o.resource_ids || []).forEach(id => {
+      if (!buckets[key].resource_ids.includes(id)) buckets[key].resource_ids.push(id)
+    })
+  }
+  return Object.values(buckets)
+}
+
+// Upsert auto-generated payroll task cards into moneyflow_tasks
+// Uses source='payroll_auto' + payment_type_key as the unique identity
+// Never overwrites a card that's already been manually edited (name changed)
+async function generatePayrollTasks(orgId, orders) {
+  const rolled = rollupPaymentOrders(orders)
+  if (!rolled.length) return
+
+  // Load existing auto-generated tasks for this org
+  const { data: existing } = await supabase
+    .from('moneyflow_tasks')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('source', 'payroll_auto')
+
+  const existingMap = {}
+  ;(existing || []).forEach(t => { existingMap[t.payment_type_key] = t })
+
+  const today = new Date().toISOString().split('T')[0]
+
+  for (const bucket of rolled) {
+    const isOneTime = ONE_TIME_TYPES.includes(bucket.payment_type_key)
+    const freqConfig = FREQ_MAP[bucket.frequency] || FREQ_MAP['Per payroll']
+    const recurring  = isOneTime ? false : freqConfig.recurring
+    const interval   = isOneTime ? 0 : freqConfig.interval
+
+    const empList = [...new Set(bucket.employees)].join(', ')
+    const destList = [...bucket.destinations].join(' / ')
+    const name = `${bucket.payment_type_key} — $${bucket.total.toFixed(2)}`
+    const description = `${empList}${destList ? '\n→ ' + destList : ''}`
+
+    const existing = existingMap[bucket.payment_type_key]
+
+    if (existing) {
+      // Update amount + resource_ids + description, but only if not done (done = waiting for next cycle)
+      await supabase.from('moneyflow_tasks').update({
+        name,
+        description,
+        resource_ids: bucket.resource_ids,
+        is_recurring: recurring,
+        recur_interval: interval,
+        updated_at: new Date().toISOString(),
+      }).eq('id', existing.id)
+    } else {
+      // Create new card
+      await supabase.from('moneyflow_tasks').insert([{
+        org_id: orgId,
+        entity: 'iaz',
+        type: 'PR',
+        source: 'payroll_auto',
+        payment_type_key: bucket.payment_type_key,
+        name,
+        description,
+        due_date: today,
+        status: 'open',
+        is_recurring: recurring,
+        recur_interval: interval,
+        resource_ids: bucket.resource_ids,
+      }])
+    }
+  }
+}
+
 // ─── TASK FORM MODAL ─────────────────────────────────────────────────────────
 const BLANK_FORM = {
   entity: 'omega',
@@ -2057,11 +2158,12 @@ function TemplateItemModal({ item, orgId, C, onSave, onClose }) {
 }
 
 // ─── WITHHOLDING PROCESSOR ────────────────────────────────────────────────────
-function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResources = [] }) {
+function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResources = [], onPaymentSent }) {
   const [orders, setOrders]       = useState(propOrders || [])
   const [rows, setRows]           = useState([])   // parsed deduction rows from upload
   const [payPeriod, setPayPeriod] = useState('')
   const [payDate, setPayDate]     = useState('')
+  const [sentKeys, setSentKeys]   = useState({})   // payment_type_key → true when marked sent
   const [fileName, setFileName]   = useState('')
   const [loading, setLoading]     = useState(true)
   const [parseError, setParseError] = useState(null)
@@ -2206,14 +2308,39 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
           </div>
           {paymentRows.map((r, i) => {
             const order = matchOrder(r)
+            const typeKey = order?.payment_type || r.desc
+            const sent = !!sentKeys[typeKey]
+
+            async function markSent() {
+              // Find the matching auto-generated task card and advance/complete it
+              const { data: tasks } = await supabase
+                .from('moneyflow_tasks')
+                .select('*')
+                .eq('org_id', orgId)
+                .eq('source', 'payroll_auto')
+                .eq('payment_type_key', typeKey)
+                .single()
+              if (tasks) {
+                if (tasks.is_recurring && tasks.recur_interval > 0) {
+                  const newDate = advanceDueDate(tasks.due_date, tasks.recur_interval)
+                  await supabase.from('moneyflow_tasks').update({ due_date: newDate, updated_at: new Date().toISOString() }).eq('id', tasks.id)
+                } else {
+                  await supabase.from('moneyflow_tasks').update({ status: 'done', updated_at: new Date().toISOString() }).eq('id', tasks.id)
+                }
+              }
+              setSentKeys(prev => ({ ...prev, [typeKey]: true }))
+              if (onPaymentSent) onPaymentSent()
+            }
+
             return (
               <div key={i} style={{
-                background: C.bg2, border: `1px solid ${order ? C.go : C.bdr}`,
+                background: sent ? `${C.go}11` : C.bg2,
+                border: `1px solid ${sent ? C.go : order ? C.go : C.bdr}`,
                 borderRadius: 10, padding: '12px 16px', marginBottom: 8,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 160 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{r.desc}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: sent ? '#6ab87a' : C.w }}>{r.desc}</div>
                     <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{r.type}</div>
                     {order && (
                       <div style={{ fontSize: 10, color: C.go, marginTop: 4 }}>
@@ -2240,7 +2367,7 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
                       </a>
                     )}
                     {order && (order.resource_ids || []).length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6, justifyContent: 'flex-end' }}>
                         {allResources.filter(res => (order.resource_ids || []).includes(res.id)).map(res => (
                           <a key={res.id} href={res.url} target="_blank" rel="noreferrer"
                             style={{ fontSize: 10, color: '#7ab0e0', textDecoration: 'none', border: '1px solid #7ab0e0', padding: '2px 8px', borderRadius: 4 }}>
@@ -2249,6 +2376,17 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
                         ))}
                       </div>
                     )}
+                    <div style={{ marginTop: 8 }}>
+                      {sent ? (
+                        <span style={{ fontSize: 10, color: '#6ab87a', fontWeight: 700 }}>✓ Sent</span>
+                      ) : (
+                        <button onClick={markSent} style={{
+                          background: C.go, border: 'none', color: '#fff',
+                          borderRadius: 6, padding: '4px 12px', fontSize: 10,
+                          cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                        }}>Mark Sent ✓</button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2849,7 +2987,7 @@ function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [],
   )
 }
 
-function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [] }) {
+function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrdersChanged }) {
   const [payrollSubTab, setPayrollSubTab] = useState('orders')
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -2869,7 +3007,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [] }) {
 
   function handleNew() { setEditing(null); setModalOpen(true) }
   function handleEdit(o) { setEditing(o); setModalOpen(true) }
-  function handleSaved() { setModalOpen(false); setEditing(null); load() }
+  function handleSaved() { setModalOpen(false); setEditing(null); load(); if (onOrdersChanged) onOrdersChanged() }
 
   const STATUS_COLORS = { active: '#6ab87a', suspended: '#c4956a', closed: '#a0a0a0' }
 
@@ -2913,7 +3051,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [] }) {
         {subPill2('New Hire Checklist', payrollSubTab === 'checklist', () => setPayrollSubTab('checklist'))}
       </div>
 
-      {payrollSubTab === 'withholding' && <WithholdingProcessorTab orgId={orgId} C={C} allResources={allResources} orders={orders} />}
+      {payrollSubTab === 'withholding' && <WithholdingProcessorTab orgId={orgId} C={C} allResources={allResources} orders={orders} onPaymentSent={() => { if (onOrdersChanged) onOrdersChanged() }} />}
       {payrollSubTab === 'checklist' && <NewHireChecklistTab orgId={orgId} C={C} />}
 
       {payrollSubTab === 'orders' && <div>
@@ -3370,6 +3508,15 @@ export default function MoneyFlowModule({ orgId, C }) {
   }, [orgId])
 
   useEffect(() => { loadResources() }, [loadResources])
+
+  // ── Generate payroll task cards from active payment orders ──
+  const syncPayrollTasks = useCallback(async () => {
+    const { data: orders } = await supabase
+      .from('payroll_payment_orders')
+      .select('*').eq('org_id', orgId).eq('status', 'active')
+    await generatePayrollTasks(orgId, orders || [])
+  }, [orgId])
+
   const loadTasks = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -3388,7 +3535,10 @@ export default function MoneyFlowModule({ orgId, C }) {
     }
   }, [orgId])
 
-  useEffect(() => { loadTasks() }, [loadTasks])
+  // On mount: sync payroll cards first, then load all tasks
+  useEffect(() => {
+    syncPayrollTasks().then(() => loadTasks())
+  }, [syncPayrollTasks, loadTasks])
 
   // ── TOGGLE DONE ──
   // If recurring + marking done → advance due_date by recur_interval, keep status 'open'
@@ -3595,7 +3745,7 @@ export default function MoneyFlowModule({ orgId, C }) {
       {/* ── PAYROLL PAYMENTS TAB ── */}
       {tab === 'payroll' && (
         <div style={{ position: 'relative' }}>
-          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} allResources={allResources} />
+          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} allResources={allResources} onOrdersChanged={async () => { await syncPayrollTasks(); loadTasks() }} />
           {!isAdmin && userEmail && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 10,

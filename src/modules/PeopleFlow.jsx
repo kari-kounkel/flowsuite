@@ -33,10 +33,12 @@ const DISC_TYPES = [
   {v:'final_written',l:'Final Written Warning',c:'#DC2626'},
   {v:'suspension',l:'Suspension',c:'#B91C1C'},
   {v:'termination',l:'Termination',c:'#991B1B'},
+  {v:'reinstatement',l:'Reinstatement w/ Conditions',c:'#0EA5E9'},
   {v:'last_chance',l:'Last Chance Agreement',c:'#7C3AED'},
   {v:'coaching',l:'Coaching',c:'#3B82F6'},
   {v:'commendation',l:'Commendation',c:'#22C55E'}
 ]
+const RC = '#0EA5E9' // reinstatement color
 
 const SEPARATION_TYPES = [
   {v:'layoff',l:'Layoff — Lack of Work',c:'#6366F1',hasRecall:true},
@@ -287,6 +289,16 @@ export default function PeopleFlowModule({ orgId, C }) {
       console.log('DISCIPLINE INSERT RESULT:', {data, error})
       if(error){sh('ERROR: '+error.message);return}
       if(data)setDisc(p=>[...p,data])
+      // ── Flip employee status based on discipline type ──
+      if(d.employee_id){
+        if(d.type==='termination'){
+          await supabase.from('employees').update({status:'Inactive'}).eq('id',d.employee_id)
+          setEmps(p=>p.map(e=>e.id===d.employee_id?{...e,status:'Inactive'}:e))
+        } else if(d.type==='reinstatement'){
+          await supabase.from('employees').update({status:'probation'}).eq('id',d.employee_id)
+          setEmps(p=>p.map(e=>e.id===d.employee_id?{...e,status:'probation'}:e))
+        }
+      }
     }
     sh('Record saved ✓')
   }
@@ -326,6 +338,26 @@ export default function PeopleFlowModule({ orgId, C }) {
       setEmps(p=>p.map(e=>e.id===sep.employee_id?{...e,status:'active',recall_date:recallDate}:e))
     }
     sh('Employee recalled ✓ — probation clock resumed')
+  }
+  // ── Confirm end of reinstatement probation → reverse last N disciplines ──
+  const confirmProbationEnd = async(reinstDisc) => {
+    if (!reinstDisc?.employee_id) return
+    const reverseCount = reinstDisc.reverse_count || 2
+    // Get all open discipline records for this employee, sorted newest first, excluding reinstatement itself
+    const empDiscs = disc
+      .filter(d => d.employee_id===reinstDisc.employee_id && (d.status||d.st)==='open' && d.type!=='reinstatement' && d.id!==reinstDisc.id)
+      .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+    const toReverse = empDiscs.slice(0, reverseCount)
+    for (const d of toReverse) {
+      await supabase.from('disciplines').update({status:'reversed',reversed_by_reinstatement:reinstDisc.id}).eq('id',d.id)
+      setDisc(p=>p.map(x=>x.id===d.id?{...x,status:'reversed',reversed_by_reinstatement:reinstDisc.id}:x))
+    }
+    // Close the reinstatement record and restore employee to active
+    await supabase.from('disciplines').update({status:'closed'}).eq('id',reinstDisc.id)
+    setDisc(p=>p.map(x=>x.id===reinstDisc.id?{...x,status:'closed'}:x))
+    await supabase.from('employees').update({status:'Active'}).eq('id',reinstDisc.employee_id)
+    setEmps(p=>p.map(e=>e.id===reinstDisc.employee_id?{...e,status:'Active'}:e))
+    sh(`Probation confirmed — ${toReverse.length} discipline(s) reversed, employee restored to Active ✓`)
   }
   const toggleOnb = async(empId,stepId,cur)=>{
     const nv=!cur
@@ -379,6 +411,15 @@ export default function PeopleFlowModule({ orgId, C }) {
         alerts.push({t:'Laid Off',m:`${gn(e)} — no recall date set`,c:'#6366F1'})
       }
     })
+    // ── Reinstatement probation ending alerts ──
+    disc.filter(d=>d.type==='reinstatement'&&(d.status||d.st)==='open'&&d.probation_end_date).forEach(d=>{
+      const daysUntil = Math.floor((new Date(d.probation_end_date) - new Date()) / (1000*60*60*24))
+      if (daysUntil <= 7) {
+        const emp = emps.find(e=>e.id===d.employee_id)
+        const label = daysUntil <= 0 ? 'ENDED — confirm reversal' : `${daysUntil}d remaining`
+        alerts.push({t:'Probation Ending',m:`${emp?gn(emp):d.employee_name||'Employee'} — ${label}`,c:RC,reinstatementDisc:d})
+      }
+    })
   }
   // ── Tab Configuration (role-filtered) ──
   const ADMIN_TABS = ['onboard','documents','reports']
@@ -425,7 +466,15 @@ export default function PeopleFlowModule({ orgId, C }) {
           <Card key={s.l} C={C}><div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1}}>{s.l}</div><div style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></Card>)}
       </div>
       {alerts.length>0&&<Card C={C} style={{marginBottom:16}}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>⚠ Alerts</h3>
-        {alerts.map((a,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none'}}><span style={{fontSize:12,color:C.w}}>{a.m}</span><Tag c={a.c}>{a.t}</Tag></div>)}</Card>}
+        {alerts.map((a,i)=>(
+  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none',gap:8}}>
+    <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
+    <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+      {a.reinstatementDisc && <button onClick={()=>{if(confirm(`Confirm end of probation for this employee?\n\nThis will reverse the last ${a.reinstatementDisc.reverse_count||2} discipline record(s) and restore them to Active status.`))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>Confirm ✓</button>}
+      <Tag c={a.c}>{a.t}</Tag>
+    </div>
+  </div>
+))}</Card>}
       {isAdmin&&<Card C={C}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>Quick Links</h3><div style={{display:'flex',gap:6,flexWrap:'wrap'}}><Btn small onClick={()=>go('employees')} C={C}>+ Employee</Btn><Btn small onClick={()=>go('workplace')} C={C}>+ Discipline</Btn></div></Card>}
     </div>}
 
@@ -900,6 +949,13 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
               {d.status||d.st||'open'}
             </button>
             {d.emp_signature && <div style={{fontSize:8,color:'#22C55E',marginTop:2}}>✓ Signed</div>}
+            {d.type==='reinstatement'&&d.probation_end_date&&(()=>{
+              const daysLeft=Math.floor((new Date(d.probation_end_date)-new Date())/(1000*60*60*24))
+              return <div style={{fontSize:8,color:daysLeft<=0?'#22C55E':RC,marginTop:2,fontWeight:700}}>
+                {daysLeft<=0?'✓ Probation ended':`⏱ ${daysLeft}d probation left`}
+              </div>
+            })()}
+            {d.status==='reversed'&&<div style={{fontSize:8,color:'#6B7280',marginTop:2}}>↩ Reversed</div>}
           </div>
         </div>
       </Card></div>
@@ -1586,6 +1642,50 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           </div>
         </div>
         <div style={{fontSize:9,color:C.g,marginTop:6}}>LCA clock freezes automatically during any layoff period and resumes on recall.</div>
+      </div>}
+
+      {/* ── Reinstatement w/ Conditions Fields ── */}
+      {f.type==='reinstatement' && <div style={{background:`rgba(14,165,233,0.08)`,border:`1px solid ${RC}`,borderRadius:8,padding:'12px 16px',marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:RC,marginBottom:8}}>Reinstatement Terms</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          <div>
+            <label style={{...lbl,color:RC}}>Reinstatement Date</label>
+            <input type="date" value={f.reinstatement_date||f.date||''} onChange={e=>up('reinstatement_date',e.target.value)} style={inp}/>
+          </div>
+          <div>
+            <label style={{...lbl,color:RC}}>Probation End Date</label>
+            <input type="date" value={f.probation_end_date||''} onChange={e=>up('probation_end_date',e.target.value)} style={inp}/>
+          </div>
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{...lbl,color:RC}}>Conditions / Terms</label>
+            <textarea value={f.reinstatement_conditions||''} onChange={e=>up('reinstatement_conditions',e.target.value)} rows={3}
+              placeholder="e.g., Employee is reinstated on a probationary basis. Attendance and punctuality will be monitored weekly."
+              style={{...inp,resize:'vertical'}}/>
+          </div>
+          <div style={{gridColumn:'1/-1'}}>
+            <label style={{...lbl,color:RC}}>Specific Violation Rules</label>
+            <textarea value={f.reinstatement_rules||''} onChange={e=>up('reinstatement_rules',e.target.value)} rows={2}
+              placeholder="e.g., Any single late punch-in during the probationary period will result in immediate termination."
+              style={{...inp,resize:'vertical'}}/>
+          </div>
+          <div>
+            <label style={{...lbl,color:RC}}>Disciplines to Reverse at End</label>
+            <select value={f.reverse_count||2} onChange={e=>up('reverse_count',parseInt(e.target.value))} style={inp}>
+              <option value={1}>Last 1 discipline</option>
+              <option value={2}>Last 2 disciplines</option>
+              <option value={3}>Last 3 disciplines</option>
+            </select>
+          </div>
+          <div style={{display:'flex',alignItems:'flex-end',paddingBottom:2}}>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:RC,fontWeight:600,cursor:'pointer'}}>
+              <input type="checkbox" checked={f.union_negotiated||false} onChange={e=>up('union_negotiated',e.target.checked)} style={{width:16,height:16,accentColor:RC}}/>
+              Union negotiated
+            </label>
+          </div>
+        </div>
+        <div style={{fontSize:9,color:C.g,marginTop:6}}>
+          When probation ends, you will be prompted to confirm reversal of the last {f.reverse_count||2} discipline record(s).
+        </div>
       </div>}
 
       {/* ── Employee Comments ── */}

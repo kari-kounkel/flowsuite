@@ -2056,6 +2056,251 @@ function TemplateItemModal({ item, orgId, C, onSave, onClose }) {
   )
 }
 
+// ─── WITHHOLDING PROCESSOR ────────────────────────────────────────────────────
+function WithholdingProcessorTab({ orgId, C }) {
+  const [orders, setOrders]       = useState([])   // active payment orders from DB
+  const [rows, setRows]           = useState([])   // parsed deduction rows from upload
+  const [payPeriod, setPayPeriod] = useState('')
+  const [payDate, setPayDate]     = useState('')
+  const [fileName, setFileName]   = useState('')
+  const [loading, setLoading]     = useState(true)
+  const [parseError, setParseError] = useState(null)
+
+  // Load active payment orders
+  useEffect(() => {
+    supabase.from('payroll_payment_orders')
+      .select('*').eq('org_id', orgId).eq('status', 'active').order('employee_name')
+      .then(({ data }) => { setOrders(data || []); setLoading(false) })
+  }, [orgId])
+
+  // ── Parse uploaded XLS/XLSX ──
+  async function handleUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setParseError(null)
+    setRows([])
+    setFileName(file.name)
+
+    try {
+      const XLSX = await import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/xlsx.mjs')
+      const buf  = await file.arrayBuffer()
+      const wb   = XLSX.read(buf, { type: 'array' })
+
+      // Find the deductions sheet — look for sheet whose name contains "Deduction"
+      const sheetName = wb.SheetNames.find(n => n.toLowerCase().includes('deduction')) || wb.SheetNames[0]
+      const ws = wb.Sheets[sheetName]
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+      // Find header row: row containing "Description" in first column
+      const headerIdx = raw.findIndex(r => String(r[0]).trim() === 'Description')
+      if (headerIdx === -1) { setParseError('Could not find "Description" header row in sheet.'); return }
+
+      // Extract pay period from rows above header — look for "From ... to ..." pattern
+      for (let i = 0; i < headerIdx; i++) {
+        const cell = String(raw[i][0]).trim()
+        const m = cell.match(/From\s+(.+?)\s+to\s+(.+)/i)
+        if (m) { setPayPeriod(m[0]); setPayDate(m[2].trim()); break }
+      }
+
+      // Parse data rows — stop at Total row
+      const dataRows = []
+      for (let i = headerIdx + 1; i < raw.length; i++) {
+        const r = raw[i]
+        const desc = String(r[0]).trim()
+        if (!desc || desc.toLowerCase() === 'total') break
+        const empDed  = parseFloat(String(r[2]).replace(/[$,]/g, '')) || 0
+        const coContrib = parseFloat(String(r[3]).replace(/[$,]/g, '')) || 0
+        const total   = parseFloat(String(r[4]).replace(/[$,]/g, '')) || 0
+        const type    = String(r[1]).trim()
+        dataRows.push({ desc, type, empDed, coContrib, total })
+      }
+
+      setRows(dataRows)
+    } catch (err) {
+      setParseError(`Parse error: ${err.message}`)
+    }
+  }
+
+  // ── Match parsed rows to payment orders ──
+  // A row matches an order if the order's payment_type or description loosely matches
+  function matchOrder(row) {
+    return orders.find(o => {
+      const orderLabel = (o.description || o.label || '').toLowerCase()
+      const rowDesc    = row.desc.toLowerCase()
+      const rowType    = row.type.toLowerCase()
+      // Match by description substring or type substring
+      return rowDesc.includes(orderLabel) || orderLabel.includes(rowDesc) ||
+             rowType.includes((o.payment_type || '').toLowerCase()) ||
+             (o.payment_type || '').toLowerCase().includes(rowType)
+    })
+  }
+
+  // Filter to only rows that are actionable (employee deduction > 0 or company contrib > 0)
+  const actionableRows = rows.filter(r => r.empDed > 0 || r.coContrib > 0)
+  const zeroRows       = rows.filter(r => r.empDed === 0 && r.coContrib === 0)
+
+  // Identify payment order rows — types that indicate external payments needed
+  const PAYMENT_TYPES = ['child/spousal support', 'garnishment', 'levy', 'creditor', 'cash advance']
+  const paymentRows = actionableRows.filter(r =>
+    PAYMENT_TYPES.some(t => r.type.toLowerCase().includes(t) || r.desc.toLowerCase().includes(t))
+  )
+  const internalRows = actionableRows.filter(r =>
+    !PAYMENT_TYPES.some(t => r.type.toLowerCase().includes(t) || r.desc.toLowerCase().includes(t))
+  )
+
+  const totalPayments = paymentRows.reduce((s, r) => s + r.empDed, 0)
+
+  const inputStyle = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '6px 10px', fontSize: 11,
+    fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+  const labelStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  if (loading) return <p style={{ fontSize: 12, color: C.g }}>Loading payment orders…</p>
+
+  return (
+    <div>
+      {/* Upload */}
+      <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, padding: '16px 18px', marginBottom: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 8 }}>Upload QBO Payroll Export</div>
+        <div style={{ fontSize: 11, color: C.g, marginBottom: 12 }}>
+          Upload the Aggregated Payroll Report (.xls or .xlsx) from QBO. The processor reads the Deductions and Contributions sheet automatically.
+        </div>
+        <input type="file" accept=".xls,.xlsx" onChange={handleUpload} style={{ fontSize: 11, color: C.w }} />
+        {fileName && <div style={{ fontSize: 10, color: C.go, marginTop: 6, fontFamily: "'DM Mono', monospace" }}>📄 {fileName}</div>}
+        {payPeriod && <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>Period: {payPeriod}</div>}
+        {parseError && <div style={{ fontSize: 11, color: '#e07070', marginTop: 8 }}>⚠ {parseError}</div>}
+      </div>
+
+      {rows.length > 0 && (<>
+
+        {/* Summary banner */}
+        <div style={{
+          display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20,
+          background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, padding: '14px 18px',
+        }}>
+          <div>
+            <div style={labelStyle}>Pay Date</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.w }}>{payDate || '—'}</div>
+          </div>
+          <div>
+            <div style={labelStyle}>Payments to Send</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#e07070' }}>{paymentRows.length}</div>
+          </div>
+          <div>
+            <div style={labelStyle}>Total Amount Due</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.go }}>${fmt(totalPayments)}</div>
+          </div>
+          <div>
+            <div style={labelStyle}>Orders on File</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.w }}>{orders.length} active</div>
+          </div>
+        </div>
+
+        {/* ── PAYMENTS TO SEND ── */}
+        {paymentRows.length > 0 && (<>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#e07070', marginBottom: 10, letterSpacing: '0.5px' }}>
+            SEND PAYMENTS
+          </div>
+          {paymentRows.map((r, i) => {
+            const order = matchOrder(r)
+            return (
+              <div key={i} style={{
+                background: C.bg2, border: `1px solid ${order ? C.go : C.bdr}`,
+                borderRadius: 10, padding: '12px 16px', marginBottom: 8,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 160 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{r.desc}</div>
+                    <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{r.type}</div>
+                    {order && (
+                      <div style={{ fontSize: 10, color: C.go, marginTop: 4 }}>
+                        ✓ Matched order · {order.employee_name}
+                        {order.case_number && <span> · Case {order.case_number}</span>}
+                      </div>
+                    )}
+                    {!order && (
+                      <div style={{ fontSize: 10, color: '#c4956a', marginTop: 4 }}>
+                        ⚠ No matching payment order on file
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.go, fontFamily: "'DM Mono', monospace" }}>
+                      ${fmt(r.empDed)}
+                    </div>
+                    {order?.destination && (
+                      <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{order.destination}</div>
+                    )}
+                    {order?.destination_url && (
+                      <a href={order.destination_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: C.go }}>
+                        Pay online →
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          <div style={{
+            background: C.gD, border: `1px solid ${C.go}`, borderRadius: 8,
+            padding: '10px 16px', marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.go }}>Total to remit this pay period</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(totalPayments)}</span>
+          </div>
+        </>)}
+
+        {/* ── INTERNAL / BENEFIT DEDUCTIONS ── */}
+        {internalRows.length > 0 && (<>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.g, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
+            INTERNAL DEDUCTIONS <span style={{ fontSize: 10, fontWeight: 400 }}>(benefits, union, insurance — no external payment needed)</span>
+          </div>
+          {internalRows.map((r, i) => (
+            <div key={i} style={{
+              background: C.bg2, border: `1px solid ${C.bdrF}`,
+              borderRadius: 8, padding: '8px 14px', marginBottom: 6,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div>
+                <div style={{ fontSize: 11, color: C.w }}>{r.desc}</div>
+                <div style={{ fontSize: 10, color: C.g }}>{r.type}</div>
+              </div>
+              <div style={{ textAlign: 'right', fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+                {r.empDed > 0 && <div style={{ color: C.w }}>EE: ${fmt(r.empDed)}</div>}
+                {r.coContrib > 0 && <div style={{ color: C.g }}>ER: ${fmt(r.coContrib)}</div>}
+              </div>
+            </div>
+          ))}
+        </>)}
+
+        {/* ── ZERO AMOUNT ROWS ── */}
+        {zeroRows.length > 0 && (
+          <div style={{ fontSize: 10, color: C.g, marginTop: 16 }}>
+            {zeroRows.length} deduction line{zeroRows.length > 1 ? 's' : ''} with $0 this period: {zeroRows.map(r => r.desc).join(', ')}
+          </div>
+        )}
+
+        <div style={{
+          marginTop: 20, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
+          background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 560,
+        }}>
+          <strong style={{ color: C.go }}>Sidebar:</strong> Upload a new file each payroll run. Amounts come from the QBO export — nothing is hardwired. Payment orders on file add the destination and case number so you know exactly where each dollar goes.
+        </div>
+
+      </>)}
+
+      {/* No orders warning */}
+      {orders.length === 0 && (
+        <div style={{ fontSize: 11, color: '#c4956a', marginTop: 8 }}>
+          ⚠ No active payment orders on file. Add them in the Payment Orders tab so destinations and case numbers show here.
+        </div>
+      )}
+    </div>
+  )
+}
+
 function NewHireChecklistTab({ orgId, C }) {
   const [templates, setTemplates] = useState([])
   const [employees, setEmployees] = useState([])
@@ -2623,9 +2868,11 @@ function PayrollPaymentsTab({ orgId, C, employees = [] }) {
       {/* Sub-tab bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
         {subPill2('Payment Orders', payrollSubTab === 'orders', () => setPayrollSubTab('orders'))}
+        {subPill2('Withholding Processor', payrollSubTab === 'withholding', () => setPayrollSubTab('withholding'))}
         {subPill2('New Hire Checklist', payrollSubTab === 'checklist', () => setPayrollSubTab('checklist'))}
       </div>
 
+      {payrollSubTab === 'withholding' && <WithholdingProcessorTab orgId={orgId} C={C} />}
       {payrollSubTab === 'checklist' && <NewHireChecklistTab orgId={orgId} C={C} />}
 
       {payrollSubTab === 'orders' && <div>

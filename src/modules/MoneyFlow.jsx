@@ -1268,6 +1268,392 @@ function ResourceLibraryTab({ orgId, C }) {
   )
 }
 
+
+// ─── NEW HIRE CHECKLIST ───────────────────────────────────────────────────────
+// Configurable per-org compliance checklist pulled from employees table
+// Templates are org-managed — we seed defaults, they own the list
+
+const DEFAULT_CHECKLIST_ITEMS = [
+  { item_name: 'Federal New Hire Report', applies_to: 'new_hire', due_days_from_hire: 20 },
+  { item_name: 'MN State New Hire Report', applies_to: 'new_hire', due_days_from_hire: 20 },
+  { item_name: 'Benefits Enrollment', applies_to: 'new_hire', due_days_from_hire: 30 },
+  { item_name: 'Union Enrollment / Dues Setup', applies_to: 'new_hire', due_days_from_hire: 14 },
+]
+
+function addDays(dateStr, days) {
+  if (!dateStr || !days) return null
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return d.toISOString().split('T')[0]
+}
+
+function fmtDate(dateStr) {
+  if (!dateStr) return '—'
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Template editor modal
+function TemplateItemModal({ item, orgId, C, onSave, onClose }) {
+  const isEdit = !!item?.id
+  const [form, setForm] = useState(isEdit ? {
+    item_name: item.item_name || '',
+    due_days_from_hire: item.due_days_from_hire || '',
+    active: item.active !== false,
+  } : { item_name: '', due_days_from_hire: '', active: true })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  async function handleSave() {
+    if (!form.item_name.trim()) return
+    setSaving(true)
+    const payload = {
+      item_name: form.item_name.trim(),
+      due_days_from_hire: form.due_days_from_hire ? parseInt(form.due_days_from_hire) : null,
+      active: form.active,
+      org_id: orgId,
+      applies_to: 'new_hire',
+    }
+    if (isEdit) {
+      await supabase.from('payroll_checklist_templates').update(payload).eq('id', item.id)
+    } else {
+      await supabase.from('payroll_checklist_templates').insert([payload])
+    }
+    setSaving(false)
+    onSave()
+  }
+
+  const iStyle = { width: '100%', background: C.bg, border: `1px solid ${C.bdr}`, color: C.w, borderRadius: 6, padding: '7px 10px', fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box' }
+  const lStyle = { fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+      <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 14, width: '100%', maxWidth: 420, padding: 24, boxShadow: '0 8px 40px rgba(0,0,0,0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, color: C.go, fontSize: 15, fontWeight: 700 }}>{isEdit ? '✏️ Edit Checklist Item' : '➕ New Checklist Item'}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.g, fontSize: 18, cursor: 'pointer' }}>✕</button>
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={lStyle}>Item Name *</label>
+          <input value={form.item_name} onChange={e => set('item_name', e.target.value)} placeholder="e.g. Direct Deposit Setup" style={iStyle} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={lStyle}>Due Days From Hire Date (optional)</label>
+          <input type="number" value={form.due_days_from_hire} onChange={e => set('due_days_from_hire', e.target.value)} min={1} placeholder="e.g. 20" style={iStyle} />
+          <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>Leave blank if no deadline applies.</div>
+        </div>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.active} onChange={e => set('active', e.target.checked)} style={{ accentColor: C.go }} />
+            <span style={{ fontSize: 12, color: C.w }}>Active (show on new hire checklists)</span>
+          </label>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button onClick={onClose} style={{ background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !form.item_name.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: !form.item_name.trim() ? 0.5 : 1 }}>
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function NewHireChecklistTab({ orgId, C }) {
+  const [templates, setTemplates] = useState([])
+  const [employees, setEmployees] = useState([])
+  const [checklistItems, setChecklistItems] = useState([]) // payroll_checklist_items rows
+  const [loading, setLoading] = useState(true)
+  const [seeding, setSeeding] = useState(false)
+  const [templateModal, setTemplateModal] = useState(null) // null | 'new' | item object
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false)
+  const [selectedEmp, setSelectedEmp] = useState('all')
+  const [filterStatus, setFilterStatus] = useState('pending')
+
+  async function load() {
+    setLoading(true)
+    const [{ data: tmpl }, { data: emps }, { data: items }] = await Promise.all([
+      supabase.from('payroll_checklist_templates').select('*').eq('org_id', orgId).order('item_name'),
+      supabase.from('employees').select('id, first_name, last_name, preferred_name, hire_date, status').eq('org_id', orgId).eq('status', 'Active').order('last_name'),
+      supabase.from('payroll_checklist_items').select('*').eq('org_id', orgId),
+    ])
+    setTemplates(tmpl || [])
+    setEmployees(emps || [])
+    setChecklistItems(items || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { load() }, [orgId])
+
+  async function seedDefaults() {
+    setSeeding(true)
+    const rows = DEFAULT_CHECKLIST_ITEMS.map(d => ({ ...d, org_id: orgId, active: true }))
+    await supabase.from('payroll_checklist_templates').insert(rows)
+    setSeeding(false)
+    load()
+  }
+
+  async function deleteTemplate(id) {
+    await supabase.from('payroll_checklist_templates').delete().eq('id', id)
+    load()
+  }
+
+  // Generate checklist items for an employee (all active templates)
+  async function generateForEmployee(empId) {
+    const activeTemplates = templates.filter(t => t.active !== false)
+    const existing = checklistItems.filter(i => i.employee_id === empId).map(i => i.template_id)
+    const toInsert = activeTemplates
+      .filter(t => !existing.includes(t.id))
+      .map(t => ({
+        org_id: orgId,
+        employee_id: empId,
+        template_id: t.id,
+        status: 'pending',
+      }))
+    if (toInsert.length) {
+      await supabase.from('payroll_checklist_items').insert(toInsert)
+      load()
+    }
+  }
+
+  // Toggle item status: pending → complete → na → pending
+  async function cycleStatus(item) {
+    const next = item.status === 'pending' ? 'complete' : item.status === 'complete' ? 'na' : 'pending'
+    const updates = {
+      status: next,
+      completed_by: next === 'complete' ? 'admin' : null,
+      completed_at: next === 'complete' ? new Date().toISOString() : null,
+    }
+    await supabase.from('payroll_checklist_items').update(updates).eq('id', item.id)
+    setChecklistItems(prev => prev.map(i => i.id === item.id ? { ...i, ...updates } : i))
+  }
+
+  const empName = (e) => `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
+
+  const STATUS_CONFIG = {
+    pending:  { label: 'Pending',  color: '#c4956a', icon: '○' },
+    complete: { label: 'Complete', color: '#6ab87a', icon: '✓' },
+    na:       { label: 'N/A',      color: '#a0a0a0', icon: '—' },
+  }
+
+  const today = new Date().toISOString().split('T')[0]
+
+  // Build display: per employee, per template item
+  const activeTemplates = templates.filter(t => t.active !== false)
+
+  const displayEmps = selectedEmp === 'all' ? employees : employees.filter(e => e.id === selectedEmp)
+
+  const pill = (label, active, onClick) => (
+    <button onClick={onClick} style={{
+      background: active ? C.gD : 'transparent',
+      border: `1px solid ${active ? C.go : C.bdrF}`,
+      color: active ? C.go : C.g,
+      padding: '4px 12px', borderRadius: 20, cursor: 'pointer',
+      fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+    }}>{label}</button>
+  )
+
+  if (loading) return <p style={{ fontSize: 12, color: C.g }}>Loading…</p>
+
+  return (
+    <div>
+      {templateModal && (
+        <TemplateItemModal
+          item={templateModal === 'new' ? null : templateModal}
+          orgId={orgId} C={C}
+          onSave={() => { setTemplateModal(null); load() }}
+          onClose={() => setTemplateModal(null)}
+        />
+      )}
+
+      {/* Checklist template manager */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.go }}>
+            📋 Checklist Template ({activeTemplates.length} active items)
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {templates.length === 0 && (
+              <button onClick={seedDefaults} disabled={seeding} style={{ background: 'transparent', border: `1px solid ${C.go}`, color: C.go, padding: '4px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>
+                {seeding ? 'Seeding…' : '⚡ Load Defaults'}
+              </button>
+            )}
+            <button onClick={() => setShowTemplateEditor(v => !v)} style={{ background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g, padding: '4px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>
+              {showTemplateEditor ? '▲ Hide' : '▼ Manage'} Template
+            </button>
+            <button onClick={() => setTemplateModal('new')} style={{ background: C.go, border: 'none', color: '#fff', padding: '4px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>+ Add Item</button>
+          </div>
+        </div>
+
+        {showTemplateEditor && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+            {templates.length === 0 && (
+              <div style={{ padding: '16px', fontSize: 12, color: C.g, textAlign: 'center' }}>
+                No checklist items yet. Load defaults or add your own.
+              </div>
+            )}
+            {templates.map((t, i) => (
+              <div key={t.id} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                borderBottom: i < templates.length - 1 ? `1px solid ${C.bdrF}` : 'none',
+                opacity: t.active === false ? 0.5 : 1,
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{t.item_name}</div>
+                  <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>
+                    {t.due_days_from_hire ? `Due ${t.due_days_from_hire} days from hire` : 'No deadline'} &nbsp;·&nbsp;
+                    <span style={{ color: t.active !== false ? '#6ab87a' : '#a0a0a0' }}>{t.active !== false ? 'Active' : 'Inactive'}</span>
+                  </div>
+                </div>
+                <button onClick={() => setTemplateModal(t)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 12, padding: '0 4px' }}>✏️</button>
+                <button onClick={() => deleteTemplate(t.id)} style={{ background: 'none', border: 'none', color: '#e07070', cursor: 'pointer', fontSize: 11, padding: '0 4px' }}>🗑</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Employee filter + status filter */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
+        <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)} style={{
+          background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+          borderRadius: 6, padding: '5px 10px', fontSize: 11, fontFamily: 'inherit',
+        }}>
+          <option value="all">All Active Employees</option>
+          {employees.map(e => <option key={e.id} value={e.id}>{empName(e)}</option>)}
+        </select>
+        <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
+        {['pending', 'complete', 'na', 'all'].map(s => pill(
+          s === 'all' ? 'All' : STATUS_CONFIG[s]?.label || s,
+          filterStatus === s,
+          () => setFilterStatus(s)
+        ))}
+      </div>
+
+      {/* Per-employee checklist rows */}
+      {activeTemplates.length === 0 && (
+        <div style={{ fontSize: 12, color: C.g, padding: '20px 0', textAlign: 'center' }}>
+          No active checklist items. Add items to the template above.
+        </div>
+      )}
+
+      {activeTemplates.length > 0 && displayEmps.length === 0 && (
+        <div style={{ fontSize: 12, color: C.g, padding: '20px 0', textAlign: 'center' }}>
+          No active employees found. Make sure employees are in PeopleFlow with status Active.
+        </div>
+      )}
+
+      {activeTemplates.length > 0 && displayEmps.map(emp => {
+        const empItems = checklistItems.filter(i => i.employee_id === emp.id)
+        const hasItems = empItems.length > 0
+
+        // Filter by status
+        const visibleTemplates = activeTemplates.filter(t => {
+          if (filterStatus === 'all') return true
+          const item = empItems.find(i => i.template_id === t.id)
+          const status = item?.status || 'pending'
+          return status === filterStatus
+        })
+
+        if (visibleTemplates.length === 0) return null
+
+        const pendingCount = activeTemplates.filter(t => {
+          const item = empItems.find(i => i.template_id === t.id)
+          return !item || item.status === 'pending'
+        }).length
+
+        const overdueCount = activeTemplates.filter(t => {
+          const item = empItems.find(i => i.template_id === t.id)
+          if (item?.status === 'complete' || item?.status === 'na') return false
+          if (!t.due_days_from_hire || !emp.hire_date) return false
+          const due = addDays(emp.hire_date, t.due_days_from_hire)
+          return due && due < today
+        }).length
+
+        return (
+          <div key={emp.id} style={{ background: C.bg2, border: `1px solid ${overdueCount > 0 ? '#c04040' : C.bdr}`, borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
+            {/* Employee header */}
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.bdrF}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.w }}>{empName(emp)}</span>
+                {emp.hire_date && <span style={{ fontSize: 10, color: C.g, marginLeft: 10 }}>Hired {fmtDate(emp.hire_date)}</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {overdueCount > 0 && <span style={{ fontSize: 10, color: '#e07070', fontWeight: 700 }}>⚠ {overdueCount} overdue</span>}
+                {pendingCount > 0 && <span style={{ fontSize: 10, color: '#c4956a' }}>{pendingCount} pending</span>}
+                {!hasItems && (
+                  <button onClick={() => generateForEmployee(emp.id)} style={{ background: 'transparent', border: `1px solid ${C.go}`, color: C.go, padding: '3px 10px', borderRadius: 20, cursor: 'pointer', fontSize: 10, fontFamily: 'inherit' }}>
+                    ⚡ Generate Checklist
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Checklist items */}
+            {hasItems && visibleTemplates.map((t, i) => {
+              const item = empItems.find(ci => ci.template_id === t.id)
+              const status = item?.status || 'pending'
+              const sc = STATUS_CONFIG[status] || STATUS_CONFIG.pending
+              const dueDate = t.due_days_from_hire && emp.hire_date ? addDays(emp.hire_date, t.due_days_from_hire) : null
+              const isOverdue = dueDate && dueDate < today && status === 'pending'
+
+              return (
+                <div key={t.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px',
+                  borderBottom: i < visibleTemplates.length - 1 ? `1px solid ${C.bdrF}` : 'none',
+                  background: isOverdue ? 'rgba(192,64,64,0.07)' : 'transparent',
+                }}>
+                  {/* Status toggle button */}
+                  <button
+                    onClick={() => item ? cycleStatus(item) : null}
+                    disabled={!item}
+                    title={item ? 'Click to cycle: Pending → Complete → N/A' : 'Generate checklist first'}
+                    style={{
+                      width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+                      background: status === 'complete' ? '#6ab87a' : status === 'na' ? '#3a3a3a' : 'transparent',
+                      border: `2px solid ${sc.color}`,
+                      color: status === 'complete' ? '#fff' : sc.color,
+                      cursor: item ? 'pointer' : 'default',
+                      fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >{sc.icon}</button>
+
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12, color: status === 'complete' ? C.g : C.w, textDecoration: status === 'complete' ? 'line-through' : 'none', fontWeight: 600 }}>
+                      {t.item_name}
+                    </div>
+                    {dueDate && (
+                      <div style={{ fontSize: 10, color: isOverdue ? '#e07070' : C.g, marginTop: 2 }}>
+                        {isOverdue ? '⚠ Overdue — ' : 'Due '}
+                        {fmtDate(dueDate)}
+                        {t.due_days_from_hire && ` (${t.due_days_from_hire} days from hire)`}
+                      </div>
+                    )}
+                    {item?.completed_at && status === 'complete' && (
+                      <div style={{ fontSize: 10, color: '#6ab87a', marginTop: 2 }}>✓ Completed {fmtDate(item.completed_at.split('T')[0])}</div>
+                    )}
+                  </div>
+
+                  <span style={{ fontSize: 10, color: sc.color, fontWeight: 600, flexShrink: 0 }}>{sc.label}</span>
+                </div>
+              )
+            })}
+
+            {!hasItems && (
+              <div style={{ padding: '12px 14px', fontSize: 11, color: C.g, fontStyle: 'italic' }}>
+                No checklist generated yet — click Generate Checklist to create items from your template.
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <div style={{ marginTop: 20, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 500 }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Template is yours — add, remove, or deactivate any item. Click the circle to cycle status: Pending → Complete → N/A. Overdue items turn red. Generate a checklist per employee from your active template.
+      </div>
+    </div>
+  )
+}
+
 // ─── PAYROLL PAYMENTS TAB ────────────────────────────────────────────────
 // Wage garnishments, child support, tax levies, creditor orders
 // Each payment type links to a resource (SDU portal, court system, etc.)
@@ -1453,6 +1839,7 @@ function PayrollOrderModal({ order, orgId, C, onSave, onClose }) {
 }
 
 function PayrollPaymentsTab({ orgId, C }) {
+  const [payrollSubTab, setPayrollSubTab] = useState('orders')
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
@@ -1494,9 +1881,29 @@ function PayrollPaymentsTab({ orgId, C }) {
     }}>{label}</button>
   )
 
+  const subPill2 = (label, active, onClick) => (
+    <button onClick={onClick} style={{
+      background: active ? C.go : 'transparent',
+      border: `1px solid ${active ? C.go : C.bdrF}`,
+      color: active ? '#fff' : C.g,
+      padding: '4px 14px', borderRadius: 20, cursor: 'pointer',
+      fontSize: 11, fontWeight: 600, fontFamily: 'inherit',
+    }}>{label}</button>
+  )
+
   return (
     <div>
       {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
+
+      {/* Sub-tab bar */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
+        {subPill2('Payment Orders', payrollSubTab === 'orders', () => setPayrollSubTab('orders'))}
+        {subPill2('New Hire Checklist', payrollSubTab === 'checklist', () => setPayrollSubTab('checklist'))}
+      </div>
+
+      {payrollSubTab === 'checklist' && <NewHireChecklistTab orgId={orgId} C={C} />}
+
+      {payrollSubTab === 'orders' && <div>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
@@ -1600,6 +2007,7 @@ function PayrollPaymentsTab({ orgId, C }) {
       <div style={{ marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 500 }}>
         <strong style={{ color: C.go }}>Sidebar:</strong> Each order lives on its employee record. Portal button goes straight to the remittance site. Click any row to edit. Active orders total updates automatically.
       </div>
+      </div>}
     </div>
   )
 }

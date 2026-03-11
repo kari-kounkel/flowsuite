@@ -598,9 +598,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
 
   async function importCOA(csvText) {
     setCoaImporting(true)
-    const lines = csvText.split(/
-?
-/).filter(Boolean)
+    const lines = csvText.split(/\r?\n/).filter(Boolean)
     const rows = []
     for (const line of lines) {
       const cols = line.split(',')

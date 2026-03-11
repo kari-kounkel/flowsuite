@@ -569,26 +569,55 @@ function JETable({ lines, C, memo, journalNum, dateLabel }) {
 function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName, period, setPeriod }) {
   const [accountMap, setAccountMap] = useState([])      // rows from iif_account_map
   const [history, setHistory] = useState([])            // rows from iif_je_history
+  const [coaAccounts, setCoaAccounts] = useState([])   // rows from coa_accounts
   const [loadingMap, setLoadingMap] = useState(false)
   const [posting, setPosting] = useState(false)
   const [postMsg, setPostMsg] = useState(null)
   const [newMappings, setNewMappings] = useState({})    // { source_account: qbo_account } for inline adds
+  const [mapSearch, setMapSearch] = useState({})        // { source_account: search string } for dropdown filter
   const [showMapEditor, setShowMapEditor] = useState(false)
+  const [showCoaImport, setShowCoaImport] = useState(false)
+  const [coaImporting, setCoaImporting] = useState(false)
 
-  // Load account map + history for this org + period
+  // Load account map + history + COA for this org + period
   useEffect(() => {
     async function load() {
       setLoadingMap(true)
-      const [{ data: mapData }, { data: histData }] = await Promise.all([
+      const [{ data: mapData }, { data: histData }, { data: coaData }] = await Promise.all([
         supabase.from('iif_account_map').select('*').eq('org_id', orgId),
         supabase.from('iif_je_history').select('*').eq('org_id', orgId).eq('period', period),
+        supabase.from('coa_accounts').select('account_name,account_type').eq('org_id', orgId).order('account_name'),
       ])
       setAccountMap(mapData || [])
       setHistory(histData || [])
+      setCoaAccounts(coaData || [])
       setLoadingMap(false)
     }
     load()
   }, [orgId, period])
+
+  async function importCOA(csvText) {
+    setCoaImporting(true)
+    const lines = csvText.split(/
+?
+/).filter(Boolean)
+    const rows = []
+    for (const line of lines) {
+      const cols = line.split(',')
+      const name = cols[0]?.trim().replace(/^"|"$/g, '')
+      const type = cols[1]?.trim().replace(/^"|"$/g, '')
+      if (!name || name === 'Full name' || name === 'Account List' || name.startsWith('I A Z') || name === 'TOTAL') continue
+      rows.push({ org_id: orgId, account_name: name, account_type: type || '' })
+    }
+    if (rows.length) {
+      await supabase.from('coa_accounts').delete().eq('org_id', orgId)
+      await supabase.from('coa_accounts').insert(rows)
+      const { data } = await supabase.from('coa_accounts').select('account_name,account_type').eq('org_id', orgId).order('account_name')
+      setCoaAccounts(data || [])
+    }
+    setCoaImporting(false)
+    setShowCoaImport(false)
+  }
 
   function handleFileUpload(e) {
     const file = e.target.files[0]
@@ -727,19 +756,73 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           <div style={{ fontSize: 12, color: '#e07070', fontWeight: 700, marginBottom: 8 }}>
             ⚠ {unmappedAccounts.length} unmapped account{unmappedAccounts.length > 1 ? 's' : ''} — map them here to proceed
           </div>
-          {unmappedAccounts.map(src => (
-            <div key={src} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ fontSize: 11, color: '#e07070', fontFamily: "'DM Mono', monospace", minWidth: 260 }}>{src}</span>
-              <span style={{ fontSize: 11, color: C.g }}>→</span>
-              <input
-                placeholder="QBO account name"
-                value={newMappings[src] || ''}
-                onChange={e => setNewMappings(m => ({ ...m, [src]: e.target.value }))}
-                style={{ ...inputStyle, flex: 1 }}
-              />
-            </div>
-          ))}
-          <div style={{ fontSize: 10, color: C.g, marginTop: 6 }}>Mappings save to iif_account_map when you post.</div>
+          {unmappedAccounts.map(src => {
+            const search = mapSearch[src] || newMappings[src] || ''
+            const filtered = coaAccounts.filter(a =>
+              a.account_name.toLowerCase().includes(search.toLowerCase())
+            ).slice(0, 12)
+            const matched = coaAccounts.find(a => a.account_name === newMappings[src])
+            return (
+              <div key={src} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <span style={{ fontSize: 11, color: '#e07070', fontFamily: "'DM Mono', monospace", minWidth: 260, paddingTop: 6 }}>{src}</span>
+                  <span style={{ fontSize: 11, color: C.g, paddingTop: 6 }}>→</span>
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <input
+                      placeholder={coaAccounts.length ? 'Type to search QBO accounts…' : 'Type QBO account name (import COA for dropdown)'}
+                      value={matched ? newMappings[src] : search}
+                      onChange={e => {
+                        setMapSearch(m => ({ ...m, [src]: e.target.value }))
+                        setNewMappings(m => ({ ...m, [src]: '' }))
+                      }}
+                      style={{ ...inputStyle, width: '100%', boxSizing: 'border-box',
+                        border: matched ? '1px solid #4caf50' : undefined }}
+                    />
+                    {matched && (
+                      <span style={{ position: 'absolute', right: 8, top: 6, fontSize: 11, color: '#4caf50' }}>✓</span>
+                    )}
+                    {search && !matched && filtered.length > 0 && (
+                      <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                        background: '#1e2a3a', border: '1px solid #3a5070', borderRadius: '0 0 6px 6px',
+                        maxHeight: 200, overflowY: 'auto',
+                      }}>
+                        {filtered.map(a => (
+                          <div key={a.account_name}
+                            onClick={() => {
+                              setNewMappings(m => ({ ...m, [src]: a.account_name }))
+                              setMapSearch(m => ({ ...m, [src]: '' }))
+                            }}
+                            style={{
+                              padding: '6px 12px', cursor: 'pointer', fontSize: 11,
+                              color: '#cce', borderBottom: '1px solid #2a3a50',
+                              display: 'flex', justifyContent: 'space-between',
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#2a3a50'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                          >
+                            <span>{a.account_name}</span>
+                            <span style={{ color: '#7a9ab0', fontSize: 10 }}>{a.account_type}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {search && !matched && filtered.length === 0 && coaAccounts.length > 0 && (
+                      <div style={{
+                        position: 'absolute', top: '100%', left: 0, right: 0,
+                        background: '#1e2a3a', border: '1px solid #3a5070', borderRadius: '0 0 6px 6px',
+                        padding: '8px 12px', fontSize: 11, color: '#7a9ab0',
+                      }}>No matches — will save as typed</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+          <div style={{ fontSize: 10, color: C.g, marginTop: 6 }}>
+            Mappings save permanently to iif_account_map when you post.{' '}
+            {coaAccounts.length === 0 && <span style={{ color: C.go }}>Import your COA below for dropdown search.</span>}
+          </div>
         </div>
       )}
 
@@ -815,6 +898,37 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           )}
         </div>
       )}
+
+      {/* COA Import */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: C.g }}>
+            📋 COA: {coaAccounts.length} accounts loaded
+          </span>
+          <button
+            onClick={() => setShowCoaImport(v => !v)}
+            style={{ background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.go,
+              padding: '4px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}
+          >{showCoaImport ? '▲ Cancel' : coaAccounts.length ? '↻ Re-import COA' : '⬆ Import COA'}</button>
+        </div>
+        {showCoaImport && (
+          <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8, padding: 14 }}>
+            <div style={{ fontSize: 12, color: C.w, marginBottom: 8 }}>
+              Upload the Account List CSV exported from QBO. Re-import any time the COA changes.
+            </div>
+            <input type="file" accept=".csv"
+              onChange={async e => {
+                const file = e.target.files[0]
+                if (!file) return
+                const text = await file.text()
+                await importCOA(text)
+              }}
+              style={{ fontSize: 11, color: C.w }}
+            />
+            {coaImporting && <div style={{ fontSize: 11, color: C.go, marginTop: 8 }}>Importing…</div>}
+          </div>
+        )}
+      </div>
 
       <div style={{
         marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,

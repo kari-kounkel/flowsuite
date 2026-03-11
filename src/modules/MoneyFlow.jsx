@@ -2424,7 +2424,13 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
     if (!form.employee_name || !form.payment_type) return
     setSaving(true)
     setSaveError(null)
-    const payload = { ...form, org_id: orgId, amount_per_period: parseFloat(form.amount_per_period) || 0 }
+    const payload = {
+      ...form,
+      org_id: orgId,
+      amount_per_period: parseFloat(form.amount_per_period) || 0,
+      start_date: form.start_date || null,
+      end_date: form.end_date || null,
+    }
     let error
     if (isEdit) {
       ({ error } = await supabase.from('payroll_payment_orders').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', order.id))

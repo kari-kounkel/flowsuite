@@ -1385,9 +1385,14 @@ function NewHireChecklistTab({ orgId, C }) {
   useEffect(() => { load() }, [orgId])
 
   async function seedDefaults() {
+    if (!orgId) { alert('No org ID — cannot seed defaults.'); return }
     setSeeding(true)
     const rows = DEFAULT_CHECKLIST_ITEMS.map(d => ({ ...d, org_id: orgId, active: true }))
-    await supabase.from('payroll_checklist_templates').insert(rows)
+    const { error } = await supabase.from('payroll_checklist_templates').insert(rows)
+    if (error) {
+      console.error('seedDefaults error:', error)
+      alert('Seed failed: ' + error.message)
+    }
     setSeeding(false)
     load()
   }

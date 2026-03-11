@@ -6,6 +6,9 @@ const SUPABASE_URL = 'https://keegxjuckohhtxllqxak.supabase.co'
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+// ─── ACCESS CONTROL ──────────────────────────────────────────────────────────
+const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
+
 // ─── IIF PARSER ──────────────────────────────────────────────────────────────
 // Parses a raw IIF file string into transaction groups.
 // Reads column positions dynamically from !TRNS / !SPL header rows.
@@ -2381,7 +2384,7 @@ const BLANK_ORDER = {
   notes: '',
 }
 
-function PayrollOrderModal({ order, orgId, C, onSave, onClose }) {
+function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose }) {
   const isEdit = !!order?.id
   const [form, setForm] = useState(isEdit ? {
     employee_name: order.employee_name || '',
@@ -2453,8 +2456,14 @@ function PayrollOrderModal({ order, orgId, C, onSave, onClose }) {
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label style={lStyle}>Employee Name *</label>
-          <input value={form.employee_name} onChange={e => set('employee_name', e.target.value)} placeholder="Last, First" style={iStyle} />
+          <label style={lStyle}>Employee *</label>
+          <select value={form.employee_name} onChange={e => set('employee_name', e.target.value)} style={iStyle}>
+            <option value="">— Select employee —</option>
+            {employees.map(e => {
+              const name = `${e.last_name}, ${e.first_name}`
+              return <option key={e.id} value={name}>{name}</option>
+            })}
+          </select>
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
@@ -2538,7 +2547,7 @@ function PayrollOrderModal({ order, orgId, C, onSave, onClose }) {
   )
 }
 
-function PayrollPaymentsTab({ orgId, C }) {
+function PayrollPaymentsTab({ orgId, C, employees = [] }) {
   const [payrollSubTab, setPayrollSubTab] = useState('orders')
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -2593,7 +2602,7 @@ function PayrollPaymentsTab({ orgId, C }) {
 
   return (
     <div>
-      {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
+      {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} employees={employees} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
 
       {/* Sub-tab bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
@@ -3008,6 +3017,23 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [filterEntity, setFilterEntity] = useState('all')
   const [filterType, setFilterType] = useState('all')
   const [allResources, setAllResources] = useState([])
+  const [userEmail, setUserEmail] = useState('')
+  const [employees, setEmployees] = useState([])
+
+  const isAdmin = ADMIN_EMAILS.includes(userEmail.toLowerCase())
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.email) setUserEmail(data.user.email)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!orgId) return
+    supabase.from('employees').select('id,first_name,last_name').eq('org_id', orgId).order('last_name').then(({ data }) => {
+      setEmployees(data || [])
+    })
+  }, [orgId])
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
@@ -3256,7 +3282,25 @@ export default function MoneyFlowModule({ orgId, C }) {
       {tab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
 
       {/* ── PAYROLL PAYMENTS TAB ── */}
-      {tab === 'payroll' && <PayrollPaymentsTab orgId={orgId} C={C} />}
+      {tab === 'payroll' && (
+        <div style={{ position: 'relative' }}>
+          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} />
+          {!isAdmin && userEmail && (
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 10,
+              background: 'rgba(10,14,22,0.82)',
+              backdropFilter: 'blur(4px)',
+              borderRadius: 10,
+              display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 10,
+            }}>
+              <div style={{ fontSize: 28 }}>🔒</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.w }}>Admin Access Required</div>
+              <div style={{ fontSize: 11, color: C.g }}>Payroll payment orders are restricted to administrators.</div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

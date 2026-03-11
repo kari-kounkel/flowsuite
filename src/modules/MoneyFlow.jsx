@@ -2057,8 +2057,8 @@ function TemplateItemModal({ item, orgId, C, onSave, onClose }) {
 }
 
 // ─── WITHHOLDING PROCESSOR ────────────────────────────────────────────────────
-function WithholdingProcessorTab({ orgId, C }) {
-  const [orders, setOrders]       = useState([])   // active payment orders from DB
+function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResources = [] }) {
+  const [orders, setOrders]       = useState(propOrders || [])
   const [rows, setRows]           = useState([])   // parsed deduction rows from upload
   const [payPeriod, setPayPeriod] = useState('')
   const [payDate, setPayDate]     = useState('')
@@ -2066,8 +2066,9 @@ function WithholdingProcessorTab({ orgId, C }) {
   const [loading, setLoading]     = useState(true)
   const [parseError, setParseError] = useState(null)
 
-  // Load active payment orders
+  // Load active payment orders (skip if passed as prop)
   useEffect(() => {
+    if (propOrders !== null) { setLoading(false); return }
     supabase.from('payroll_payment_orders')
       .select('*').eq('org_id', orgId).eq('status', 'active').order('employee_name')
       .then(({ data }) => { setOrders(data || []); setLoading(false) })
@@ -2234,9 +2235,19 @@ function WithholdingProcessorTab({ orgId, C }) {
                       <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{order.destination}</div>
                     )}
                     {order?.destination_url && (
-                      <a href={order.destination_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: C.go }}>
+                      <a href={order.destination_url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: C.go, display: 'block', marginTop: 4 }}>
                         Pay online →
                       </a>
+                    )}
+                    {order && (order.resource_ids || []).length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                        {allResources.filter(res => (order.resource_ids || []).includes(res.id)).map(res => (
+                          <a key={res.id} href={res.url} target="_blank" rel="noreferrer"
+                            style={{ fontSize: 10, color: '#7ab0e0', textDecoration: 'none', border: '1px solid #7ab0e0', padding: '2px 8px', borderRadius: 4 }}>
+                            🔑 {res.label}
+                          </a>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </div>
@@ -2629,7 +2640,7 @@ const BLANK_ORDER = {
   notes: '',
 }
 
-function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose }) {
+function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [], onSave, onClose }) {
   const isEdit = !!order?.id
   const [form, setForm] = useState(isEdit ? {
     employee_name: order.employee_name || '',
@@ -2643,7 +2654,8 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
     end_date: order.end_date || '',
     status: order.status || 'active',
     notes: order.notes || '',
-  } : { ...BLANK_ORDER })
+    resource_ids: order.resource_ids || [],
+  } : { ...BLANK_ORDER, resource_ids: [] })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -2785,6 +2797,35 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
           <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Court info, account numbers, remittance instructions..." style={{ ...iStyle, resize: 'vertical', lineHeight: 1.5 }} />
         </div>
 
+        {allResources.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <label style={lStyle}>Linked Resources</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {allResources.map(r => {
+                const linked = (form.resource_ids || []).includes(r.id)
+                return (
+                  <button key={r.id}
+                    onClick={() => set('resource_ids', linked
+                      ? (form.resource_ids || []).filter(id => id !== r.id)
+                      : [...(form.resource_ids || []), r.id]
+                    )}
+                    style={{
+                      background: linked ? C.gD : 'transparent',
+                      border: `1px solid ${linked ? C.go : C.bdrF}`,
+                      color: linked ? C.go : C.g,
+                      borderRadius: 6, padding: '4px 10px',
+                      fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                    }}
+                  >{linked ? '✓ ' : ''}{r.label}</button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>
+              Linked resources appear as login buttons on the payment row.
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             {isEdit && (
@@ -2808,7 +2849,7 @@ function PayrollOrderModal({ order, orgId, C, employees = [], onSave, onClose })
   )
 }
 
-function PayrollPaymentsTab({ orgId, C, employees = [] }) {
+function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [] }) {
   const [payrollSubTab, setPayrollSubTab] = useState('orders')
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -2863,7 +2904,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [] }) {
 
   return (
     <div>
-      {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} employees={employees} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
+      {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} employees={employees} allResources={allResources} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
 
       {/* Sub-tab bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
@@ -2872,7 +2913,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [] }) {
         {subPill2('New Hire Checklist', payrollSubTab === 'checklist', () => setPayrollSubTab('checklist'))}
       </div>
 
-      {payrollSubTab === 'withholding' && <WithholdingProcessorTab orgId={orgId} C={C} />}
+      {payrollSubTab === 'withholding' && <WithholdingProcessorTab orgId={orgId} C={C} allResources={allResources} orders={orders} />}
       {payrollSubTab === 'checklist' && <NewHireChecklistTab orgId={orgId} C={C} />}
 
       {payrollSubTab === 'orders' && <div>
@@ -2948,6 +2989,13 @@ function PayrollPaymentsTab({ orgId, C, employees = [] }) {
                       🔗 Portal
                     </a>
                   )}
+                  {(o.resource_ids || []).length > 0 && allResources.filter(r => (o.resource_ids || []).includes(r.id)).map(r => (
+                    <a key={r.id} href={r.url} target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      style={{ display: 'inline-block', marginTop: 4, marginLeft: 4, fontSize: 10, color: '#7ab0e0', textDecoration: 'none', border: '1px solid #7ab0e0', padding: '2px 8px', borderRadius: 4 }}>
+                      🔑 {r.label}
+                    </a>
+                  ))}
                 </div>
               </div>
             )
@@ -3547,7 +3595,7 @@ export default function MoneyFlowModule({ orgId, C }) {
       {/* ── PAYROLL PAYMENTS TAB ── */}
       {tab === 'payroll' && (
         <div style={{ position: 'relative' }}>
-          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} />
+          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} allResources={allResources} />
           {!isAdmin && userEmail && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 10,

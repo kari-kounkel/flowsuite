@@ -350,8 +350,7 @@ ${h.companyName}`
     </style></head><body>
     <div class="letterhead">
       <div class="company">${header.companyName || '[Company Name]'}</div>
-      <div class="address">${(header.companyAddress || '').replace(/
-/g,'<br>')}</div>
+      <div class="address">${(header.companyAddress || '').split('\n').join('<br>')}</div>
     </div>
     <div>${header.date}</div>
     <div class="subject">Re: ${config.subject}</div>
@@ -1299,10 +1298,13 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
     <h2>Nature of Incident</h2>
     <div class="natures">${INCIDENT_NATURES.map(n=>`<span class="nature-tag ${natures.includes(n)?'checked':''}">${natures.includes(n)?'☑':'☐'} ${n}</span>`).join('')}</div>
     <h2>Specifics of Incident</h2>
-    <div class="field">${(r.specifics||r.description||'—').split('\n').join('<br>')}</div>
+    <div class="field">${(r.specifics||r.description||'—').split('
+').join('<br>')}</div>
     <h2>Current Disciplinary Action</h2>
-    <div class="field">${(r.current_action||'—').split('\n').join('<br>')}</div>
-    ${r.employee_comments?`<h2>Employee's Comments</h2><div class="field">${r.employee_comments.split('\n').join('<br>')}</div>`:''}
+    <div class="field">${(r.current_action||'—').split('
+').join('<br>')}</div>
+    ${r.employee_comments?`<h2>Employee's Comments</h2><div class="field">${r.employee_comments.split('
+').join('<br>')}</div>`:''}
     ${(()=>{ let atts=[]; try{atts=typeof r.attachments==='string'?JSON.parse(r.attachments):(r.attachments||[])}catch(e){} return atts.length>0?`<h2>Attachments (${atts.length})</h2><div class="field">${atts.map(a=>`<div>📎 ${a.name||'File'}</div>`).join('')}</div>`:'' })()}
     <h2>Future Action if Unsatisfactory Performance Recurs</h2>
     <div class="field">${r.future_action||'If Performance doesn\'t improve, it may result in further disciplinary action, up to and including termination of employment.'}</div>
@@ -2186,7 +2188,7 @@ const generateLayoffLetter = (s) => {
     • Any probationary periods (new-hire or conditional) are frozen and will resume upon recall.<br/>
     • Please file for unemployment benefits promptly. Your employer will not contest your claim.<br/>
     • Health insurance continuation information will be provided separately (COBRA/state continuation if applicable).<br/>
-    ${s.notes?'• '+s.notes.replace(/\n/g,'<br/>• ')+'<br/>':''}
+    ${s.notes?'• '+s.notes.split('\n').join('<br/> • ')+'<br/>':''}
   </div>
   <p>We value your contributions to our team and look forward to your return. If you have questions about your layoff status, benefits, or recall, please contact ${s.prepared_by || 'HR'}.</p>
   <p>The union has been notified of this action per the Collective Bargaining Agreement.</p>

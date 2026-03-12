@@ -3481,6 +3481,13 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
       </div>
       </div>}
     </div>
+
+    {letterModal && <LetterTemplateModal
+      letterType={letterModal.letterType}
+      record={letterModal.record}
+      defaults={{}}
+      onClose={() => setLetterModal(null)}
+    />}
   )
 }
 
@@ -3770,12 +3777,6 @@ function JEHistoryTab({ orgId, C }) {
       </div>
     </div>
 
-    {letterModal && <LetterTemplateModal
-      letterType={letterModal.letterType}
-      record={letterModal.record}
-      defaults={{}}
-      onClose={() => setLetterModal(null)}
-    />}
   )
 }
 

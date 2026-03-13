@@ -107,190 +107,7 @@ function advanceDueDate(dueDateStr, intervalDays) {
 }
 
 // ─── LETTER TEMPLATE MODAL (MoneyFlow) ────────────────────────────────────────
-function LetterTemplateModal({ letterType, record, defaults = {}, onClose }) {
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  const fmtD = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '_______________'
 
-  const LETTER_CONFIGS = {
-    garnishment: {
-      title: 'Notice of Wage Garnishment',
-      subject: 'Wage Garnishment — Court Order',
-      buildBody: (r, h) => `Dear ${r.employee_name || 'Employee'},
-
-This letter is to notify you that ${h.companyName} has received a court order requiring us to withhold a portion of your wages for the following obligation:
-
-Case / Order Number: ${r.case_number || '_______________'}
-Remit To: ${r.destination || '_______________'}
-Amount Per Pay Period: $${parseFloat(r.amount_per_period || 0).toFixed(2)}
-Frequency: ${r.frequency || 'Per payroll'}
-${r.balance_owed ? 'Total Balance Owed: $' + parseFloat(r.balance_owed).toFixed(2) : ''}
-Effective Date: ${fmtD(r.start_date)}
-${r.end_date ? 'End Date: ' + fmtD(r.end_date) : ''}
-
-As required by law, ${h.companyName} is obligated to comply with this court order. This withholding will begin on your next scheduled pay date and continue until the obligation is satisfied or the order is modified or released by the issuing court.
-
-Federal law limits the amount that can be garnished from your disposable earnings. You have the right to contact the issuing court if you believe this order was issued in error or if your circumstances have changed.
-
-If you have questions about this garnishment, please contact ${h.preparedBy || 'HR'} or the issuing court directly.
-
-Sincerely,
-
-${h.preparedBy || '_______________'}
-${h.companyName}`
-    },
-    child_support: {
-      title: 'Notice of Income Withholding for Child/Spousal Support',
-      subject: 'Child / Spousal Support Withholding',
-      buildBody: (r, h) => `Dear ${r.employee_name || 'Employee'},
-
-This letter is to notify you that ${h.companyName} has received an income withholding order requiring us to deduct child/spousal support from your wages.
-
-Case / Order Number: ${r.case_number || '_______________'}
-Remit To: ${r.destination || 'MN Child Support Payment Center'}
-Amount Per Pay Period: $${parseFloat(r.amount_per_period || 0).toFixed(2)}
-Frequency: ${r.frequency || 'Per payroll'}
-Effective Date: ${fmtD(r.start_date)}
-${r.end_date ? 'End Date: ' + fmtD(r.end_date) : ''}
-
-As required by state and federal law, ${h.companyName} is required to honor this income withholding order. Withholding will begin on your next scheduled pay date.
-
-Federal law (Title III of the Consumer Credit Protection Act) limits the maximum amount that may be withheld from your disposable earnings for support purposes. Your employer may not discharge you, discipline you, or otherwise discriminate against you because of this withholding order.
-
-If you believe this order was issued in error, or if you have questions about the underlying support obligation, please contact the issuing agency or your legal representative. For employer-related questions, contact ${h.preparedBy || 'HR'}.
-
-Sincerely,
-
-${h.preparedBy || '_______________'}
-${h.companyName}`
-    },
-  }
-
-  const config = LETTER_CONFIGS[letterType]
-  if (!config) return null
-
-  const [header, setHeader] = useState({
-    companyName: defaults.companyName || '',
-    companyAddress: defaults.companyAddress || '',
-    preparedBy: defaults.preparedBy || '',
-    date: today,
-  })
-  const [body, setBody] = useState(() => config.buildBody(record, {
-    companyName: defaults.companyName || '[Company Name]',
-    companyAddress: defaults.companyAddress || '',
-    preparedBy: defaults.preparedBy || '[Prepared By]',
-  }))
-  const [showPreview, setShowPreview] = useState(false)
-  const setH = (k, v) => setHeader(h => ({ ...h, [k]: v }))
-
-  const buildHtml = () => `<!DOCTYPE html><html><head>
-    <title>${config.title} — ${record.employee_name || ''}</title>
-    <style>
-      body{font-family:Arial,sans-serif;margin:60px;color:#111;font-size:13px;line-height:1.9;max-width:680px}
-      .company{font-size:16px;font-weight:bold;margin-bottom:2px}
-      .address{font-size:11px;color:#555;line-height:1.5;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #222}
-      .subject{font-weight:bold;margin:20px 0 4px}
-      .body{white-space:pre-wrap;line-height:1.9}
-      .footer{margin-top:50px;font-size:9px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px}
-      @media print{body{margin:40px}button{display:none}}
-    </style></head><body>
-    <div class="company">${header.companyName || '[Company Name]'}</div>
-    <div class="address">${(header.companyAddress || '').split('\n').join('<br>')}</div>
-    <div>${header.date}</div>
-    <div class="subject">Re: ${config.subject}</div>
-    <br/>
-    <div class="body">${body.split('<').join('&lt;').split('>').join('&gt;')}</div>
-    <div class="footer">Generated by FlowSuite — ${new Date().toLocaleString()}</div>
-    </body></html>`
-
-  const handlePrint = () => {
-    const win = window.open('', '_blank')
-    win.document.write(buildHtml())
-    win.document.close()
-    setTimeout(() => win.print(), 400)
-  }
-
-  const iS = {
-    width: '100%', background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)',
-    color: '#e2e8f0', borderRadius: 6, padding: '7px 10px',
-    fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box',
-  }
-  const lS = { fontSize: 10, color: '#94a3b8', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 16 }}>
-      <div style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 14, width: '100%', maxWidth: 700, maxHeight: '94vh', overflowY: 'auto', padding: 28, boxShadow: '0 12px 60px rgba(0,0,0,0.6)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-          <div>
-            <div style={{ fontSize: 10, color: '#C9A84C', textTransform: 'uppercase', letterSpacing: 2, marginBottom: 4 }}>Letter Generator</div>
-            <h3 style={{ margin: 0, color: '#e2e8f0', fontSize: 16, fontWeight: 700 }}>{config.title}</h3>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}>{record.employee_name || ''}</div>
-          </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: 20, cursor: 'pointer', flexShrink: 0 }}>✕</button>
-        </div>
-        <div style={{ background: 'rgba(201,168,76,0.06)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 8, padding: '14px 16px', marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#C9A84C', marginBottom: 12 }}>Letterhead</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div>
-              <label style={lS}>Company Name</label>
-              <input value={header.companyName} onChange={e => setH('companyName', e.target.value)} placeholder="Your Company Name" style={iS} />
-            </div>
-            <div>
-              <label style={lS}>Date</label>
-              <input value={header.date} onChange={e => setH('date', e.target.value)} style={iS} />
-            </div>
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={lS}>Company Address</label>
-              <textarea value={header.companyAddress} onChange={e => setH('companyAddress', e.target.value)} rows={2} placeholder="Street, City, State ZIP" style={{ ...iS, resize: 'vertical' }} />
-            </div>
-            <div>
-              <label style={lS}>Prepared By</label>
-              <input value={header.preparedBy} onChange={e => setH('preparedBy', e.target.value)} placeholder="HR Manager / Name" style={iS} />
-            </div>
-          </div>
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <label style={lS}>Letter Body — edit freely</label>
-            <button onClick={() => setShowPreview(v => !v)} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', padding: '3px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit' }}>
-              {showPreview ? '✏ Edit' : '👁 Preview'}
-            </button>
-          </div>
-          {showPreview ? (
-            <div style={{ background: '#fff', color: '#111', borderRadius: 8, padding: '24px 28px', fontSize: 13, lineHeight: 1.9, minHeight: 300, whiteSpace: 'pre-wrap', fontFamily: 'Arial, sans-serif' }}>
-              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 2 }}>{header.companyName}</div>
-              <div style={{ fontSize: 11, color: '#555', marginBottom: 16, whiteSpace: 'pre-wrap' }}>{header.companyAddress}</div>
-              <div style={{ marginBottom: 4 }}>{header.date}</div>
-              <div style={{ fontWeight: 700, marginBottom: 16 }}>Re: {config.subject}</div>
-              {body}
-            </div>
-          ) : (
-            <textarea value={body} onChange={e => setBody(e.target.value)} rows={18} style={{ ...iS, resize: 'vertical', lineHeight: 1.8 }} />
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', padding: '8px 18px', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>Cancel</button>
-          <button onClick={handlePrint} style={{ background: '#C9A84C', border: 'none', color: '#000', padding: '8px 22px', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }}>🖨 Print / Save as PDF</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
-// ─── PAYROLL TASK GENERATOR ───────────────────────────────────────────────────
-// Maps payment order frequency → recur_interval days and one-time flag
-const FREQ_MAP = {
-  'Per payroll':  { interval: 14, recurring: true  },
-  'Bi-weekly':    { interval: 14, recurring: true  },
-  'Weekly':       { interval: 7,  recurring: true  },
-  'Monthly':      { interval: 30, recurring: true  },
-  'One-time':     { interval: 0,  recurring: false },
-}
-// Payment types that are one-time / self-terminating
-const ONE_TIME_TYPES = ['Wage Garnishment', 'Cash Advance Repayment']
-
-// Roll up active orders by payment_type, merge resource_ids, sum amounts
-// Returns array of task-ready objects
 function rollupPaymentOrders(orders) {
   const buckets = {}
   for (const o of orders) {
@@ -3275,7 +3092,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
   const [editing, setEditing] = useState(null)
   const [filterStatus, setFilterStatus] = useState('active')
   const [filterType, setFilterType] = useState('all')
-  const [letterModal, setLetterModal] = useState(null) // { letterType, record }
 
   async function load() {
     setLoading(true)
@@ -3482,12 +3298,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
       </div>}
     </div>
 
-    {letterModal && <LetterTemplateModal
-      letterType={letterModal.letterType}
-      record={letterModal.record}
-      defaults={{}}
-      onClose={() => setLetterModal(null)}
-    />}
+
   )
 }
 

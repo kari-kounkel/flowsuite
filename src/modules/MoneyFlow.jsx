@@ -13,6 +13,18 @@ const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@m
 // Parses a raw IIF file string into transaction groups.
 // Reads column positions dynamically from !TRNS / !SPL header rows.
 // Returns: { transactions: [{trns, spls}], accounts: Set<string> }
+function parseIIFAmount(raw) {
+  // Handle multiple formats:
+  // Plain: -1442.44
+  // Accounting: " $(1,442.44)" or " $55,613.84 " or " $-   "
+  const s = (raw || '').replace(/"/g, '').replace(/\$/g, '').replace(/,/g, '').trim()
+  if (!s || s === '-' || s.match(/^-?\s*$/) || s === '$-') return 0
+  // Parentheses = negative: (1442.44) → -1442.44
+  const parens = s.match(/^\((.+)\)$/)
+  if (parens) return -(parseFloat(parens[1]) || 0)
+  return parseFloat(s) || 0
+}
+
 function parseIIF(raw) {
   // Normalize line endings
   const lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
@@ -36,7 +48,8 @@ function parseIIF(raw) {
     const cols = line.split('\t')
     const rowType = cols[0].trim().toUpperCase()
 
-    if (rowType === '!TRNS') { trnsColMap = colMap(cols); continue }
+    // Handle both "!TRNS" header and numeric variant (e.g. "11072	TRNSID	...")
+    if (rowType === '!TRNS' || (cols[1] && cols[1].trim().toUpperCase() === 'TRNSID')) { trnsColMap = colMap(cols); continue }
     if (rowType === '!SPL')  { splColMap  = colMap(cols); continue }
     if (rowType === '!ENDTRNS') continue
 
@@ -47,7 +60,7 @@ function parseIIF(raw) {
 
     if (rowType === 'TRNS') {
       const accnt  = pick(trnsColMap, cols, 'ACCNT')
-      const amount = parseFloat(pick(trnsColMap, cols, 'AMOUNT')) || 0
+      const amount = parseIIFAmount(pick(trnsColMap, cols, 'AMOUNT'))
       current = {
         trns: {
           trnstype: pick(trnsColMap, cols, 'TRNSTYPE'),
@@ -61,7 +74,7 @@ function parseIIF(raw) {
       if (accnt) accounts.add(accnt)
     } else if (rowType === 'SPL' && current) {
       const accnt  = pick(splColMap, cols, 'ACCNT')
-      const amount = parseFloat(pick(splColMap, cols, 'AMOUNT')) || 0
+      const amount = parseIIFAmount(pick(splColMap, cols, 'AMOUNT'))
       current.spls.push({
         trnstype: pick(splColMap, cols, 'TRNSTYPE'),
         date:     pick(splColMap, cols, 'DATE'),

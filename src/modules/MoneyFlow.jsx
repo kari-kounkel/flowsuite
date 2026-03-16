@@ -1061,7 +1061,11 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
         {parsedData && (
           <div style={{ fontSize: 10, color: C.g, alignSelf: 'flex-end', paddingBottom: 6 }}>
             {parsedData.transactions.length} txns · {parsedData.accounts.size} accounts
-            {uploadMode === 'periodend' && ` · ${history.filter(r => getPeriodEndMonths().includes(r.period) && (r.upload_mode==='weekly'||!r.upload_mode)).length} weekly lines in scope`}
+            {uploadMode === 'periodend' && (() => {
+              const wLines = history.filter(r => getPeriodEndMonths().includes(r.period) && (r.upload_mode==='weekly'||!r.upload_mode))
+              const wDR = wLines.filter(r => r.amount > 0).reduce((s,r)=>s+r.amount,0)
+              return ` · ${wLines.length} weekly lines · $${fmt(wDR)} DR posted`
+            })()}
           </div>
         )}
       </div>

@@ -706,7 +706,8 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
     if (uploadMode === 'weekly') {
       if (!period) return ''
       const [yr, mo] = period.split('-')
-      return `KK ${yr} ${mo} AR FLEX Weekly`
+      const range = getDateRangeLabel()
+      return range ? `KK ${yr} ${mo} AR FLEX Weekly · ${range}` : `KK ${yr} ${mo} AR FLEX Weekly · ${fileName}`
     }
     if (periodEndType === 'monthly') {
       const [yr, mo] = (period || '').split('-')
@@ -721,8 +722,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
   function getLineMemo() {
     const jeNum = getJENumber()
     if (uploadMode === 'weekly') {
-      const range = getDateRangeLabel()
-      return range ? `${jeNum} · ${range}` : jeNum
+      return jeNum  // JE number already contains the date range
     }
     if (periodEndType === 'monthly') {
       const [yr, mo] = (period || '').split('-')
@@ -912,12 +912,11 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
         }])
       }
 
-      // ── Create/update task card in moneyflow_tasks ──
+      // ── One task card per file — je_number is unique per upload ──
       const taskName = `${jeNumber} — Enter in QBO`
-      const taskDesc = `${clLabel}
-DR $${fmt(totalDr)} · ${historyRows.length} accounts`
+      const taskDesc = `DR $${fmt(totalDr)} · ${historyRows.length} accounts\nFile: ${fileName}`
       const { data: existingTask } = await supabase.from('moneyflow_tasks')
-        .select('id').eq('org_id', orgId).eq('name', taskName).eq('status', 'open').single()
+        .select('id').eq('org_id', orgId).eq('name', taskName).maybeSingle()
       if (!existingTask) {
         await supabase.from('moneyflow_tasks').insert([{
           org_id: orgId,

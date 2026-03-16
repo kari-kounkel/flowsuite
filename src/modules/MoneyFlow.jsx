@@ -3669,8 +3669,9 @@ export default function MoneyFlowModule({ orgId, C }) {
   }, [orgId])
 
   // On mount: sync payroll cards first, then load all tasks
+  // syncPayrollTasks is best-effort — loadTasks always runs regardless
   useEffect(() => {
-    syncPayrollTasks().then(() => loadTasks())
+    syncPayrollTasks().catch(e => console.warn('syncPayrollTasks failed:', e)).finally(() => loadTasks())
   }, [syncPayrollTasks, loadTasks])
 
   // ── TOGGLE DONE ──

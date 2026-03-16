@@ -1534,10 +1534,14 @@ function CloseChecklistTab({ orgId, C }) {
         const posted    = getLogEntry('recurring', t.id)
         const isUtil    = lines.filter(l => l.template_id === t.id).some(l => l.is_editable)
         const utilLines = lines.filter(l => l.template_id === t.id && l.is_editable)
-        const fixedAmt  = lines.filter(l => l.template_id === t.id && !l.is_editable && !l.is_total)
-          .reduce((s, l) => s + Math.abs(l.amount || 0), 0)
+        const fixedLines = lines.filter(l => l.template_id === t.id && !l.is_editable && !l.is_total)
+        const fixedDr   = fixedLines.filter(l => l.is_debit).reduce((s, l) => s + Math.abs(l.amount || 0), 0)
+        const fixedCr   = fixedLines.filter(l => !l.is_debit).reduce((s, l) => s + Math.abs(l.amount || 0), 0)
+        const fixedAmt  = fixedDr || fixedCr  // show whichever side has value (they should match)
         const utilAmt   = utilLines.reduce((s, l) => s + (parseFloat(utilAmounts[l.id]) || 0), 0)
-        const displayAmt = isUtil ? utilAmt : fixedAmt
+        const displayAmt = isUtil ? utilAmt : fixedDr  // show DR side (= CR side for balanced JE)
+        const displayDr = fixedDr
+        const displayCr = fixedCr
         const key = logKey('recurring', t.id)
         const isUtilOpen = utilOpen[t.id]
 
@@ -1557,7 +1561,13 @@ function CloseChecklistTab({ orgId, C }) {
                 {isUtil && !posted && utilAmt === 0 && (
                   <div style={{ fontSize: 10, color: '#e0a050', marginTop: 2 }}>⚠ Enter amounts below before posting</div>
                 )}
-                {displayAmt > 0 && (
+                {!isUtil && (displayDr > 0 || displayCr > 0) && (
+                  <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", display:'flex', gap:12 }}>
+                    {displayDr > 0 && <span>DR ${fmt(displayDr)}</span>}
+                    {displayCr > 0 && <span>CR ${fmt(displayCr)}</span>}
+                  </div>
+                )}
+                {isUtil && displayAmt > 0 && (
                   <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(displayAmt)}</div>
                 )}
               </div>

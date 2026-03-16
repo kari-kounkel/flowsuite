@@ -2048,34 +2048,448 @@ function CloseChecklistTab({ orgId, C }) {
 }
 
 // ─── AMORTIZATION TAB (placeholder) ──────────────────────────────────────────
-function AmortizationTab({ C }) {
+// ─── AMORTIZATION TAB ────────────────────────────────────────────────────────
+// Loan/lease schedule generator + combined monthly JE builder
+
+const AMORT_DEFAULTS = {
+  loan: {
+    principal_acct: 'Notes Payable',
+    interest_acct: 'Interest Expense',
+    cash_acct: 'Checking',
+  },
+  lease: {
+    principal_acct: 'Lease Liability',
+    interest_acct: 'Interest on Lease Liability',
+    cash_acct: 'ROU Asset Amortization',
+  },
+}
+
+function calcAmortSchedule({ principal, annualRate, termMonths, firstPaymentDate, paymentAmt }) {
+  const monthlyRate = annualRate / 100 / 12
+  const pmt = paymentAmt || (monthlyRate === 0
+    ? principal / termMonths
+    : principal * monthlyRate / (1 - Math.pow(1 + monthlyRate, -termMonths)))
+
+  const rows = []
+  let balance = principal
+  let date = new Date(firstPaymentDate + 'T00:00:00')
+
+  for (let i = 0; i < termMonths; i++) {
+    const interest = balance * monthlyRate
+    const principalPmt = Math.min(pmt - interest, balance)
+    balance = Math.max(0, balance - principalPmt)
+    const period = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    rows.push({
+      payment_num: i + 1,
+      period,
+      date: date.toISOString().split('T')[0],
+      payment: pmt,
+      interest: parseFloat(interest.toFixed(2)),
+      principal: parseFloat(principalPmt.toFixed(2)),
+      balance: parseFloat(balance.toFixed(2)),
+    })
+    date = new Date(date.getFullYear(), date.getMonth() + 1, date.getDate())
+  }
+  return rows
+}
+
+const BLANK_SCHEDULE = {
+  name: '', type: 'loan',
+  principal: '', annual_rate: '', term_months: '', first_payment_date: '', payment_amt: '',
+  principal_acct: '', interest_acct: '', cash_acct: '', notes: '',
+}
+
+function AmortizationTab({ orgId, C }) {
+  const [schedules, setSchedules] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [editingSched, setEditingSched] = useState(null)
+  const [form, setForm] = useState({ ...BLANK_SCHEDULE })
+  const [preview, setPreview] = useState(null)       // schedule rows for preview
+  const [expandedId, setExpandedId] = useState(null) // which schedule is expanded
+  const [jeMonth, setJeMonth] = useState(() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [jeDesc, setJeDesc] = useState('LOANS')
+  const [generatedJE, setGeneratedJE] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  useEffect(() => { loadSchedules() }, [orgId])
+
+  async function loadSchedules() {
+    setLoading(true)
+    const { data } = await supabase.from('amortization_schedules').select('*').eq('org_id', orgId).order('name')
+    setSchedules(data || [])
+    setLoading(false)
+  }
+
+  function openNew() {
+    setForm({ ...BLANK_SCHEDULE })
+    setPreview(null)
+    setEditingSched(null)
+    setShowForm(true)
+  }
+
+  function openEdit(s) {
+    setForm({
+      name: s.name, type: s.type,
+      principal: s.principal, annual_rate: s.annual_rate,
+      term_months: s.term_months, first_payment_date: s.first_payment_date,
+      payment_amt: s.payment_amt || '', notes: s.notes || '',
+      principal_acct: s.principal_acct || '', interest_acct: s.interest_acct || '',
+      cash_acct: s.cash_acct || '',
+    })
+    setPreview(null)
+    setEditingSched(s)
+    setShowForm(true)
+  }
+
+  function generatePreview() {
+    if (!form.principal || !form.term_months || !form.first_payment_date) return
+    const rows = calcAmortSchedule({
+      principal: parseFloat(form.principal),
+      annualRate: parseFloat(form.annual_rate) || 0,
+      termMonths: parseInt(form.term_months),
+      firstPaymentDate: form.first_payment_date,
+      paymentAmt: form.payment_amt ? parseFloat(form.payment_amt) : null,
+    })
+    setPreview(rows)
+  }
+
+  async function handleSave() {
+    if (!form.name.trim() || !form.principal || !form.term_months || !form.first_payment_date) return
+    setSaving(true)
+    const defaults = AMORT_DEFAULTS[form.type] || AMORT_DEFAULTS.loan
+    const payload = {
+      org_id: orgId,
+      name: form.name.trim(),
+      type: form.type,
+      principal: parseFloat(form.principal),
+      annual_rate: parseFloat(form.annual_rate) || 0,
+      term_months: parseInt(form.term_months),
+      first_payment_date: form.first_payment_date,
+      payment_amt: form.payment_amt ? parseFloat(form.payment_amt) : null,
+      principal_acct: form.principal_acct || defaults.principal_acct,
+      interest_acct: form.interest_acct || defaults.interest_acct,
+      cash_acct: form.cash_acct || defaults.cash_acct,
+      notes: form.notes || null,
+    }
+    if (editingSched) {
+      await supabase.from('amortization_schedules').update(payload).eq('id', editingSched.id)
+    } else {
+      await supabase.from('amortization_schedules').insert([payload])
+    }
+    setSaving(false)
+    setShowForm(false)
+    loadSchedules()
+  }
+
+  async function handleDelete(id) {
+    if (!confirm('Delete this schedule?')) return
+    await supabase.from('amortization_schedules').delete().eq('id', id)
+    setSchedules(s => s.filter(x => x.id !== id))
+  }
+
+  function buildCombinedJE() {
+    const [yr, mo] = jeMonth.split('-')
+    const lines = []
+    schedules.forEach(s => {
+      const rows = calcAmortSchedule({
+        principal: s.principal,
+        annualRate: s.annual_rate,
+        termMonths: s.term_months,
+        firstPaymentDate: s.first_payment_date,
+        paymentAmt: s.payment_amt,
+      })
+      const row = rows.find(r => r.period === jeMonth)
+      if (!row) return
+      const defaults = AMORT_DEFAULTS[s.type] || AMORT_DEFAULTS.loan
+      const pAcct = s.principal_acct || defaults.principal_acct
+      const iAcct = s.interest_acct || defaults.interest_acct
+      const cAcct = s.cash_acct || defaults.cash_acct
+      if (row.interest > 0) lines.push({ acct: iAcct, dr: true, amount: row.interest, memo: s.name })
+      if (row.principal > 0) lines.push({ acct: pAcct, dr: true, amount: row.principal, memo: s.name })
+      lines.push({ acct: cAcct, dr: false, amount: row.payment, memo: s.name })
+    })
+    if (!lines.length) return null
+    const totalDr = lines.filter(l => l.dr).reduce((s, l) => s + l.amount, 0)
+    const totalCr = lines.filter(l => !l.dr).reduce((s, l) => s + l.amount, 0)
+    return {
+      je_number: `KK ${yr} ${mo} AMORT ${jeDesc}`,
+      period: jeMonth,
+      lines,
+      totalDr,
+      totalCr,
+      balanced: Math.abs(totalDr - totalCr) < 0.01,
+    }
+  }
+
+  const inp = {
+    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    borderRadius: 6, padding: '6px 10px', fontSize: 11,
+    fontFamily: 'inherit', width: '100%', boxSizing: 'border-box',
+  }
+  const lbl = { fontSize: 10, color: C.g, display: 'block', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.8px' }
+
   return (
-    <div style={{ maxWidth: 560 }}>
-      <div style={{
-        background: C.bg2, border: `2px dashed ${C.bdr}`,
-        borderRadius: 12, padding: '40px 32px', textAlign: 'center',
-      }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: C.go, marginBottom: 8 }}>
-          Amortization Schedule Import
-        </div>
-        <div style={{ fontSize: 12, color: C.g, lineHeight: 1.6, marginBottom: 20 }}>
-          Drop your schedule here when it arrives.<br/>
-          This tab will parse loan schedules and generate<br/>
-          principal/interest split JEs for each payment period.
-        </div>
-        <div style={{
-          border: `2px dashed ${C.bdrF}`, borderRadius: 8,
-          padding: '20px 24px', color: C.g, fontSize: 11,
-        }}>
-          Upload zone coming soon — waiting on schedules
-        </div>
+    <div>
+      {/* ── Header ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: C.g }}>Loan and lease amortization schedules — generates combined monthly JE</div>
+        <button onClick={openNew} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>+ Add Schedule</button>
       </div>
-      <div style={{
-        marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
-        background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g,
-      }}>
-        <strong style={{ color: C.go }}>Sidebar:</strong> When the MEDA schedule lands, this tab will split every payment into principal vs. interest without you doing the math. It's waiting patiently.
+
+      {/* ── Schedule Form Modal ── */}
+      {showForm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowForm(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, borderRadius: 14, padding: 24, width: 520, maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.bdr}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: C.go, fontSize: 15 }}>{editingSched ? '✏️ Edit Schedule' : '+ New Schedule'}</h3>
+              <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: C.g, fontSize: 18, cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* Type toggle */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+              {['loan','lease'].map(t => (
+                <button key={t} onClick={() => set('type', t)} style={{
+                  padding: '5px 14px', borderRadius: 6, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                  background: form.type === t ? C.go : 'transparent',
+                  border: `1px solid ${form.type === t ? C.go : C.bdr}`,
+                  color: form.type === t ? '#000' : C.g, fontWeight: form.type === t ? 700 : 400,
+                }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+              <div style={{ gridColumn: '1/-1' }}>
+                <label style={lbl}>Schedule Name *</label>
+                <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. MEDA Loan" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Original Principal *</label>
+                <input type="number" value={form.principal} onChange={e => set('principal', e.target.value)} placeholder="e.g. 50000" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Annual Interest Rate (%)</label>
+                <input type="number" value={form.annual_rate} onChange={e => set('annual_rate', e.target.value)} placeholder="e.g. 5.25" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Term (months) *</label>
+                <input type="number" value={form.term_months} onChange={e => set('term_months', e.target.value)} placeholder="e.g. 60" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>First Payment Date *</label>
+                <input type="date" value={form.first_payment_date} onChange={e => set('first_payment_date', e.target.value)} style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Monthly Payment (leave blank to calculate)</label>
+                <input type="number" value={form.payment_amt} onChange={e => set('payment_amt', e.target.value)} placeholder="auto-calculated" style={inp} />
+              </div>
+            </div>
+
+            {/* Account overrides */}
+            <div style={{ marginBottom: 12, padding: '10px 12px', background: C.bg, borderRadius: 8, border: `1px solid ${C.bdrF}` }}>
+              <div style={{ fontSize: 10, color: C.go, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase' }}>Account Names (defaults shown)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {[
+                  ['principal_acct', form.type === 'lease' ? 'Lease Liability' : 'Notes Payable', 'Principal Acct'],
+                  ['interest_acct', form.type === 'lease' ? 'Interest on Lease Liability' : 'Interest Expense', 'Interest Acct'],
+                  ['cash_acct', form.type === 'lease' ? 'ROU Asset Amortization' : 'Checking', 'Cash / CR Acct'],
+                ].map(([key, placeholder, label]) => (
+                  <div key={key}>
+                    <label style={lbl}>{label}</label>
+                    <input value={form[key]} onChange={e => set(key, e.target.value)} placeholder={placeholder} style={{ ...inp, fontSize: 10 }} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Notes</label>
+              <input value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Lender, account #, etc." style={inp} />
+            </div>
+
+            {/* Preview button */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: preview ? 16 : 0 }}>
+              <button onClick={generatePreview} style={{ background: 'transparent', border: `1px solid ${C.go}`, color: C.go, borderRadius: 6, padding: '6px 14px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>
+                👁 Preview Schedule
+              </button>
+              <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.principal || !form.term_months || !form.first_payment_date} style={{
+                background: C.go, border: 'none', color: '#000', borderRadius: 6, padding: '6px 20px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                opacity: (!form.name.trim() || !form.principal) ? 0.5 : 1,
+              }}>{saving ? 'Saving…' : 'Save Schedule'}</button>
+            </div>
+
+            {/* Preview table */}
+            {preview && (
+              <div style={{ marginTop: 12, maxHeight: 260, overflowY: 'auto', borderRadius: 8, border: `1px solid ${C.bdr}` }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, fontFamily: "'DM Mono', monospace" }}>
+                  <thead style={{ position: 'sticky', top: 0, background: C.bg2 }}>
+                    <tr>
+                      {['#','Period','Payment','Interest','Principal','Balance'].map(h => (
+                        <th key={h} style={{ padding: '6px 8px', textAlign: 'right', color: C.g, fontWeight: 600, borderBottom: `1px solid ${C.bdr}` }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.map((row, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? C.bg : 'transparent' }}>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: C.g }}>{row.payment_num}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: C.w }}>{row.period}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: C.go }}>{fmt(row.payment)}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: '#e07070' }}>{fmt(row.interest)}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: '#6ab87a' }}>{fmt(row.principal)}</td>
+                        <td style={{ padding: '4px 8px', textAlign: 'right', color: C.w }}>{fmt(row.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Saved Schedules ── */}
+      {loading && <p style={{ color: C.g, fontSize: 12 }}>Loading…</p>}
+      {!loading && schedules.length === 0 && (
+        <div style={{ color: C.g, fontSize: 12, padding: 20, textAlign: 'center' }}>No schedules yet. Add your loans and leases above.</div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12, marginBottom: 24 }}>
+        {schedules.map(s => {
+          const rows = calcAmortSchedule({ principal: s.principal, annualRate: s.annual_rate, termMonths: s.term_months, firstPaymentDate: s.first_payment_date, paymentAmt: s.payment_amt })
+          const thisMonth = rows.find(r => r.period === jeMonth)
+          const isExpanded = expandedId === s.id
+          return (
+            <div key={s.id} style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.go }}>{s.name}</div>
+                    <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>
+                      <span style={{ background: s.type === 'lease' ? '#7D3C98' : '#2D5A8E', color: '#fff', borderRadius: 4, padding: '1px 6px', marginRight: 6, fontSize: 9 }}>{s.type.toUpperCase()}</span>
+                      {s.annual_rate}% · {s.term_months}mo · ${fmt(s.principal)} original
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => openEdit(s)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 12 }}>✏️</button>
+                    <button onClick={() => handleDelete(s.id)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 12 }}>🗑</button>
+                  </div>
+                </div>
+                {thisMonth && (
+                  <div style={{ display: 'flex', gap: 12, fontSize: 11, fontFamily: "'DM Mono', monospace", marginTop: 6 }}>
+                    <span style={{ color: C.g }}>This month:</span>
+                    <span style={{ color: '#e07070' }}>INT ${fmt(thisMonth.interest)}</span>
+                    <span style={{ color: '#6ab87a' }}>PRIN ${fmt(thisMonth.principal)}</span>
+                    <span style={{ color: C.go }}>BAL ${fmt(thisMonth.balance)}</span>
+                  </div>
+                )}
+                {!thisMonth && <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>No payment for {jeMonth}</div>}
+              </div>
+              <div style={{ borderTop: `1px solid ${C.bdrF}` }}>
+                <button onClick={() => setExpandedId(isExpanded ? null : s.id)} style={{
+                  width: '100%', background: 'transparent', border: 'none', color: C.g,
+                  padding: '6px 14px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                }}>{isExpanded ? '▲ Hide schedule' : '▶ View full schedule'}</button>
+                {isExpanded && (
+                  <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, fontFamily: "'DM Mono', monospace" }}>
+                      <thead>
+                        <tr style={{ background: C.bg }}>
+                          {['Period','Payment','Interest','Principal','Balance'].map(h => (
+                            <th key={h} style={{ padding: '4px 8px', textAlign: 'right', color: C.g, fontWeight: 600 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, i) => (
+                          <tr key={i} style={{ borderTop: `1px solid ${C.bdrF}`, background: row.period === jeMonth ? `${C.go}22` : 'transparent' }}>
+                            <td style={{ padding: '3px 8px', color: row.period === jeMonth ? C.go : C.w, fontWeight: row.period === jeMonth ? 700 : 400 }}>{row.period}</td>
+                            <td style={{ padding: '3px 8px', textAlign: 'right', color: C.go }}>{fmt(row.payment)}</td>
+                            <td style={{ padding: '3px 8px', textAlign: 'right', color: '#e07070' }}>{fmt(row.interest)}</td>
+                            <td style={{ padding: '3px 8px', textAlign: 'right', color: '#6ab87a' }}>{fmt(row.principal)}</td>
+                            <td style={{ padding: '3px 8px', textAlign: 'right', color: C.w }}>{fmt(row.balance)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* ── Combined JE Generator ── */}
+      {schedules.length > 0 && (
+        <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 12, padding: '16px 20px' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.go, marginBottom: 12 }}>📋 Generate Combined Monthly JE</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
+            <div>
+              <label style={lbl}>Period</label>
+              <input type="month" value={jeMonth} onChange={e => setJeMonth(e.target.value)} style={{ ...inp, width: 150 }} />
+            </div>
+            <div>
+              <label style={lbl}>JE Description</label>
+              <input value={jeDesc} onChange={e => setJeDesc(e.target.value)} placeholder="LOANS" style={{ ...inp, width: 120 }} />
+            </div>
+            <button onClick={() => setGeneratedJE(buildCombinedJE())} style={{
+              background: C.go, border: 'none', color: '#000', borderRadius: 6,
+              padding: '7px 20px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Generate JE</button>
+          </div>
+
+          {generatedJE && (
+            <div>
+              <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: C.go, marginBottom: 8 }}>
+                <b>{generatedJE.je_number}</b>
+                <span style={{ marginLeft: 12, color: generatedJE.balanced ? '#6ab87a' : '#e07070', fontSize: 10 }}>
+                  {generatedJE.balanced ? '✓ Balanced' : '⚠ Unbalanced'}
+                  {' '} DR ${fmt(generatedJE.totalDr)} · CR ${fmt(generatedJE.totalCr)}
+                </span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace", marginBottom: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', fontWeight: 600 }}>Account</th>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', fontWeight: 600 }}>Schedule</th>
+                    <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 100 }}>Debit</th>
+                    <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 100 }}>Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generatedJE.lines.map((l, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${C.bdrF}` }}>
+                      <td style={{ padding: '4px 0', color: C.w }}>{l.acct}</td>
+                      <td style={{ padding: '4px 0', color: C.g, fontSize: 10 }}>{l.memo}</td>
+                      <td style={{ padding: '4px 0', textAlign: 'right', color: '#6ab87a' }}>{l.dr ? fmt(l.amount) : ''}</td>
+                      <td style={{ padding: '4px 0', textAlign: 'right', color: '#e07070' }}>{!l.dr ? fmt(l.amount) : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: `1px solid ${C.bdr}` }}>
+                    <td colSpan={2} style={{ color: C.g, fontSize: 10, padding: '4px 0' }}>TOTALS</td>
+                    <td style={{ textAlign: 'right', color: '#6ab87a', fontWeight: 700, padding: '4px 0' }}>${fmt(generatedJE.totalDr)}</td>
+                    <td style={{ textAlign: 'right', color: '#e07070', fontWeight: 700, padding: '4px 0' }}>${fmt(generatedJE.totalCr)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <div style={{ fontSize: 10, color: C.g, fontStyle: 'italic' }}>
+                Enter this JE in QBO for {generatedJE.period} — one entry with {generatedJE.lines.length} lines covering all active schedules.
+              </div>
+            </div>
+          )}
+          {generatedJE && generatedJE.lines.length === 0 && (
+            <div style={{ fontSize: 11, color: C.g }}>No active payments found for {jeMonth}. Check your schedule dates.</div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g }}>
+        <strong style={{ color: C.go }}>Sidebar:</strong> Add each loan and lease once. FlowSuite calculates every payment split automatically. Generate the combined JE at month-end — one entry, all lines, no math.
       </div>
     </div>
   )
@@ -4110,7 +4524,7 @@ export default function MoneyFlowModule({ orgId, C }) {
             />
           )}
           {jeSubTab === 'recurring' && <RecurringJETab orgId={orgId} C={C} />}
-          {jeSubTab === 'amort' && <AmortizationTab C={C} />}
+          {jeSubTab === 'amort' && <AmortizationTab orgId={orgId} C={C} />}
         </div>
       )}
 

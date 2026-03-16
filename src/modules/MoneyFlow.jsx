@@ -219,7 +219,7 @@ const BLANK_FORM = {
   docs: '',
   status: 'open',
   is_recurring: false,
-  recur_interval: 30,
+  recur_interval: 7,
   resource_ids: [],
 }
 
@@ -401,7 +401,7 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
                 <input
                   type="number"
                   value={form.recur_interval}
-                  onChange={e => set('recur_interval', parseInt(e.target.value) || 30)}
+                  onChange={e => set('recur_interval', Math.max(1, parseInt(e.target.value) || 7))}
                   min={1}
                   style={inputStyle}
                 />
@@ -544,8 +544,8 @@ function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
               fontSize: 13, fontWeight: 600, color: C.w,
               lineHeight: 1.3, flex: 1,
             }}>{task.name}</div>
-            <div style={{ fontSize: 10, color: C.g, fontFamily: "'DM Mono', monospace" }}>
-              Due {task.due_date}
+            <div style={{ fontSize: 10, color: task._justAdvanced ? '#6ab87a' : C.g, fontFamily: "'DM Mono', monospace", transition: 'color 0.3s' }}>
+              {task._justAdvanced ? '✓ Advanced → ' : 'Due '}{task.due_date}
               {task.is_recurring && <span style={{ marginLeft: 5, color: C.go, fontSize: 9 }}>↻</span>}
             </div>
             <div style={{ fontSize: 9, color: C.g, opacity: 0.6 }}>tap to flip →</div>
@@ -4339,27 +4339,40 @@ export default function MoneyFlowModule({ orgId, C }) {
     const isDone = task.status === 'done'
 
     if (!isDone && task.is_recurring && task.recur_interval > 0) {
-      // Advance the date, keep open
+      // Advance the date, keep open — update state immediately for visual feedback
       const newDate = advanceDueDate(task.due_date, task.recur_interval)
+      // Optimistic update first so card shows new date immediately
+      setTasks(ts => ts.map(t =>
+        t.id === task.id ? { ...t, due_date: newDate, _justAdvanced: true } : t
+      ))
       const { error: err } = await supabase
         .from('moneyflow_tasks')
         .update({ due_date: newDate, updated_at: new Date().toISOString() })
         .eq('id', task.id)
-      if (!err) {
+      if (err) {
+        // Revert on error
         setTasks(ts => ts.map(t =>
-          t.id === task.id ? { ...t, due_date: newDate } : t
+          t.id === task.id ? { ...t, due_date: task.due_date, _justAdvanced: false } : t
         ))
       }
+      // Clear the flash after 2 seconds
+      setTimeout(() => setTasks(ts => ts.map(t =>
+        t.id === task.id ? { ...t, _justAdvanced: false } : t
+      )), 2000)
     } else {
-      // Toggle status
+      // Toggle status — optimistic update
       const newStatus = isDone ? 'open' : 'done'
+      setTasks(ts => ts.map(t =>
+        t.id === task.id ? { ...t, status: newStatus } : t
+      ))
       const { error: err } = await supabase
         .from('moneyflow_tasks')
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', task.id)
-      if (!err) {
+      if (err) {
+        // Revert on error
         setTasks(ts => ts.map(t =>
-          t.id === task.id ? { ...t, status: newStatus } : t
+          t.id === task.id ? { ...t, status: task.status } : t
         ))
       }
     }

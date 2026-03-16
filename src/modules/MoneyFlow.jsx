@@ -951,21 +951,36 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
             dateLabel={`Delta vs. prior postings · Period ${period}`}
             memo={`IIF import · ${fileName} · org ${orgId} · ${period}`}
           />
-          <div style={{ marginTop: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button
-              onClick={handlePost}
-              disabled={hasUnmapped || posting}
-              style={{
-                background: hasUnmapped ? C.bdr : C.go, border: 'none', color: '#fff',
-                padding: '8px 24px', borderRadius: 7, cursor: hasUnmapped ? 'not-allowed' : 'pointer',
-                fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
-                opacity: hasUnmapped ? 0.5 : 1,
-              }}
-            >{posting ? 'Posting…' : 'Post to History'}</button>
-            {postMsg && (
-              <span style={{ fontSize: 11, color: postMsg.ok ? '#6ab87a' : '#e07070' }}>
-                {postMsg.ok ? '✓' : '⚠'} {postMsg.msg}
-              </span>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => handlePost(false)}
+                disabled={hasUnmapped || posting}
+                style={{
+                  background: hasUnmapped ? C.bdr : C.go, border: 'none', color: '#fff',
+                  padding: '8px 24px', borderRadius: 7, cursor: hasUnmapped ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+                  opacity: hasUnmapped ? 0.5 : 1,
+                }}
+              >{posting ? 'Posting…' : 'Post to History'}</button>
+              {postMsg && !postMsg.imbalance && (
+                <span style={{ fontSize: 11, color: postMsg.ok ? '#6ab87a' : '#e07070' }}>
+                  {postMsg.ok ? '✓' : '⚠'} {postMsg.msg}
+                </span>
+              )}
+            </div>
+            {postMsg && postMsg.imbalance && (
+              <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 6, background: '#3a1a1a', border: '1px solid #f87171' }}>
+                <div style={{ fontSize: 11, color: '#f87171', marginBottom: 8 }}>⚠ {postMsg.msg}</div>
+                <button onClick={() => handlePost(true)} disabled={posting} style={{
+                  background: '#7c3aed', border: 'none', color: '#fff',
+                  borderRadius: 6, padding: '6px 16px', fontSize: 11,
+                  cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
+                }}>⚠ Force Post Anyway</button>
+                <span style={{ marginLeft: 10, fontSize: 10, color: '#f87171' }}>
+                  Use only if the source file has a known rounding or split difference
+                </span>
+              </div>
             )}
           </div>
         </>

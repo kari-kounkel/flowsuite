@@ -659,17 +659,80 @@ function JETable({ lines, C, memo, journalNum, dateLabel }) {
 
 // ─── IIF FACTORY TAB ─────────────────────────────────────────────────────────
 function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName, period, setPeriod }) {
-  const [accountMap, setAccountMap] = useState([])      // rows from iif_account_map
-  const [history, setHistory] = useState([])            // rows from iif_je_history
-  const [coaAccounts, setCoaAccounts] = useState([])   // rows from coa_accounts
+  const [accountMap, setAccountMap] = useState([])
+  const [history, setHistory] = useState([])
+  const [coaAccounts, setCoaAccounts] = useState([])
   const [loadingMap, setLoadingMap] = useState(false)
   const [posting, setPosting] = useState(false)
   const [postMsg, setPostMsg] = useState(null)
-  const [newMappings, setNewMappings] = useState({})    // { source_account: qbo_account } for inline adds
-  const [mapSearch, setMapSearch] = useState({})        // { source_account: search string } for dropdown filter
+  const [newMappings, setNewMappings] = useState({})
+  const [mapSearch, setMapSearch] = useState({})
   const [showMapEditor, setShowMapEditor] = useState(false)
   const [showCoaImport, setShowCoaImport] = useState(false)
   const [coaImporting, setCoaImporting] = useState(false)
+
+  // ── Upload mode: weekly straight post vs period-end true-up ──
+  const [uploadMode, setUploadMode] = useState('weekly') // 'weekly' | 'periodend'
+  const [periodEndType, setPeriodEndType] = useState('monthly') // 'monthly' | 'quarterly' | 'annual'
+  const [periodEndQuarter, setPeriodEndQuarter] = useState('Q4')
+  const [periodEndYear, setPeriodEndYear] = useState(new Date().getFullYear().toString())
+
+  // Derive date range label from filename e.g. "UpTown_2025-Oct-05_to_2025-Oct-11.IIF" → "Oct 5–11"
+  function getDateRangeLabel() {
+    if (!fileName) return ''
+    const m = fileName.match(/(\d{4}-[A-Za-z]{3}-\d{2})_to_(\d{4}-[A-Za-z]{3}-\d{2})/i)
+    if (!m) return ''
+    const parseDate = s => { const p = s.split('-'); return { mon: p[1], day: parseInt(p[2]) } }
+    const s = parseDate(m[1]); const e = parseDate(m[2])
+    return `${s.mon} ${s.day}–${e.day}`
+  }
+
+  // Get all period months covered by the period-end selection
+  function getPeriodEndMonths() {
+    if (periodEndType === 'monthly') return [period] // e.g. ['2025-10']
+    if (periodEndType === 'quarterly') {
+      const yr = periodEndYear
+      const qMap = { Q1:['01','02','03'], Q2:['04','05','06'], Q3:['07','08','09'], Q4:['10','11','12'] }
+      return (qMap[periodEndQuarter] || []).map(m => `${yr}-${m}`)
+    }
+    if (periodEndType === 'annual') {
+      return Array.from({length:12},(_,i)=>`${periodEndYear}-${String(i+1).padStart(2,'0')}`)
+    }
+    return [period]
+  }
+
+  // Build JE number: KK YYYY MM AR FLEX Weekly / KK YYYY Q4 AR FLEX Quarterly / etc
+  function getJENumber() {
+    if (uploadMode === 'weekly') {
+      if (!period) return ''
+      const [yr, mo] = period.split('-')
+      return `KK ${yr} ${mo} AR FLEX Weekly`
+    }
+    if (periodEndType === 'monthly') {
+      const [yr, mo] = (period || '').split('-')
+      return `KK ${yr} ${mo} AR FLEX Monthly`
+    }
+    if (periodEndType === 'quarterly') return `KK ${periodEndYear} ${periodEndQuarter} AR FLEX Quarterly`
+    if (periodEndType === 'annual') return `KK ${periodEndYear} AR FLEX Annual`
+    return ''
+  }
+
+  // Build the auto-generated note/memo
+  function getLineMemo() {
+    const jeNum = getJENumber()
+    if (uploadMode === 'weekly') {
+      const range = getDateRangeLabel()
+      return range ? `${jeNum} · ${range}` : jeNum
+    }
+    if (periodEndType === 'monthly') {
+      const [yr, mo] = (period || '').split('-')
+      const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][parseInt(mo)-1] || ''
+      return `${jeNum} · ${monthName} ${yr}`
+    }
+    if (periodEndType === 'quarterly') return `${jeNum} · ${periodEndQuarter} ${periodEndYear}`
+    if (periodEndType === 'annual') return `${jeNum} · Full Year ${periodEndYear}`
+    return jeNum
+  }
 
   // Load account map + history + COA for this org + period
   useEffect(() => {
@@ -677,7 +740,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       setLoadingMap(true)
       const [{ data: mapData }, { data: histData }, { data: coaData }] = await Promise.all([
         supabase.from('iif_account_map').select('*').eq('org_id', orgId),
-        supabase.from('iif_je_history').select('*').eq('org_id', orgId).eq('period', period),
+        supabase.from('iif_je_history').select('*').eq('org_id', orgId),  // load all — period-end needs cross-period history
         supabase.from('coa_accounts').select('account_name,account_type').eq('org_id', orgId).order('account_name'),
       ])
       setAccountMap(mapData || [])
@@ -723,16 +786,15 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
     reader.readAsText(file)
   }
 
-  // Build JE lines from parsed IIF, applying account map + delta calc
-  // IIF convention: TRNS amount is positive (DR), SPL amounts are negative (CR)
-  // We track debit totals and credit totals separately per account
+  // Build JE lines from parsed IIF
+  // Weekly: straight post — full amounts, no delta
+  // Period-end: delta against all weekly posts for the covered period(s)
   function buildJELines() {
     if (!parsedData) return []
     const mapLookup = {}
     accountMap.forEach(r => { mapLookup[r.source_account] = r.qbo_account })
     Object.entries(newMappings).forEach(([src, qbo]) => { if (qbo.trim()) mapLookup[src] = qbo.trim() })
 
-    // Sum raw IIF amounts per account (preserving sign: DR positive, CR negative)
     const rawTotals = {}
     parsedData.transactions.forEach(tx => {
       const a = tx.trns.accnt
@@ -742,27 +804,46 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       })
     })
 
-    // Subtract already-posted signed amounts for same org+period
-    const postedTotals = {}
-    history.forEach(r => {
-      postedTotals[r.source_account] = (postedTotals[r.source_account] || 0) + r.amount
-    })
-
     const lines = []
-    Object.entries(rawTotals).forEach(([srcAcct, rawAmt]) => {
-      if (Math.abs(rawAmt) < 0.005) return  // skip zero-amount accounts
-      const delta = rawAmt - (postedTotals[srcAcct] || 0)
-      if (Math.abs(delta) < 0.005) return   // already fully posted
-      const qboAcct = mapLookup[srcAcct]
-      lines.push({
-        source_account: srcAcct,
-        acct: qboAcct || srcAcct,
-        name: qboAcct || srcAcct,
-        dr: delta > 0,
-        amount: Math.abs(delta),
-        unmapped: !qboAcct,
+
+    if (uploadMode === 'weekly') {
+      // Straight post — no delta at all
+      Object.entries(rawTotals).forEach(([srcAcct, rawAmt]) => {
+        if (Math.abs(rawAmt) < 0.005) return
+        const qboAcct = mapLookup[srcAcct]
+        lines.push({
+          source_account: srcAcct,
+          acct: qboAcct || srcAcct,
+          name: qboAcct || srcAcct,
+          dr: rawAmt > 0,
+          amount: Math.abs(rawAmt),
+          unmapped: !qboAcct,
+        })
       })
-    })
+    } else {
+      // Period-end true-up — delta against weekly posts covering the selected period(s)
+      const coveredPeriods = new Set(getPeriodEndMonths())
+      const postedTotals = {}
+      history.filter(r => coveredPeriods.has(r.period) && (r.upload_mode === 'weekly' || !r.upload_mode)).forEach(r => {
+        postedTotals[r.source_account] = (postedTotals[r.source_account] || 0) + r.amount
+      })
+      const allAccounts = new Set([...Object.keys(rawTotals), ...Object.keys(postedTotals)])
+      allAccounts.forEach(srcAcct => {
+        const rawAmt = rawTotals[srcAcct] || 0
+        const posted = postedTotals[srcAcct] || 0
+        const delta = rawAmt - posted
+        if (Math.abs(delta) < 0.005) return
+        const qboAcct = mapLookup[srcAcct]
+        lines.push({
+          source_account: srcAcct,
+          acct: qboAcct || srcAcct,
+          name: qboAcct || srcAcct,
+          dr: delta > 0,
+          amount: Math.abs(delta),
+          unmapped: !qboAcct,
+        })
+      })
+    }
     return lines
   }
 
@@ -792,34 +873,42 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       await supabase.from('iif_account_map').upsert(newMapRows, { onConflict: 'org_id,source_account' })
     }
 
+    const jeNumber = getJENumber()
+    const lineMemo = getLineMemo()
+    const postPeriod = uploadMode === 'weekly' ? period : (periodEndType === 'monthly' ? period : getPeriodEndMonths()[getPeriodEndMonths().length - 1])
+
     // Insert history rows
     const historyRows = jeLines.map(l => ({
       org_id: orgId,
-      period,
+      period: postPeriod,
       source_account: l.source_account,
       qbo_account: l.acct,
       amount: l.dr ? l.amount : -l.amount,
       file_name: fileName,
+      upload_mode: uploadMode,
+      je_number: jeNumber,
+      memo: lineMemo,
       posted_at: new Date().toISOString(),
     }))
     const { error } = await supabase.from('iif_je_history').insert(historyRows)
     if (error) {
       setPostMsg({ ok: false, msg: error.message })
     } else {
-      // ── Write unposted entry to close checklist for this period ──
+      // ── Write entry to close checklist ──
+      const clLabel = `${jeNumber}${getDateRangeLabel() ? ' · ' + getDateRangeLabel() : ''}`
       await supabase.from('moneyflow_close_log').upsert([{
         org_id: orgId,
-        period,
+        period: postPeriod,
         entry_type: 'iif',
         template_id: null,
-        label: `AR/Sales IIF — ${fileName || period}`,
+        label: clLabel,
         amount: totalDr,
         source: 'iif',
         posted_at: null,
       }], { onConflict: 'org_id,period,source,label' })
 
-      setPostMsg({ ok: true, msg: `Posted ${historyRows.length} lines to history for ${period}. Entry added to Close Checklist.` })
-      const { data: newHist } = await supabase.from('iif_je_history').select('*').eq('org_id', orgId).eq('period', period)
+      setPostMsg({ ok: true, msg: `✓ Posted ${historyRows.length} lines · ${jeNumber} · $${fmt(totalDr)}` })
+      const { data: newHist } = await supabase.from('iif_je_history').select('*').eq('org_id', orgId)
       setHistory(newHist || [])
     }
     setPosting(false)
@@ -834,31 +923,122 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
   return (
     <div>
       {/* Controls row */}
+      {/* ── Mode Toggle ── */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+        {[['weekly','📅 Weekly Upload'],['periodend','📊 Period-End True-Up']].map(([mode, label]) => (
+          <button key={mode} onClick={() => { setUploadMode(mode); setParsedData(null); setFileName(''); setPostMsg(null) }} style={{
+            padding: '6px 16px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+            fontFamily: 'inherit', fontWeight: uploadMode === mode ? 700 : 400,
+            background: uploadMode === mode ? C.go : 'transparent',
+            border: `1px solid ${uploadMode === mode ? C.go : C.bdr}`,
+            color: uploadMode === mode ? '#000' : C.g,
+          }}>{label}</button>
+        ))}
+        <span style={{ fontSize: 10, color: C.g, marginLeft: 4 }}>
+          {uploadMode === 'weekly' ? 'Straight post — full amounts, no delta. Tag each file to its accounting period.' : 'True-up — posts the variance between this period summary and all weekly posts already recorded.'}
+        </span>
+      </div>
+
+      {/* ── Controls Row ── */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+
+        {/* Weekly: pick the accounting period this file belongs to */}
+        {uploadMode === 'weekly' && (
+          <div>
+            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Accounting Period</label>
+            <input type="month" value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputStyle, width: 150 }} />
+            <div style={{ fontSize: 9, color: C.g, marginTop: 3 }}>Tag this file to its month (e.g. Oct 26–Nov 1 → October)</div>
+          </div>
+        )}
+
+        {/* Period-end: select type + period */}
+        {uploadMode === 'periodend' && (
+          <>
+            <div>
+              <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Period Type</label>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {['monthly','quarterly','annual'].map(t => (
+                  <button key={t} onClick={() => setPeriodEndType(t)} style={{
+                    padding: '5px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                    background: periodEndType === t ? C.go : 'transparent',
+                    border: `1px solid ${periodEndType === t ? C.go : C.bdr}`,
+                    color: periodEndType === t ? '#000' : C.g, fontWeight: periodEndType === t ? 700 : 400,
+                  }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+                ))}
+              </div>
+            </div>
+
+            {periodEndType === 'monthly' && (
+              <div>
+                <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Closing Month</label>
+                <input type="month" value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputStyle, width: 150 }} />
+              </div>
+            )}
+            {periodEndType === 'quarterly' && (
+              <>
+                <div>
+                  <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Quarter</label>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {['Q1','Q2','Q3','Q4'].map(q => (
+                      <button key={q} onClick={() => setPeriodEndQuarter(q)} style={{
+                        padding: '5px 10px', borderRadius: 5, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                        background: periodEndQuarter === q ? C.go : 'transparent',
+                        border: `1px solid ${periodEndQuarter === q ? C.go : C.bdr}`,
+                        color: periodEndQuarter === q ? '#000' : C.g, fontWeight: periodEndQuarter === q ? 700 : 400,
+                      }}>{q}</button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
+                  <input value={periodEndYear} onChange={e => setPeriodEndYear(e.target.value)} style={{ ...inputStyle, width: 80 }} maxLength={4} />
+                </div>
+                <div style={{ fontSize: 10, color: C.g, alignSelf: 'flex-end', paddingBottom: 6 }}>
+                  Covers: {getPeriodEndMonths().join(', ')}
+                </div>
+              </>
+            )}
+            {periodEndType === 'annual' && (
+              <>
+                <div>
+                  <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Year</label>
+                  <input value={periodEndYear} onChange={e => setPeriodEndYear(e.target.value)} style={{ ...inputStyle, width: 80 }} maxLength={4} />
+                </div>
+                <div style={{ fontSize: 10, color: C.g, alignSelf: 'flex-end', paddingBottom: 6 }}>
+                  Covers all 12 months of {periodEndYear}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
         <div>
-          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Period (YYYY-MM)</label>
-          <input
-            type="month"
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-            style={{ ...inputStyle, width: 150 }}
-          />
-        </div>
-        <div>
-          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Upload .IIF File</label>
+          <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
+            {uploadMode === 'weekly' ? 'Upload Weekly .IIF File' : `Upload ${periodEndType.charAt(0).toUpperCase()+periodEndType.slice(1)} Summary .IIF`}
+          </label>
           <input type="file" accept=".iif,.IIF" onChange={handleFileUpload} style={{ fontSize: 11, color: C.w }} />
           {fileName && (
             <div style={{ fontSize: 10, color: C.go, marginTop: 4, fontFamily: "'DM Mono', monospace" }}>
-              📄 {fileName}
+              📄 {fileName}{uploadMode === 'weekly' && getDateRangeLabel() ? ` · ${getDateRangeLabel()}` : ''}
             </div>
           )}
         </div>
+
         {parsedData && (
-          <div style={{ fontSize: 10, color: C.g }}>
-            {parsedData.transactions.length} transactions · {parsedData.accounts.size} accounts · {history.length} lines already posted this period
+          <div style={{ fontSize: 10, color: C.g, alignSelf: 'flex-end', paddingBottom: 6 }}>
+            {parsedData.transactions.length} txns · {parsedData.accounts.size} accounts
+            {uploadMode === 'periodend' && ` · ${history.filter(r => getPeriodEndMonths().includes(r.period) && (r.upload_mode==='weekly'||!r.upload_mode)).length} weekly lines in scope`}
           </div>
         )}
       </div>
+
+      {/* ── JE Number Preview ── */}
+      {period && (
+        <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", marginBottom: 12, padding: '7px 12px', background: C.bg2, borderRadius: 6, border: `1px solid ${C.bdr}`, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <span>JE: <b>{getJENumber()}</b></span>
+          <span>Note: <b>{getLineMemo()}</b></span>
+        </div>
+      )}
 
       {loadingMap && <p style={{ fontSize: 12, color: C.g }}>Loading account map…</p>}
 
@@ -947,9 +1127,9 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           <JETable
             lines={jeLines}
             C={C}
-            journalNum={`IIF ${period} — ${fileName || 'upload'}`}
-            dateLabel={`Delta vs. prior postings · Period ${period}`}
-            memo={`IIF import · ${fileName} · org ${orgId} · ${period}`}
+            journalNum={getJENumber()}
+            dateLabel={uploadMode === 'weekly' ? `FLEX Weekly · ${getDateRangeLabel()} · Period ${period}` : `FLEX ${periodEndType.charAt(0).toUpperCase()+periodEndType.slice(1)} True-Up · ${getLineMemo().split(' · ')[1] || period}`}
+            memo={getLineMemo()}
           />
           <div style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>

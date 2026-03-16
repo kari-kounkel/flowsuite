@@ -2110,7 +2110,7 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
   return (
     <div style={{
       background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
-      padding: '14px 16px', minWidth: 220, maxWidth: 280, flex: '0 0 auto',
+      padding: '14px 16px', display: 'flex', flexDirection: 'column',
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -2311,6 +2311,7 @@ function ResourceLibraryTab({ orgId, C }) {
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [search, setSearch] = useState('')
 
   async function load() {
     setLoading(true)
@@ -2336,27 +2337,52 @@ function ResourceLibraryTab({ orgId, C }) {
         <ResourceFormModal res={editing} orgId={orgId} C={C} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ fontSize: 12, color: C.g }}>
           Login links, credentials, and vendor portals — all in one place.
         </div>
-        <button onClick={handleNew} style={{
-          background: C.go, border: 'none', color: '#fff',
-          padding: '6px 16px', borderRadius: 20, cursor: 'pointer',
-          fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-        }}>+ Add Resource</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search resources…"
+            style={{
+              background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+              borderRadius: 20, padding: '5px 14px', fontSize: 11,
+              fontFamily: 'inherit', width: 180, outline: 'none',
+            }}
+          />
+          <button onClick={handleNew} style={{
+            background: C.go, border: 'none', color: '#fff',
+            padding: '6px 16px', borderRadius: 20, cursor: 'pointer',
+            fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+          }}>+ Add Resource</button>
+        </div>
       </div>
 
       {loading && <p style={{ fontSize: 12, color: C.g }}>Loading…</p>}
 
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        {!loading && resources.length === 0 && (
-          <p style={{ fontSize: 12, color: C.g }}>No resources yet. Add your first one — Xcel, CenterPoint, QBO, wherever you log in.</p>
-        )}
-        {resources.map(res => (
-          <ResourceCard key={res.id} res={res} C={C} onEdit={handleEdit} onDelete={handleDelete} />
-        ))}
-      </div>
+      {!loading && (() => {
+        const filtered = resources.filter(r =>
+          !search.trim() ||
+          (r.label || '').toLowerCase().includes(search.toLowerCase()) ||
+          (r.notes || '').toLowerCase().includes(search.toLowerCase()) ||
+          (r.email || '').toLowerCase().includes(search.toLowerCase()) ||
+          (r.phone || '').toLowerCase().includes(search.toLowerCase())
+        )
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+            {filtered.length === 0 && (
+              <p style={{ fontSize: 12, color: C.g, gridColumn: '1/-1' }}>
+                {resources.length === 0 ? 'No resources yet. Add your first one — Xcel, CenterPoint, QBO, wherever you log in.' : `No results for "${search}"`}
+              </p>
+            )}
+            {filtered.map(res => (
+              <ResourceCard key={res.id} res={res} C={C} onEdit={handleEdit} onDelete={handleDelete} />
+            ))}
+          </div>
+        )
+      })()}
 
       <div style={{ marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`, background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g, maxWidth: 500 }}>
         <strong style={{ color: C.go }}>Sidebar:</strong> Passwords never display on screen — copy-only. Credentials live in Supabase behind your org_id. You can also attach resources to task cards so the login button lives right on the back of the card.

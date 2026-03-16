@@ -673,19 +673,13 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
 
   // ── Upload mode: weekly straight post vs period-end true-up ──
   const [uploadMode, setUploadMode] = useState('weekly') // 'weekly' | 'periodend'
+  const [weeklyEndDate, setWeeklyEndDate] = useState('')  // e.g. "Oct 11" 
   const [periodEndType, setPeriodEndType] = useState('monthly') // 'monthly' | 'quarterly' | 'annual'
   const [periodEndQuarter, setPeriodEndQuarter] = useState('Q4')
   const [periodEndYear, setPeriodEndYear] = useState(new Date().getFullYear().toString())
 
   // Derive date range label from filename e.g. "UpTown_2025-Oct-05_to_2025-Oct-11.IIF" → "Oct 5–11"
-  function getDateRangeLabel() {
-    if (!fileName) return ''
-    const m = fileName.match(/(\d{4}-[A-Za-z]{3}-\d{2})_to_(\d{4}-[A-Za-z]{3}-\d{2})/i)
-    if (!m) return ''
-    const parseDate = s => { const p = s.split('-'); return { mon: p[1], day: parseInt(p[2]) } }
-    const s = parseDate(m[1]); const e = parseDate(m[2])
-    return `${s.mon} ${s.day}–${e.day}`
-  }
+  function getDateRangeLabel() { return weeklyEndDate.trim() }
 
   // Get all period months covered by the period-end selection
   function getPeriodEndMonths() {
@@ -707,7 +701,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       if (!period) return ''
       const [yr, mo] = period.split('-')
       const range = getDateRangeLabel()
-      return range ? `KK ${yr} ${mo} AR FLEX Weekly · ${range}` : `KK ${yr} ${mo} AR FLEX Weekly · ${fileName}`
+      return range ? `KK ${yr} ${mo} AR FLEX Weekly · ${range}` : `KK ${yr} ${mo} AR FLEX Weekly`  // range = period end date
     }
     if (periodEndType === 'monthly') {
       const [yr, mo] = (period || '').split('-')
@@ -951,7 +945,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       {/* ── Mode Toggle ── */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         {[['weekly','📅 Weekly Upload'],['periodend','📊 Period-End True-Up']].map(([mode, label]) => (
-          <button key={mode} onClick={() => { setUploadMode(mode); setParsedData(null); setFileName(''); setPostMsg(null) }} style={{
+          <button key={mode} onClick={() => { setUploadMode(mode); setParsedData(null); setFileName(''); setPostMsg(null); setWeeklyEndDate('') }} style={{
             padding: '6px 16px', borderRadius: 6, fontSize: 11, cursor: 'pointer',
             fontFamily: 'inherit', fontWeight: uploadMode === mode ? 700 : 400,
             background: uploadMode === mode ? C.go : 'transparent',
@@ -1037,6 +1031,21 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           </>
         )}
 
+        {uploadMode === 'weekly' && (
+          <div>
+            <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Period End Date</label>
+            <input
+              type="date"
+              onChange={e => {
+                const d = new Date(e.target.value + 'T00:00:00')
+                const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]
+                setWeeklyEndDate(`${mon} ${d.getDate()}`)
+              }}
+              style={{ ...inputStyle, width: 150 }}
+            />
+            {weeklyEndDate && <div style={{ fontSize: 10, color: C.go, marginTop: 3 }}>→ {weeklyEndDate}</div>}
+          </div>
+        )}
         <div>
           <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>
             {uploadMode === 'weekly' ? 'Upload Weekly .IIF File' : `Upload ${periodEndType.charAt(0).toUpperCase()+periodEndType.slice(1)} Summary .IIF`}

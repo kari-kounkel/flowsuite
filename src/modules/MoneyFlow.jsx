@@ -493,7 +493,7 @@ function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
 
   return (
     <div style={{
-      width: 200, height: 220, cursor: 'pointer', perspective: 800,
+      width: 200, height: 160, cursor: 'pointer', perspective: 800,
       opacity: done ? 0.5 : 1, transition: 'opacity 0.3s',
       flexShrink: 0,
     }}>
@@ -2176,8 +2176,22 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
         </div>
       )}
 
+      {res.phone && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, borderTop: `1px solid ${C.bdrF}`, paddingTop: 6 }}>
+          <span style={{ fontSize: 10, color: C.g, minWidth: 52, flexShrink: 0 }}>Phone</span>
+          <span style={{ fontSize: 11, color: C.w, flex: 1, fontFamily: "'DM Mono', monospace" }}>{res.phone}</span>
+          <CopyBtn value={res.phone} label="Phone" C={C} />
+        </div>
+      )}
+      {res.email && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: res.phone ? 4 : 8, borderTop: res.phone ? 'none' : `1px solid ${C.bdrF}`, paddingTop: res.phone ? 0 : 6 }}>
+          <span style={{ fontSize: 10, color: C.g, minWidth: 52, flexShrink: 0 }}>Email</span>
+          <span style={{ fontSize: 11, color: C.w, flex: 1, wordBreak: 'break-all' }}>{res.email}</span>
+          <CopyBtn value={res.email} label="Email" C={C} />
+        </div>
+      )}
       {res.mailing_address && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, borderTop: `1px solid ${C.bdrF}`, paddingTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: (res.phone||res.email) ? 4 : 8, borderTop: (res.phone||res.email) ? 'none' : `1px solid ${C.bdrF}`, paddingTop: (res.phone||res.email) ? 0 : 6 }}>
           <span style={{ fontSize: 10, color: C.g, minWidth: 52, flexShrink: 0 }}>Address</span>
           <span style={{ fontSize: 11, color: C.w, flex: 1, lineHeight: 1.4 }}>{res.mailing_address}</span>
           <CopyBtn value={res.mailing_address} label="Addr" C={C} />
@@ -2192,7 +2206,7 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
   )
 }
 
-const BLANK_RES = { label: '', url: '', username: '', password: '', pin: '', notes: '' }
+const BLANK_RES = { label: '', url: '', username: '', password: '', pin: '', notes: '', email: '', phone: '' }
 
 function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
   const isEdit = !!res?.id
@@ -2200,6 +2214,7 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
     label: res.label || '', url: res.url || '',
     username: res.username || '', password: res.password || '',
     pin: res.pin || '', notes: res.notes || '', mailing_address: res.mailing_address || '',
+    email: res.email || '', phone: res.phone || '',
   } : { ...BLANK_RES })
   const [showPass, setShowPass] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -2251,6 +2266,8 @@ function ResourceFormModal({ res, orgId, C, onSave, onClose }) {
         {[
           { key: 'label', label: 'Display Name *', placeholder: 'e.g. Xcel Energy' },
           { key: 'url',   label: 'URL',             placeholder: 'https://...' },
+          { key: 'phone', label: 'Phone',           placeholder: 'e.g. 612-555-0100' },
+          { key: 'email', label: 'Email',           placeholder: 'e.g. payments@vendor.com' },
           { key: 'username', label: 'Username',     placeholder: '' },
           { key: 'pin',   label: 'PIN',             placeholder: '' },
           { key: 'mailing_address', label: 'Mailing Address', placeholder: 'e.g. PO Box 64306, St Paul MN 55164' },

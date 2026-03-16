@@ -894,18 +894,44 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
     if (error) {
       setPostMsg({ ok: false, msg: error.message })
     } else {
-      // ── Write entry to close checklist ──
-      const clLabel = `${jeNumber}${getDateRangeLabel() ? ' · ' + getDateRangeLabel() : ''}`
-      await supabase.from('moneyflow_close_log').upsert([{
-        org_id: orgId,
-        period: postPeriod,
-        entry_type: 'iif',
-        template_id: null,
-        label: clLabel,
-        amount: totalDr,
-        source: 'iif',
-        posted_at: null,
-      }], { onConflict: 'org_id,period,source,label' })
+      // ── Write entry to close checklist — INSERT (not upsert) so each week gets its own row ──
+      const clLabel = `${jeNumber}${getDateRangeLabel() ? ' · ' + getDateRangeLabel() : ` · ${fileName}`}`
+      // Only insert if this exact label+period doesn't already exist
+      const { data: existingLog } = await supabase.from('moneyflow_close_log')
+        .select('id').eq('org_id', orgId).eq('period', postPeriod).eq('label', clLabel).single()
+      if (!existingLog) {
+        await supabase.from('moneyflow_close_log').insert([{
+          org_id: orgId,
+          period: postPeriod,
+          entry_type: 'iif',
+          template_id: null,
+          label: clLabel,
+          amount: totalDr,
+          source: 'iif',
+          posted_at: null,
+        }])
+      }
+
+      // ── Create/update task card in moneyflow_tasks ──
+      const taskName = `${jeNumber} — Enter in QBO`
+      const taskDesc = `${clLabel}
+DR $${fmt(totalDr)} · ${historyRows.length} accounts`
+      const { data: existingTask } = await supabase.from('moneyflow_tasks')
+        .select('id').eq('org_id', orgId).eq('name', taskName).eq('status', 'open').single()
+      if (!existingTask) {
+        await supabase.from('moneyflow_tasks').insert([{
+          org_id: orgId,
+          entity: 'iaz',
+          type: 'AR',
+          source: 'iif_auto',
+          name: taskName,
+          description: taskDesc,
+          due_date: new Date().toISOString().split('T')[0],
+          status: 'open',
+          is_recurring: false,
+          recur_interval: 0,
+        }])
+      }
 
       setPostMsg({ ok: true, msg: `✓ Posted ${historyRows.length} lines · ${jeNumber} · $${fmt(totalDr)}` })
       const { data: newHist } = await supabase.from('iif_je_history').select('*').eq('org_id', orgId)
@@ -1531,7 +1557,8 @@ function CloseChecklistTab({ orgId, C }) {
     return log.find(r => r.entry_type === type &&
       (templateId ? r.template_id === templateId : !r.template_id))
   }
-  function getIIFEntry() { return log.find(r => r.source === 'iif' || r.entry_type === 'iif') }
+  function getIIFEntries() { return log.filter(r => r.source === 'iif' || r.entry_type === 'iif') }
+  function getIIFEntry() { return getIIFEntries()[0] || null } // keep for backward compat
   function ps(key) { return postState[key] || {} }
   function setPs(key, patch) { setPostState(prev => ({ ...prev, [key]: { ...ps(key), ...patch } })) }
 
@@ -1605,10 +1632,11 @@ function CloseChecklistTab({ orgId, C }) {
 
   // ── Derived counts ──
   const iifEntry      = getIIFEntry()
+  const iifEntries    = getIIFEntries()
   const oneoffEntries = log.filter(r => r.entry_type === 'oneoff')
-  const totalItems    = activeTemplates.length + (iifEntry ? 1 : 0) + oneoffEntries.length
+  const totalItems    = activeTemplates.length + iifEntries.length + oneoffEntries.length
   const postedCount   = activeTemplates.filter(t => !!getLogEntry('recurring', t.id)).length
-    + (iifEntry?.posted_at ? 1 : 0)
+    + iifEntries.filter(e => e.posted_at).length
     + oneoffEntries.filter(r => r.posted_at).length
 
   const inputStyle = {
@@ -1803,35 +1831,37 @@ function CloseChecklistTab({ orgId, C }) {
         )
       })}
 
-      {/* ── IIF ENTRY (auto-populated from IIF Factory) ── */}
-      {iifEntry && (
+      {/* ── IIF ENTRIES (auto-populated from IIF Factory) ── */}
+      {iifEntries.length > 0 && (
         <>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.go, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
             IIF / AR SALES
-            <span style={{ fontSize: 10, color: C.g, fontWeight: 400, marginLeft: 8 }}>Auto-populated when IIF file is posted</span>
+            <span style={{ fontSize: 10, color: C.g, fontWeight: 400, marginLeft: 8 }}>Auto-populated when IIF file is posted · {iifEntries.length} file{iifEntries.length !== 1 ? 's' : ''} this period</span>
           </div>
-          <div style={{
-            background: iifEntry.posted_at ? `${C.go}11` : C.bg2,
-            border: `1px solid ${iifEntry.posted_at ? C.go : C.bdr}`,
-            borderRadius: 10, padding: '12px 16px', marginBottom: 8,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: iifEntry.posted_at ? '#6ab87a' : '#e0a050' }} />
-              <div style={{ flex: 1, minWidth: 150 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: iifEntry.posted_at ? '#6ab87a' : C.w }}>{iifEntry.label}</div>
-                {!iifEntry.posted_at && <div style={{ fontSize: 10, color: '#e0a050' }}>IIF uploaded — confirm when entered in QBO</div>}
-                {iifEntry.amount && <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(iifEntry.amount)}</div>}
+          {iifEntries.map(entry => (
+            <div key={entry.id} style={{
+              background: entry.posted_at ? `${C.go}11` : C.bg2,
+              border: `1px solid ${entry.posted_at ? C.go : C.bdr}`,
+              borderRadius: 10, padding: '12px 16px', marginBottom: 8,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: entry.posted_at ? '#6ab87a' : '#e0a050' }} />
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: entry.posted_at ? '#6ab87a' : C.w }}>{entry.label}</div>
+                  {!entry.posted_at && <div style={{ fontSize: 10, color: '#e0a050' }}>IIF uploaded — confirm when entered in QBO</div>}
+                  {entry.amount && <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(entry.amount)}</div>}
+                </div>
+                <PostControls
+                  entryKey={logKey('iif', entry.id)}
+                  posted={!!entry.posted_at}
+                  postedAt={entry.posted_at}
+                  postedNote={entry.note}
+                  onPost={() => markIIFPosted(entry)}
+                  onUnpost={() => unpostUpdate(entry.id)}
+                />
               </div>
-              <PostControls
-                entryKey={logKey('iif', iifEntry.id)}
-                posted={!!iifEntry.posted_at}
-                postedAt={iifEntry.posted_at}
-                postedNote={iifEntry.note}
-                onPost={() => markIIFPosted(iifEntry)}
-                onUnpost={() => unpostUpdate(iifEntry.id)}
-              />
             </div>
-          </div>
+          ))}
         </>
       )}
 

@@ -3638,7 +3638,18 @@ function JEHistoryTab({ orgId, C }) {
   })
 
   const years = [...new Set(rows.map(r => (r.period || '').slice(0, 4)))].filter(Boolean).sort()
-  const allJEs = Object.entries(byJE).sort(([, a], [, b]) => (a.posted_at || '').localeCompare(b.posted_at || ''))
+  const allJEs = Object.entries(byJE).sort(([, a], [, b]) => {
+    // Sort by period descending (newest first)
+    const pCmp = (b.period || '').localeCompare(a.period || '')
+    if (pCmp !== 0) return pCmp
+    // Within same period: weeklies before period-end
+    const aIsWeekly = a.upload_mode === 'weekly' || !a.upload_mode
+    const bIsWeekly = b.upload_mode === 'weekly' || !b.upload_mode
+    if (aIsWeekly && !bIsWeekly) return -1
+    if (!aIsWeekly && bIsWeekly) return 1
+    // Within same type: by posted_at ascending
+    return (a.posted_at || '').localeCompare(b.posted_at || '')
+  })
   const filteredJEs = filterYear === 'all' ? allJEs : allJEs.filter(([, je]) => (je.period || '').startsWith(filterYear))
 
   // YTD totals

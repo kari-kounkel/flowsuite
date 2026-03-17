@@ -484,7 +484,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     </div>}
 
     {/* TEAM */}
-    {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} disc={disc}/>}
+    {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} disc={disc} onb={onb}/>}
 
     {/* ORG CHART */}
     {view==='orgchart'&&<OrgChartView emps={emps} C={C}/>}
@@ -521,8 +521,9 @@ export default function PeopleFlowModule({ orgId, C }) {
 // ═══════════════════════════════════════════
 // ── TEAM VIEW ──
 // ═══════════════════════════════════════════
-function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isHR,userEmpRecord,resolveReportsTo,managerOptions,disc}){
+function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isHR,userEmpRecord,resolveReportsTo,managerOptions,disc,onb}){
   const[filter,setFilter]=useState('')
+  const[expandedId,setExpandedId]=useState(null)
 
   // Determine visible employees based on role
   let visibleEmps = emps
@@ -540,55 +541,131 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
   const filtered=visibleEmps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
   const activeVisible = filtered.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
 
-  // Fields visible to non-admins (hide pay rate)
+  // Fields visible in expanded detail panel
   const readOnlyFields = [
     ['dept','Department'],['hire_date','Hire Date'],['role','Classification'],
     ['union_status','Union Status'],['email','Email'],['phone','Phone'],
     ['ec_name','Emergency Contact'],['ec_phone','Emergency Phone'],['reports_to','Reports To']
   ]
 
+  const getOnbPct = (empId) => {
+    const ed = onb[empId] || {}
+    if (!OBS.length) return null
+    const done = OBS.filter(s => ed[s.id]).length
+    return Math.round(done / OBS.length * 100)
+  }
+
+  const getDiscCounts = (empId) => {
+    const empDisc = disc.filter(d => d.employee_id === empId)
+    const active = empDisc.filter(d => isDiscActive(d) && PROGRESSION_CHAIN.includes(d.type)).length
+    return { total: empDisc.length, active }
+  }
+
   return(<div>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><h2 style={{margin:0,fontSize:18}}>Team ({activeVisible.length})</h2>{isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}</div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <h2 style={{margin:0,fontSize:18}}>Team ({activeVisible.length})</h2>
+      {isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}
+    </div>
+
     {visibleEmps.length === 0 && !isAdmin && <Card C={C} style={{padding:20,textAlign:'center',color:C.g}}>
       <div style={{fontSize:13,marginBottom:4}}>Your account isn't linked to an employee record yet.</div>
       <div style={{fontSize:11}}>Ask HR to make sure your login email matches your employee record.</div>
     </Card>}
-    {visibleEmps.length > 0 && <input placeholder="Search..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
-    {filtered.map(e=><Card key={e.id} C={C} style={{marginBottom:6,cursor:'pointer',padding:'10px 14px'}}>
-      <div onClick={()=>{if(isAdmin){setSel(e);setMod('emp')}else{setSel(sel?.id===e.id?null:e)}}} style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div><div style={{fontWeight:600,fontSize:14}}>{gn(e)}</div><div style={{fontSize:11,color:C.g}}>{e.role||'—'} • {e.dept||e.department||'—'}</div></div>
-        <div style={{textAlign:'right'}}><Tag c={e.status==='Active'||e.status==='active'?C.gr:e.status==='Terminated'||e.status==='terminated'?C.rd:e.status==='laid_off'?'#6366F1':C.am}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>
-          {e.status==='laid_off'&&e.expected_recall_date&&<div style={{fontSize:9,color:'#6366F1',marginTop:1}}>Recall: {fm(e.expected_recall_date)}</div>}
-          <div style={{fontSize:10,color:C.g,marginTop:2}}>{e.union_status||'—'}</div></div>
-      </div>
-      {/* Read-only detail for non-admin when card is selected */}
-      {!isAdmin&&sel?.id===e.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
-        {readOnlyFields.map(([k,l])=>
-          <div key={k} style={{fontSize:11}}><span style={{color:C.g,textTransform:'uppercase',fontSize:9}}>{l}</span><div style={{color:C.w}}>{k==='reports_to'?resolveReportsTo(e[k]):(e[k]||'—')}</div></div>
-        )}
-        {/* Discipline History (HR/Manager only) */}
-        {(isHR || isManager) && (() => {
-          const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
-          const activeCount = empDisc.filter(d => isDiscActive(d) && PROGRESSION_CHAIN.includes(d.type)).length
-          if (empDisc.length === 0) return null
-          return <div style={{gridColumn:'1/-1',marginTop:6,paddingTop:8,borderTop:`1px solid ${C.bdr}`}}>
-            <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Discipline History ({empDisc.length}) · {activeCount} active progressive</div>
-            {empDisc.map((d,i) => {
-              const pdt = DISC_TYPES.find(t=>t.v===d.type)
-              const active = isDiscActive(d)
-              const isProgressive = PROGRESSION_CHAIN.includes(d.type)
-              return <div key={i} style={{fontSize:10,padding:'2px 0',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:active||!isProgressive?1:0.5}}>
-                <span style={{display:'flex',alignItems:'center',gap:3}}>
-                  <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
-                  {isProgressive && <span style={{fontSize:7,padding:'1px 4px',borderRadius:99,fontWeight:700,background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',color:active?'#22C55E':'#6B7280'}}>{active?'Active':'Retired'}</span>}
-                </span>
-                <span style={{color:C.g,fontSize:9}}>{fm(d.date||d.created_at)}</span>
-              </div>
-            })}
+
+    {visibleEmps.length > 0 && <input placeholder="Search team..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
+
+    {filtered.map(e=>{
+      const isExpanded = expandedId === e.id
+      const onbPct = getOnbPct(e.id)
+      const {total:discTotal, active:discActive} = getDiscCounts(e.id)
+      const statusColor = e.status==='Active'||e.status==='active'?C.gr:e.status==='Terminated'||e.status==='terminated'?C.rd:e.status==='laid_off'?'#6366F1':C.am
+      const onbPctColor = onbPct===null?C.g:onbPct===100?C.gr:onbPct>=50?C.am:C.rd
+      const canSeeDisc = isAdmin||isHR||isManager
+
+      return <Card key={e.id} C={C} style={{marginBottom:8,padding:0,overflow:'hidden'}}>
+        {/* ── Main row ── */}
+        <div
+          onClick={()=>{
+            if(isAdmin){setSel(e);setMod('emp')}
+            else{setExpandedId(isExpanded?null:e.id)}
+          }}
+          style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',cursor:'pointer'}}
+        >
+          {/* Left: name + role/dept */}
+          <div style={{minWidth:0,flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,marginBottom:1}}>{gn(e)}</div>
+            <div style={{fontSize:11,color:C.g}}>{e.role||'—'} · {e.dept||e.department||'—'}</div>
           </div>
-        })()}
-      </div>}
-    </Card>)}
+
+          {/* Right: at-a-glance badges */}
+          <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0,marginLeft:8}}>
+            {/* Status */}
+            <Tag c={statusColor}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>
+
+            {/* Onboarding % — visible to admin/HR/manager */}
+            {canSeeDisc && onbPct !== null && <div style={{textAlign:'center',minWidth:36}}>
+              <div style={{fontSize:13,fontWeight:700,color:onbPctColor}}>{onbPct}%</div>
+              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>Onb</div>
+            </div>}
+
+            {/* Discipline badge — only if there are any, only for admin/HR/manager */}
+            {canSeeDisc && discTotal > 0 && <div style={{textAlign:'center',minWidth:28}}>
+              <div style={{fontSize:13,fontWeight:700,color:discActive>0?C.rd:C.g}}>{discActive > 0 ? discActive : discTotal}</div>
+              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{discActive>0?'Active':'Disc'}</div>
+            </div>}
+
+            {/* Expand chevron for non-admin */}
+            {!isAdmin && <span style={{fontSize:10,color:C.g,marginLeft:2}}>{isExpanded?'▲':'▼'}</span>}
+          </div>
+        </div>
+
+        {/* ── Expanded detail panel (non-admin) ── */}
+        {!isAdmin && isExpanded && <div style={{padding:'10px 14px',paddingTop:0,borderTop:`1px solid ${C.bdr}`}}>
+          {/* Onboarding progress bar */}
+          {onbPct !== null && <div style={{marginBottom:10,paddingTop:10}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,fontSize:10,color:C.g}}>
+              <span>Onboarding Progress</span><span style={{color:onbPctColor,fontWeight:700}}>{onbPct}%</span>
+            </div>
+            <div style={{height:4,borderRadius:99,background:C.nL}}>
+              <div style={{height:'100%',borderRadius:99,background:onbPctColor,width:`${onbPct}%`,transition:'width 0.3s'}}/>
+            </div>
+          </div>}
+
+          {/* Read-only fields grid */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+            {readOnlyFields.map(([k,l])=>
+              <div key={k} style={{fontSize:11}}>
+                <span style={{color:C.g,textTransform:'uppercase',fontSize:9,display:'block'}}>{l}</span>
+                <span style={{color:C.w}}>{k==='reports_to'?resolveReportsTo(e[k]):(e[k]||'—')}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Discipline history (HR/Manager only) */}
+          {canSeeDisc && discTotal > 0 && (() => {
+            const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+            return <div style={{paddingTop:8,borderTop:`1px solid ${C.bdr}`}}>
+              <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>
+                Discipline History ({empDisc.length}) · {discActive} active progressive
+              </div>
+              {empDisc.map((d,i) => {
+                const pdt = DISC_TYPES.find(t=>t.v===d.type)
+                const active = isDiscActive(d)
+                const isProgressive = PROGRESSION_CHAIN.includes(d.type)
+                return <div key={i} style={{fontSize:10,padding:'2px 0',display:'flex',justifyContent:'space-between',alignItems:'center',opacity:active||!isProgressive?1:0.5}}>
+                  <span style={{display:'flex',alignItems:'center',gap:3}}>
+                    <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
+                    {isProgressive && <span style={{fontSize:7,padding:'1px 4px',borderRadius:99,fontWeight:700,background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',color:active?'#22C55E':'#6B7280'}}>{active?'Active':'Retired'}</span>}
+                  </span>
+                  <span style={{color:C.g,fontSize:9}}>{fm(d.date||d.created_at)}</span>
+                </div>
+              })}
+            </div>
+          })()}
+        </div>}
+      </Card>
+    })}
+
     {isAdmin&&mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
   </div>)
 }

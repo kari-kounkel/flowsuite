@@ -413,7 +413,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     setDisc(p=>p.map(x=>x.id===reinstDisc.id?{...x,status:'closed'}:x))
     await supabase.from('employees').update({status:'Active'}).eq('id',reinstDisc.employee_id)
     setEmps(p=>p.map(e=>e.id===reinstDisc.employee_id?{...e,status:'Active'}:e))
-    sh(`Probation confirmed -- ${toReverse.length} discipline(s) reversed, employee restored to Active`)
+    sh('Probation confirmed -- ' + toReverse.length + ' discipline(s) reversed, employee restored to Active')
   }
   const toggleOnb = async(empId,stepId,cur)=>{
     const nv=!cur

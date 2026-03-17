@@ -94,7 +94,8 @@ const EMP_FIELDS = [
   ['badge_code','Badge Code'],
   ['layoff_date','Layoff Date'],['expected_recall_date','Expected Recall Date'],
   ['ec_name','Emergency Contact'],['ec_relationship','EC Relationship'],['ec_phone','Emergency Phone'],
-  ['reports_to','Reports To'],['emp_code','Emp Code'],['notes','Notes']
+  ['reports_to','Reports To'],['emp_code','Emp Code'],['notes','Notes'],
+  ['offer_date','Offer Date'],['start_date','Start Date'],['offer_status','Offer Status']
 ]
 
 const DEPARTMENTS = ['Digital Production','Wide Format','Operations/CS','Executive','Shipping/Receiving','Sales','Admin']
@@ -113,6 +114,56 @@ const isDiscActive = (d) => {
 }
 
 const getDiscStatus = (d) => isDiscActive(d) ? 'Active' : 'Retired'
+
+// ── US Federal Holidays (static list) ──
+const US_HOLIDAYS = [
+  '2024-01-01','2024-01-15','2024-02-19','2024-05-27','2024-06-19','2024-07-04',
+  '2024-09-02','2024-10-14','2024-11-11','2024-11-28','2024-12-25',
+  '2025-01-01','2025-01-20','2025-02-17','2025-05-26','2025-06-19','2025-07-04',
+  '2025-09-01','2025-10-13','2025-11-11','2025-11-27','2025-12-25',
+  '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-06-19','2026-07-04',
+  '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
+]
+const isHoliday = (d) => US_HOLIDAYS.includes(d.toISOString().split('T')[0])
+const isWeekend = (d) => d.getDay()===0||d.getDay()===6
+const addWorkingDays = (startStr, days) => {
+  if (!startStr) return null
+  let d = new Date(startStr)
+  let count = 0
+  while (count < days) {
+    d.setDate(d.getDate()+1)
+    if (!isWeekend(d) && !isHoliday(d)) count++
+  }
+  return d.toISOString().split('T')[0]
+}
+
+// ── Union contacts ──
+const UNION_CONTACTS = {
+  ruth: { name: 'Ruth', role: 'Union Contact' },
+  marty: { name: 'Marty Hallberg', role: 'Union President' }
+}
+
+// ── PDF generator (print-to-PDF via browser) ──
+const generateLetterPDF = (htmlContent, title) => {
+  const w = window.open('','_blank','width=800,height=900')
+  if (!w) { alert('Pop-up blocked — please allow pop-ups for this site.'); return }
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+    <style>
+      body { font-family: Georgia, serif; font-size: 13px; line-height: 1.7;
+             margin: 60px auto; max-width: 680px; color: #1a1a1a; }
+      .letterhead { border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 24px; }
+      .company { font-size: 22px; font-weight: bold; letter-spacing: 1px; }
+      .meta { font-size: 11px; color: #666; margin-top: 4px; }
+      .body { white-space: pre-wrap; }
+      .signature-block { margin-top: 48px; }
+      table td { padding: 4px 8px; }
+      @media print { body { margin: 40px; } }
+    </style></head><body>
+    ${htmlContent}
+    <script>setTimeout(()=>window.print(),400)<\/script>
+    </body></html>\`)
+  w.document.close()
+}
 
 // Get active progressive records for an employee (excludes coaching/commendation)
 const getActiveProgressive = (empId, allDisc) => {
@@ -524,8 +575,15 @@ export default function PeopleFlowModule({ orgId, C }) {
 function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isHR,userEmpRecord,resolveReportsTo,managerOptions,disc,onb}){
   const[filter,setFilter]=useState('')
   const[expandedId,setExpandedId]=useState(null)
+  const[letterMod,setLetterMod]=useState(null)
 
-  // Determine visible employees based on role
+  const handleConfirmStart = async (empId, startDate, seniorityDate) => {
+    const emp = emps.find(e=>e.id===empId)
+    if (!emp) return
+    await saveEmp({...emp, start_date: startDate, seniority_date: seniorityDate, offer_status:'Accepted'})
+    setLetterMod(null)
+  }
+
   let visibleEmps = emps
   if (!isAdmin) {
     if ((isManager) && userEmpRecord) {
@@ -541,7 +599,6 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
   const filtered=visibleEmps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
   const activeVisible = filtered.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
 
-  // Fields visible in expanded detail panel
   const readOnlyFields = [
     ['dept','Department'],['hire_date','Hire Date'],['role','Classification'],
     ['union_status','Union Status'],['email','Email'],['phone','Phone'],
@@ -583,7 +640,6 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
       const canSeeDisc = isAdmin||isHR||isManager
 
       return <Card key={e.id} C={C} style={{marginBottom:8,padding:0,overflow:'hidden'}}>
-        {/* ── Main row ── */}
         <div
           onClick={()=>{
             if(isAdmin){setSel(e);setMod('emp')}
@@ -591,37 +647,25 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           }}
           style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',cursor:'pointer'}}
         >
-          {/* Left: name + role/dept */}
           <div style={{minWidth:0,flex:1}}>
             <div style={{fontWeight:700,fontSize:14,marginBottom:1}}>{gn(e)}</div>
             <div style={{fontSize:11,color:C.g}}>{e.role||'—'} · {e.dept||e.department||'—'}</div>
           </div>
-
-          {/* Right: at-a-glance badges */}
           <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0,marginLeft:8}}>
-            {/* Status */}
             <Tag c={statusColor}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>
-
-            {/* Onboarding % — visible to admin/HR/manager */}
             {canSeeDisc && onbPct !== null && <div style={{textAlign:'center',minWidth:36}}>
               <div style={{fontSize:13,fontWeight:700,color:onbPctColor}}>{onbPct}%</div>
               <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>Onb</div>
             </div>}
-
-            {/* Discipline badge — only if there are any, only for admin/HR/manager */}
             {canSeeDisc && discTotal > 0 && <div style={{textAlign:'center',minWidth:28}}>
               <div style={{fontSize:13,fontWeight:700,color:discActive>0?C.rd:C.g}}>{discActive > 0 ? discActive : discTotal}</div>
               <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{discActive>0?'Active':'Disc'}</div>
             </div>}
-
-            {/* Expand chevron for non-admin */}
             {!isAdmin && <span style={{fontSize:10,color:C.g,marginLeft:2}}>{isExpanded?'▲':'▼'}</span>}
           </div>
         </div>
 
-        {/* ── Expanded detail panel (non-admin) ── */}
         {!isAdmin && isExpanded && <div style={{padding:'10px 14px',paddingTop:0,borderTop:`1px solid ${C.bdr}`}}>
-          {/* Onboarding progress bar */}
           {onbPct !== null && <div style={{marginBottom:10,paddingTop:10}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,fontSize:10,color:C.g}}>
               <span>Onboarding Progress</span><span style={{color:onbPctColor,fontWeight:700}}>{onbPct}%</span>
@@ -630,8 +674,6 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
               <div style={{height:'100%',borderRadius:99,background:onbPctColor,width:`${onbPct}%`,transition:'width 0.3s'}}/>
             </div>
           </div>}
-
-          {/* Read-only fields grid */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
             {readOnlyFields.map(([k,l])=>
               <div key={k} style={{fontSize:11}}>
@@ -640,9 +682,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
               </div>
             )}
           </div>
-
-          {/* Discipline history (HR/Manager only) */}
-          {canSeeDisc && discTotal > 0 && (() => {
+          {canSeeDisc && discTotal > 0 && (()=>{
             const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
             return <div style={{paddingTop:8,borderTop:`1px solid ${C.bdr}`}}>
               <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>
@@ -663,11 +703,183 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
             </div>
           })()}
         </div>}
+
+        {isAdmin && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:`1px solid ${C.bdr}`,flexWrap:'wrap'}}>
+          {(!e.offer_status || e.offer_status==='Pending') &&
+            <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>📄 Send Offer</Btn>}
+          {e.offer_status==='Pending' &&
+            <Btn small onClick={ev=>{ev.stopPropagation();setLetterMod({type:'union',emp:e})}} C={C} style={{background:C.gr,color:'#fff',border:'none'}}>✓ Accept + Notify Union</Btn>}
+          {e.offer_status==='Accepted' && e.seniority_date &&
+            <div style={{fontSize:10,color:C.g,padding:'4px 0'}}>Seniority eligible: <span style={{color:C.gr,fontWeight:700}}>{fm(e.seniority_date)}</span></div>}
+        </div>}
+
       </Card>
     })}
 
     {isAdmin&&mod==='emp'&&<EmpModal emp={sel} onSave={saveEmp} onClose={()=>setMod(null)} C={C} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions}/>}
+    {letterMod?.type==='offer'&&<OfferLetterModal emp={letterMod.emp} onClose={()=>setLetterMod(null)} C={C}/>}
+    {letterMod?.type==='union'&&<UnionNotificationModal emp={letterMod.emp} onClose={()=>setLetterMod(null)} onConfirmStart={(sd,sen)=>handleConfirmStart(letterMod.emp.id,sd,sen)} C={C}/>}
   </div>)
+}
+// ═══════════════════════════════════════════
+// ── OFFER LETTER MODAL ──────────────────────
+// ═══════════════════════════════════════════
+function OfferLetterModal({emp, onClose, C}) {
+  const today = new Date().toISOString().split('T')[0]
+  const [f, setF] = useState({
+    company: '[COMPANY NAME]',
+    emp_name: gn(emp),
+    role: emp.role || '',
+    dept: emp.dept || emp.department || '',
+    pay_rate: emp.rate || '',
+    offer_date: emp.offer_date || today,
+    start_date: emp.start_date || '',
+    body: `We are pleased to extend this offer of employment for the position of {role} in the {dept} department.\n\nYour starting pay rate will be ${'{pay_rate}'} per hour.\n\nYour anticipated start date is {start_date}.\n\nThis offer is contingent upon successful completion of a background check and any other pre-employment requirements.\n\nPlease sign and return this letter to confirm your acceptance. This is an at-will employment offer.`
+  })
+  const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const resolvedBody = f.body
+    .replace(/{role}/g, f.role)
+    .replace(/{dept}/g, f.dept)
+    .replace(/{pay_rate}/g, f.pay_rate ? `$${f.pay_rate}` : '[PAY RATE]')
+    .replace(/{start_date}/g, f.start_date ? fm(f.start_date) : '[START DATE]')
+
+  const handleGenerate = () => {
+    const html = `
+      <div class="letterhead"><div class="company">${f.company}</div><div class="meta">Offer of Employment</div></div>
+      <p><strong>Date:</strong> ${fm(f.offer_date)}</p>
+      <p><strong>To:</strong> ${f.emp_name}</p><br/>
+      <p>Dear ${f.emp_name},</p>
+      <div class="body">${resolvedBody}</div>
+      <div class="signature-block">
+        <p>Sincerely,</p><br/><br/>
+        <p>_______________________________<br/>Authorized Signature &middot; ${f.company}</p><br/><br/>
+        <p>_______________________________<br/>${f.emp_name} &middot; Acceptance Signature</p>
+        <p>Date: _______________</p>
+      </div>`
+    generateLetterPDF(html, `Offer Letter — ${f.emp_name}`)
+  }
+
+  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:3}
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000}}>
+      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
+          <h3 style={{margin:0,fontSize:16}}>Offer Letter — {gn(emp)}</h3>
+          <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+          <div><label style={lbl}>Company Name</label><input value={f.company} onChange={e=>up('company',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Employee Name</label><input value={f.emp_name} onChange={e=>up('emp_name',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Role / Classification</label><input value={f.role} onChange={e=>up('role',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Department</label><input value={f.dept} onChange={e=>up('dept',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Pay Rate ($/hr)</label><input value={f.pay_rate} onChange={e=>up('pay_rate',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Offer Date</label><input type="date" value={f.offer_date} onChange={e=>up('offer_date',e.target.value)} style={inp}/></div>
+          <div style={{gridColumn:'1/-1'}}><label style={lbl}>Start Date</label><input type="date" value={f.start_date} onChange={e=>up('start_date',e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Letter Body — placeholders: {'{role}'} {'{dept}'} {'{pay_rate}'} {'{start_date}'}</label>
+          <textarea value={f.body} onChange={e=>up('body',e.target.value)} rows={10} style={{...inp,resize:'vertical',lineHeight:1.6}}/>
+        </div>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+          <Btn gold small onClick={handleGenerate} C={C}>Generate PDF →</Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════
+// ── UNION NOTIFICATION MODAL ────────────────
+// ═══════════════════════════════════════════
+function UnionNotificationModal({emp, onClose, onConfirmStart, C}) {
+  const [startDate, setStartDate] = useState(emp.start_date || '')
+  const seniority = startDate ? addWorkingDays(startDate, 30) : null
+
+  const [f, setF] = useState({
+    company: '[COMPANY NAME]',
+    emp_name: gn(emp),
+    role: emp.role || '',
+    dept: emp.dept || emp.department || '',
+    pay_rate: emp.rate || '',
+    union_status: emp.union_status || '',
+    body: `This letter serves as official notification that the above-referenced employee has accepted a position and will be joining our team.\n\nTheir 30-working-day at-will period concludes on {seniority_date}, at which point they will be eligible for union membership and seniority consideration per the terms of our collective bargaining agreement.\n\nPlease ensure a union card is made available to the employee at the appropriate time.\n\nThank you for your attention to this matter.`
+  })
+  const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const resolvedBody = f.body.replace(/{seniority_date}/g, seniority ? fm(seniority) : '[SENIORITY DATE]')
+
+  const handleGenerate = () => {
+    if (!startDate) { alert('Please enter a start date first.'); return }
+    const today = new Date().toISOString().split('T')[0]
+    const html = `
+      <div class="letterhead"><div class="company">${f.company}</div><div class="meta">Union Membership Notification</div></div>
+      <p><strong>Date:</strong> ${fm(today)}</p>
+      <p><strong>To:</strong> ${UNION_CONTACTS.ruth.name} (${UNION_CONTACTS.ruth.role}) &amp; ${UNION_CONTACTS.marty.name} (${UNION_CONTACTS.marty.role})</p>
+      <p><strong>Re:</strong> New Employee — ${f.emp_name}</p><br/>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12px;border:1px solid #ddd">
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:40%;border:1px solid #ddd">Employee</td><td style="padding:6px 10px;border:1px solid #ddd">${f.emp_name}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Role</td><td style="padding:6px 10px;border:1px solid #ddd">${f.role||'—'}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Department</td><td style="padding:6px 10px;border:1px solid #ddd">${f.dept||'—'}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Union Status</td><td style="padding:6px 10px;border:1px solid #ddd">${f.union_status||'—'}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Start Date</td><td style="padding:6px 10px;border:1px solid #ddd">${fm(startDate)}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Pay Rate</td><td style="padding:6px 10px;border:1px solid #ddd">${f.pay_rate ? '$'+f.pay_rate+'/hr' : '—'}</td></tr>
+        <tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Seniority Eligible</td><td style="padding:6px 10px;border:1px solid #ddd"><strong>${seniority ? fm(seniority) : '—'}</strong> (30 working days from start)</td></tr>
+      </table>
+      <div class="body">${resolvedBody}</div>
+      <div class="signature-block">
+        <p>Sincerely,</p><br/><br/>
+        <p>_______________________________<br/>Authorized Signature &middot; ${f.company}</p>
+      </div>`
+    generateLetterPDF(html, `Union Notification — ${f.emp_name}`)
+    if (onConfirmStart) onConfirmStart(startDate, seniority)
+  }
+
+  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:3}
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000}}>
+      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
+          <h3 style={{margin:0,fontSize:16}}>Union Notification — {gn(emp)}</h3>
+          <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
+        </div>
+        <div style={{background:C.nL,borderRadius:8,padding:12,marginBottom:14,border:`1px solid ${C.bdr}`}}>
+          <div style={{fontSize:11,color:C.am,fontWeight:700,marginBottom:6}}>⚠ Confirm Start Date Before Generating</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div><label style={lbl}>Start Date</label><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={inp}/></div>
+            <div>
+              <label style={lbl}>Seniority Date (auto)</label>
+              <div style={{padding:'6px 8px',background:C.bg2,border:`1px solid ${C.bdr}`,borderRadius:6,fontSize:12,color:seniority?C.gr:C.g}}>
+                {seniority ? fm(seniority) : 'Enter start date →'}
+              </div>
+            </div>
+          </div>
+          <div style={{fontSize:10,color:C.g,marginTop:6}}>30 working days · weekends + US federal holidays excluded</div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+          <div><label style={lbl}>Company Name</label><input value={f.company} onChange={e=>up('company',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Employee Name</label><input value={f.emp_name} onChange={e=>up('emp_name',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Role / Classification</label><input value={f.role} onChange={e=>up('role',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Department</label><input value={f.dept} onChange={e=>up('dept',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Pay Rate ($/hr)</label><input value={f.pay_rate} onChange={e=>up('pay_rate',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Union Status</label><input value={f.union_status} onChange={e=>up('union_status',e.target.value)} style={inp}/></div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Letter Body — placeholder: {'{seniority_date}'}</label>
+          <textarea value={f.body} onChange={e=>up('body',e.target.value)} rows={8} style={{...inp,resize:'vertical',lineHeight:1.6}}/>
+        </div>
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+          <Btn gold small onClick={handleGenerate} C={C}>Generate PDF + Confirm Accept →</Btn>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){

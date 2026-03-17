@@ -456,15 +456,15 @@ export default function PeopleFlowModule({ orgId, C }) {
 
   const alerts=[]
   if (canManage) {
-    ac.filter(e=>dbt(e.hire_date||td,td)<=90).forEach(e=>alerts.push({t:'New Hire',m:`${gn(e)} — Day ${dbt(e.hire_date||td,td)}`,c:C.bl}))
-    disc.filter(d=>(d.status||d.st)==='open'&&isDiscActive(d)).forEach(d=>alerts.push({t:'Open Disc',m:`${d.employee_name||'Employee'} — ${d.type}`,c:C.am}))
+    ac.filter(e=>dbt(e.hire_date||td,td)<=90).forEach(e=>alerts.push({t:'New Hire',m:gn(e)+' -- Day '+dbt(e.hire_date||td,td),c:C.bl}))
+    disc.filter(d=>(d.status||d.st)==='open'&&isDiscActive(d)).forEach(d=>alerts.push({t:'Open Disc',m:(d.employee_name||'Employee')+' -- '+d.type,c:C.am}))
     emps.filter(e=>e.status==='laid_off').forEach(e=>{
       const recallDate = e.expected_recall_date
       if (recallDate) {
         const daysUntil = Math.floor((new Date(recallDate) - new Date()) / (1000*60*60*24))
-        alerts.push({t:'Recall Due',m:`${gn(e)} — ${daysUntil <= 0 ? 'PAST DUE' : daysUntil + ' days'}`,c:'#6366F1'})
+        alerts.push({t:'Recall Due',m:gn(e)+' -- '+(daysUntil <= 0 ? 'PAST DUE' : daysUntil + ' days'),c:'#6366F1'})
       } else {
-        alerts.push({t:'Laid Off',m:`${gn(e)} — no recall date set`,c:'#6366F1'})
+        alerts.push({t:'Laid Off',m:gn(e)+' -- no recall date set',c:'#6366F1'})
       }
     })
     // ── Reinstatement probation ending alerts ──
@@ -472,8 +472,8 @@ export default function PeopleFlowModule({ orgId, C }) {
       const daysUntil = Math.floor((new Date(d.probation_end_date) - new Date()) / (1000*60*60*24))
       if (daysUntil <= 7) {
         const emp = emps.find(e=>e.id===d.employee_id)
-        const label = daysUntil <= 0 ? 'ENDED — confirm reversal' : `${daysUntil}d remaining`
-        alerts.push({t:'Probation Ending',m:`${emp?gn(emp):d.employee_name||'Employee'} — ${label}`,c:RC,reinstatementDisc:d})
+        const label = daysUntil <= 0 ? 'ENDED -- confirm reversal' : daysUntil+'d remaining'
+        alerts.push({t:'Probation Ending',m:(emp?gn(emp):d.employee_name||'Employee')+' -- '+label,c:RC,reinstatementDisc:d})
       }
     })
   }
@@ -526,7 +526,7 @@ export default function PeopleFlowModule({ orgId, C }) {
   <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none',gap:8}}>
     <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
     <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
-      {a.reinstatementDisc && <button onClick={()=>{if(confirm(`Confirm end of probation for this employee?\n\nThis will reverse the last ${a.reinstatementDisc.reverse_count||2} discipline record(s) and restore them to Active status.`))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>Confirm ✓</button>}
+      {a.reinstatementDisc && <button onClick={()=>{if(confirm('Confirm end of probation for this employee?\n\nThis will reverse the last '+(a.reinstatementDisc.reverse_count||2)+' discipline record(s) and restore them to Active status.'))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>Confirm ✓</button>}
       <Tag c={a.c}>{a.t}</Tag>
     </div>
   </div>
@@ -757,7 +757,7 @@ function OfferLetterModal({emp, onClose, C}) {
         <p>_______________________________<br/>${f.emp_name} &middot; Acceptance Signature</p>
         <p>Date: _______________</p>
       </div>`
-    generateLetterPDF(html, `Offer Letter — ${f.emp_name}`)
+    generateLetterPDF(html, 'Offer Letter -- '+f.emp_name)
   }
 
   const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
@@ -834,7 +834,7 @@ function UnionNotificationModal({emp, onClose, onConfirmStart, C}) {
         <p>Sincerely,</p><br/><br/>
         <p>_______________________________<br/>Authorized Signature &middot; ${f.company}</p>
       </div>`
-    generateLetterPDF(html, `Union Notification — ${f.emp_name}`)
+    generateLetterPDF(html, 'Union Notification -- '+f.emp_name)
     if (onConfirmStart) onConfirmStart(startDate, seniority)
   }
 
@@ -1259,7 +1259,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
               display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
               background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
               color:active?'#22C55E':'#6B7280',border:`1px solid ${active?'#22C55E':'#6B7280'}`
-            }}>{active ? `Active · ${daysRemaining}d left` : 'Retired'}</span>}
+            }}>{active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
@@ -1276,7 +1276,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
             {d.type==='reinstatement'&&d.probation_end_date&&(()=>{
               const daysLeft=Math.floor((new Date(d.probation_end_date)-new Date())/(1000*60*60*24))
               return <div style={{fontSize:8,color:daysLeft<=0?'#22C55E':RC,marginTop:2,fontWeight:700}}>
-                {daysLeft<=0?'✓ Probation ended':`⏱ ${daysLeft}d probation left`}
+                {daysLeft<=0?'✓ Probation ended':daysLeft+'d probation left'}
               </div>
             })()}
             {d.status==='reversed'&&<div style={{fontSize:8,color:'#6B7280',marginTop:2}}>↩ Reversed</div>}
@@ -1649,7 +1649,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
                 <span style={{fontSize:8,padding:'1px 5px',borderRadius:99,fontWeight:700,
                   background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
                   color:active?'#22C55E':'#6B7280'
-                }}>{active?`Active · ${daysLeft}d`:'Retired'}</span>
+                }}>{active?'Active - '+daysLeft+'d':'Retired'}</span>
               </span>
               <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
             </div>
@@ -1888,9 +1888,9 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
               const lcaRec = disc.find(d=>d.employee_id===emp.id && d.type==='last_chance')
               const lca = lcaRec ? getLCAStatus(lcaRec, emp) : null
               return <div style={{fontSize:11,color:C.w}}>
-                {prob.remaining > 0 && <div>New-hire probation (90-day): <b>{prob.elapsed}</b> active days / 90 — <b style={{color:prob.frozen?'#7C3AED':'#22C55E'}}>{prob.frozen?`FROZEN (${prob.remaining}d remaining)`:`${prob.remaining}d remaining`}</b></div>}
+                {prob.remaining > 0 && <div>New-hire probation (90-day): <b>{prob.elapsed}</b> active days / 90 — <b style={{color:prob.frozen?'#7C3AED':'#22C55E'}}>{prob.frozen?'FROZEN ('+prob.remaining+'d remaining)':prob.remaining+'d remaining'}</b></div>}
                 {prob.remaining === 0 && <div style={{color:C.g}}>New-hire probation: Complete ✓</div>}
-                {lca && <div style={{marginTop:3}}>Disciplinary probation (LCA): <b>{lca.elapsedActive}</b> active days / {lca.durationDays} — <b style={{color:lca.isFrozen?'#7C3AED':'#22C55E'}}>{lca.isFrozen?`FROZEN (${lca.remaining}d remaining)`:`${lca.remaining}d remaining`}</b>{lca.freezeDays>0&&` (${lca.freezeDays}d frozen)`}</div>}
+                {lca && <div style={{marginTop:3}}>Disciplinary probation (LCA): <b>{lca.elapsedActive}</b> active days / {lca.durationDays} — <b style={{color:lca.isFrozen?'#7C3AED':'#22C55E'}}>{lca.isFrozen?'FROZEN ('+lca.remaining+'d remaining)':lca.remaining+'d remaining'}</b>{lca.freezeDays>0&&'('+lca.freezeDays+'d frozen)'}</div>}
               </div>
             })()}
           </div>}

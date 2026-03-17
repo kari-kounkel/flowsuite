@@ -101,7 +101,7 @@ const EMP_FIELDS = [
 const DEPARTMENTS = ['Digital Production','Wide Format','Operations/CS','Executive','Shipping/Receiving','Sales','Admin']
 
 // ── Helpers ──
-const gn = (e) => `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
+const gn = (e) => ((e.preferred_name || e.first_name || '') + ' ' + (e.last_name || '')).trim()
 
 // Progressive Discipline — auto-calculated status + next-level suggestion
 const PROGRESSION_CHAIN = ['verbal','written','final_written','suspension','termination']
@@ -500,12 +500,12 @@ export default function PeopleFlowModule({ orgId, C }) {
 
   return(<div>
     {/* Tab Nav */}
-    <div style={{display:'flex',gap:2,flexWrap:'wrap',alignItems:'center',marginBottom:12,padding:'8px 0',borderBottom:`1px solid ${C.bdr}`}}>
+    <div style={{display:'flex',gap:2,flexWrap:'wrap',alignItems:'center',marginBottom:12,padding:'8px 0',borderBottom:'1px solid '+C.bdr}}>
       {allTabs.map(t=>{
         const allowed = canAccessTab(t.k)
         return <button key={t.k} onClick={()=>{if(allowed)go(t.k)}} style={{
           background:view===t.k&&allowed?C.gD:'transparent',
-          border:`1px solid ${view===t.k&&allowed?C.go:C.bdrF}`,
+          border:'1px solid '+view===t.k&&allowed?C.go:C.bdrF,
           color:view===t.k&&allowed?C.go:allowed?C.g:'rgba(128,128,128,0.3)',
           padding:'4px 8px',borderRadius:6,
           cursor:allowed?'pointer':'not-allowed',
@@ -523,7 +523,7 @@ export default function PeopleFlowModule({ orgId, C }) {
       </div>
       {alerts.length>0&&<Card C={C} style={{marginBottom:16}}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>⚠ Alerts</h3>
         {alerts.map((a,i)=>(
-  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<alerts.length-1?`1px solid ${C.bdr}`:'none',gap:8}}>
+  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<alerts.length-1?'1px solid '+C.bdr:'none',gap:8}}>
     <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
     <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
       {a.reinstatementDisc && <button onClick={()=>{if(confirm('Confirm end of probation for this employee?\n\nThis will reverse the last '+(a.reinstatementDisc.reverse_count||2)+' discipline record(s) and restore them to Active status.'))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>Confirm ✓</button>}
@@ -629,7 +629,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
       <div style={{fontSize:11}}>Ask HR to make sure your login email matches your employee record.</div>
     </Card>}
 
-    {visibleEmps.length > 0 && <input placeholder="Search team..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
+    {visibleEmps.length > 0 && <input placeholder="Search team..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
 
     {filtered.map(e=>{
       const isExpanded = expandedId === e.id
@@ -665,13 +665,13 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           </div>
         </div>
 
-        {!isAdmin && isExpanded && <div style={{padding:'10px 14px',paddingTop:0,borderTop:`1px solid ${C.bdr}`}}>
+        {!isAdmin && isExpanded && <div style={{padding:'10px 14px',paddingTop:0,borderTop:'1px solid '+C.bdr}}>
           {onbPct !== null && <div style={{marginBottom:10,paddingTop:10}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,fontSize:10,color:C.g}}>
               <span>Onboarding Progress</span><span style={{color:onbPctColor,fontWeight:700}}>{onbPct}%</span>
             </div>
             <div style={{height:4,borderRadius:99,background:C.nL}}>
-              <div style={{height:'100%',borderRadius:99,background:onbPctColor,width:`${onbPct}%`,transition:'width 0.3s'}}/>
+              <div style={{height:'100%',borderRadius:99,background:onbPctColor,width:onbPct+'%',transition:'width 0.3s'}}/>
             </div>
           </div>}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
@@ -684,7 +684,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           </div>
           {canSeeDisc && discTotal > 0 && (()=>{
             const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
-            return <div style={{paddingTop:8,borderTop:`1px solid ${C.bdr}`}}>
+            return <div style={{paddingTop:8,borderTop:'1px solid '+C.bdr}}>
               <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>
                 Discipline History ({empDisc.length}) · {discActive} active progressive
               </div>
@@ -704,7 +704,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           })()}
         </div>}
 
-        {isAdmin && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:`1px solid ${C.bdr}`,flexWrap:'wrap'}}>
+        {isAdmin && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
           {(!e.offer_status || e.offer_status==='Pending') &&
             <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>📄 Send Offer</Btn>}
           {e.offer_status==='Pending' &&
@@ -734,14 +734,14 @@ function OfferLetterModal({emp, onClose, C}) {
     pay_rate: emp.rate || '',
     offer_date: emp.offer_date || today,
     start_date: emp.start_date || '',
-    body: `We are pleased to extend this offer of employment for the position of {role} in the {dept} department.\n\nYour starting pay rate will be ${'{pay_rate}'} per hour.\n\nYour anticipated start date is {start_date}.\n\nThis offer is contingent upon successful completion of a background check and any other pre-employment requirements.\n\nPlease sign and return this letter to confirm your acceptance. This is an at-will employment offer.`
+    body: 'We are pleased to extend this offer of employment for the position of {role} in the {dept} department.\\n\\nYour starting pay rate will be '+'{pay_rate+''} per hour.\\n\\nYour anticipated start date is {start_date}.\\n\\nThis offer is contingent upon successful completion of a background check and any other pre-employment requirements.\\n\\nPlease sign and return this letter to confirm your acceptance. This is an at-will employment offer.'
   })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
   const resolvedBody = f.body
     .replace(/{role}/g, f.role)
     .replace(/{dept}/g, f.dept)
-    .replace(/{pay_rate}/g, f.pay_rate ? `$${f.pay_rate}` : '[PAY RATE]')
+    .replace(/{pay_rate}/g, f.pay_rate ? '$'+f.pay_rate : '[PAY RATE]')
     .replace(/{start_date}/g, f.start_date ? fm(f.start_date) : '[START DATE]')
 
   const handleGenerate = () => {
@@ -760,12 +760,12 @@ function OfferLetterModal({emp, onClose, C}) {
     generateLetterPDF(html, 'Offer Letter -- '+f.emp_name)
   }
 
-  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:3}
 
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000}}>
-      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
           <h3 style={{margin:0,fontSize:16}}>Offer Letter — {gn(emp)}</h3>
           <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
@@ -838,23 +838,23 @@ function UnionNotificationModal({emp, onClose, onConfirmStart, C}) {
     if (onConfirmStart) onConfirmStart(startDate, seniority)
   }
 
-  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:3}
 
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000}}>
-      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+      <div style={{background:C.bg2,borderRadius:12,padding:24,width:520,maxHeight:'85vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
           <h3 style={{margin:0,fontSize:16}}>Union Notification — {gn(emp)}</h3>
           <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
         </div>
-        <div style={{background:C.nL,borderRadius:8,padding:12,marginBottom:14,border:`1px solid ${C.bdr}`}}>
+        <div style={{background:C.nL,borderRadius:8,padding:12,marginBottom:14,border:'1px solid '+C.bdr}}>
           <div style={{fontSize:11,color:C.am,fontWeight:700,marginBottom:6}}>⚠ Confirm Start Date Before Generating</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             <div><label style={lbl}>Start Date</label><input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={inp}/></div>
             <div>
               <label style={lbl}>Seniority Date (auto)</label>
-              <div style={{padding:'6px 8px',background:C.bg2,border:`1px solid ${C.bdr}`,borderRadius:6,fontSize:12,color:seniority?C.gr:C.g}}>
+              <div style={{padding:'6px 8px',background:C.bg2,border:'1px solid '+C.bdr,borderRadius:6,fontSize:12,color:seniority?C.gr:C.g}}>
                 {seniority ? fm(seniority) : 'Enter start date →'}
               </div>
             </div>
@@ -886,24 +886,24 @@ function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){
   const[f,setF]=useState(emp||{status:'Active'})
   const up=(k,v)=>setF(p=>({...p,[k]:v}))
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}}>
-    <div style={{background:C.bg2,borderRadius:12,padding:24,width:420,maxHeight:'80vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+    <div style={{background:C.bg2,borderRadius:12,padding:24,width:420,maxHeight:'80vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}><h3 style={{margin:0,fontSize:16}}>{emp?'Edit':'New'} Employee</h3><button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button></div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
         {EMP_FIELDS.map(([k,l])=><div key={k}><label style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{l}</label>
-          {k==='role'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{['','C-Level','Manager','Lead','Staff'].map(s=><option key={s}>{s}</option>)}</select>
-          :k==='dept'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{[''].concat(DEPARTMENTS).map(s=><option key={s}>{s}</option>)}</select>
-          :k==='status'?<select value={f[k]||'Active'} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          {k==='role'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{['','C-Level','Manager','Lead','Staff'].map(s=><option key={s}>{s}</option>)}</select>
+          :k==='dept'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>{[''].concat(DEPARTMENTS).map(s=><option key={s}>{s}</option>)}</select>
+          :k==='status'?<select value={f[k]||'Active'} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             {['active','laid_off','on_leave','probation','terminated','inactive'].map(s=><option key={s}>{s}</option>)}</select>
-          :k==='union_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          :k==='union_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             {['','Union Active','Non-Union','1099','Probation'].map(s=><option key={s}>{s}</option>)}</select>
-          :k==='reports_to'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          :k==='reports_to'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             <option value="">— None —</option>
             {managerOptions.map(m=><option key={m.id} value={m.id}>{gn(m)} ({m.role})</option>)}
           </select>
-          :k==='offer_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+          :k==='offer_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
             {['','Pending','Accepted','Declined'].map(s=><option key={s}>{s}</option>)}</select>
-          :k==='emp_code'?<input value={f[k]||''} readOnly style={{width:'100%',padding:'6px 8px',background:C.nL,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.g,fontSize:12,boxSizing:'border-box',fontFamily:'inherit',cursor:'not-allowed'}}/>
-          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date','layoff_date','expected_recall_date','offer_date','start_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
+          :k==='emp_code'?<input value={f[k]||''} readOnly style={{width:'100%',padding:'6px 8px',background:C.nL,border:'1px solid '+C.bdr,borderRadius:6,color:C.g,fontSize:12,boxSizing:'border-box',fontFamily:'inherit',cursor:'not-allowed'}}/>
+          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date','layoff_date','expected_recall_date','offer_date','start_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
         </div>)}
       </div>
       <div style={{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}}><Btn ghost small onClick={onClose} C={C}>Cancel</Btn><Btn gold small onClick={()=>{onSave(f);onClose()}} C={C}>Save</Btn></div>
@@ -935,7 +935,7 @@ function OrgChartView({emps, C}){
         <div style={{
           display:'inline-flex', alignItems:'center', gap:8,
           padding:'6px 12px', borderRadius:8,
-          background:rc.bg, border:`1px solid ${rc.border}`,
+          background:rc.bg, border:'1px solid '+rc.border,
           fontSize:12
         }}>
           <div style={{width:8,height:8,borderRadius:99,background:rc.border,flexShrink:0}}/>
@@ -980,11 +980,11 @@ function UnionView({ac, C}){
   const calcTenure = (hireDate) => {
     if (!hireDate) return '—'
     const days = dbt(hireDate, td)
-    if (days < 365) return `${days}d`
+    if (days < 365) return days+'d'
     const yrs = Math.floor(days / 365)
     const remaining = days % 365
     const mos = Math.floor(remaining / 30)
-    return `${yrs}y ${mos}m`
+    return yrs+'y '+mos+'m'
   }
 
   return(<div>
@@ -994,7 +994,7 @@ function UnionView({ac, C}){
       <div style={{overflowX:'auto'}}>
         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
           <thead>
-            <tr style={{borderBottom:`2px solid ${C.bdr}`}}>
+            <tr style={{borderBottom:'2px solid '+C.bdr}}>
               {['#','Name','Dept','Local','Hire Date','Tenure','Status'].map(h=>
                 <th key={h} style={{textAlign:'left',padding:'8px',color:C.g,fontSize:10,textTransform:'uppercase',letterSpacing:0.5}}>{h}</th>
               )}
@@ -1002,7 +1002,7 @@ function UnionView({ac, C}){
           </thead>
           <tbody>
             {unionEmps.map((e,i)=>(
-              <tr key={e.id} style={{borderBottom:`1px solid ${C.bdr}`}}>
+              <tr key={e.id} style={{borderBottom:'1px solid '+C.bdr}}>
                 <td style={{padding:'8px',color:C.g,fontWeight:600,fontSize:11}}>{i+1}</td>
                 <td style={{padding:'8px',fontWeight:500}}>{gn(e)}</td>
                 <td style={{padding:'8px',color:C.g}}>{e.dept||'—'}</td>
@@ -1033,7 +1033,7 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,sepa
         if (!t.show) return null
         return <button key={t.k} onClick={()=>setSubTab(t.k)} style={{
           background:subTab===t.k?C.gD:'transparent',
-          border:`1px solid ${subTab===t.k?C.go:C.bdrF}`,
+          border:'1px solid '+subTab===t.k?C.go:C.bdrF,
           color:subTab===t.k?C.go:C.g,
           padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:500,fontFamily:'inherit'
         }}>{t.i} {t.l}</button>
@@ -1108,7 +1108,7 @@ function ReportsSubView({reports,saveReport,setReports,emps,ac,mod,setMod,C,isAd
             <div style={{fontSize:9,color:C.g,marginTop:2}}>{fm(r.created_at)}</div>
           </div>
         </div>
-        {viewReport?.id===r.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`}}>
+        {viewReport?.id===r.id&&<div style={{marginTop:10,paddingTop:10,borderTop:'1px solid '+C.bdr}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Submitted By</span><div>{r.submitted_by_name||r.submitted_by_email||'—'}</div></div>
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Routed To</span><div>{r.routed_to ? (emps.find(e=>e.id===r.routed_to) ? gn(emps.find(e=>e.id===r.routed_to)) : r.routed_to) : '—'}</div></div>
@@ -1124,7 +1124,7 @@ function ReportsSubView({reports,saveReport,setReports,emps,ac,mod,setMod,C,isAd
             {REPORT_STATUSES.filter(s=>s.v!==r.status).map(s=>
               <button key={s.v} onClick={(e)=>{e.stopPropagation();updateStatus(r,s.v)}} style={{
                 padding:'4px 10px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',
-                background:'transparent',border:`1px solid ${s.c}`,color:s.c
+                background:'transparent',border:'1px solid '+s.c,color:s.c
               }}>→ {s.l}</button>
             )}
           </div>}
@@ -1164,7 +1164,7 @@ function ReportModal({onSave,onClose,C,emps,userEmail,userEmpRecord,allEmps}){
   }
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:440,maxHeight:'80vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:440,maxHeight:'80vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:16}}>
         <h3 style={{margin:0,fontSize:16}}>Submit Workplace Report</h3>
         <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
@@ -1176,28 +1176,28 @@ function ReportModal({onSave,onClose,C,emps,userEmail,userEmpRecord,allEmps}){
           <button key={t.v} onClick={()=>setF(p=>({...p,report_type:t.v}))} style={{
             padding:'6px 12px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',
             background:f.report_type===t.v?t.c+'22':'transparent',
-            border:`1px solid ${f.report_type===t.v?t.c:C.bdr}`,
+            border:'1px solid '+f.report_type===t.v?t.c:C.bdr,
             color:f.report_type===t.v?t.c:C.g
           }}>{t.i} {t.l}</button>
         )}
       </div>
 
       <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>About (Employee)</label>
-      <select value={f.subject_employee_id||''} onChange={e=>handleSubjectChange(e.target.value)} style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:4,fontFamily:'inherit'}}>
+      <select value={f.subject_employee_id||''} onChange={e=>handleSubjectChange(e.target.value)} style={{width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,marginBottom:4,fontFamily:'inherit'}}>
         <option value="">Select Employee</option>
         {emps.map(e=><option key={e.id} value={e.id}>{gn(e)} — {e.dept||'—'}</option>)}
       </select>
       {f.routed_to_name && <div style={{fontSize:10,color:C.g,marginBottom:10}}>Auto-routed to: <b style={{color:C.go}}>{f.routed_to_name}</b></div>}
 
       <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}}>Description</label>
-      <textarea value={f.description||''} onChange={e=>setF(p=>({...p,description:e.target.value}))} rows={4} placeholder="Describe the concern, incident, safety issue, or praise..." style={{width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,marginBottom:12,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
+      <textarea value={f.description||''} onChange={e=>setF(p=>({...p,description:e.target.value}))} rows={4} placeholder="Describe the concern, incident, safety issue, or praise..." style={{width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,marginBottom:12,boxSizing:'border-box',fontFamily:'inherit',resize:'vertical'}}/>
 
       <div style={{marginBottom:12}}>
         <label style={{fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:6}}>Attachments <span style={{fontWeight:400,textTransform:'none'}}>(doctor notes, supporting docs)</span></label>
-        <div style={{border:`1px dashed ${C.bdr}`,borderRadius:8,padding:'10px 12px',background:'rgba(255,255,255,0.02)'}}>
+        <div style={{border:'1px dashed '+C.bdr,borderRadius:8,padding:'10px 12px',background:'rgba(255,255,255,0.02)'}}>
           {(f.attachments||[]).length > 0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
             {(f.attachments||[]).map((att,i) => (
-              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:'rgba(255,255,255,0.04)',borderRadius:4,border:`1px solid ${C.bdr}`}}>
+              <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:'rgba(255,255,255,0.04)',borderRadius:4,border:'1px solid '+C.bdr}}>
                 <span style={{fontSize:11}}>📎 {att.name}</span>
                 <button onClick={()=>setF(p=>({...p,attachments:(p.attachments||[]).filter((_,j)=>j!==i)}))} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,lineHeight:1}}>×</button>
               </div>
@@ -1258,7 +1258,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
             {isProgressive && <span style={{
               display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
               background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
-              color:active?'#22C55E':'#6B7280',border:`1px solid ${active?'#22C55E':'#6B7280'}`
+              color:active?'#22C55E':'#6B7280',border:'1px solid '+active?'#22C55E':'#6B7280'
             }}>{active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
@@ -1312,14 +1312,14 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
   }
 
 
-  const inp = {width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
   // Signature overlay
   if (sigMode) {
     const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
     return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
-      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:`2px solid ${C.go}`,textAlign:'center'}}>
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
         <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
         <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.</div>
@@ -1334,7 +1334,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
   }
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
         <div>
           <div style={{fontSize:9,color:C.am,textTransform:'uppercase',letterSpacing:2}}>Editing Record</div>
@@ -1378,7 +1378,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
         {INCIDENT_NATURES.map(n=>(<button key={n} onClick={()=>toggleNature(n)} style={{
           padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
-          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:`1px solid ${selNatures.includes(n)?'#DC2626':C.bdr}`,color:selNatures.includes(n)?'#DC2626':C.g
+          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:'1px solid '+selNatures.includes(n)?'#DC2626':C.bdr,color:selNatures.includes(n)?'#DC2626':C.g
         }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>))}
       </div>
 
@@ -1393,9 +1393,9 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
 
       {/* Attachments */}
       <label style={{...lbl,marginBottom:6}}>Attachments ({existingAtts.length + attachments.length}/7)</label>
-      <div style={{border:`1px dashed ${C.bdr}`,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
+      <div style={{border:'1px dashed '+C.bdr,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
         {existingAtts.map((att,i) => (
-          <div key={'ex'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:`1px solid ${C.bdr}`,marginBottom:4}}>
+          <div key={'ex'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid '+C.bdr,marginBottom:4}}>
             <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
               <span style={{fontSize:12}}>📎</span>
               <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</span>
@@ -1404,7 +1404,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
           </div>
         ))}
         {attachments.map((file,i) => (
-          <div key={'new'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:`1px solid #22C55E`,marginBottom:4}}>
+          <div key={'new'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid #22C55E',marginBottom:4}}>
             <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
               <span style={{fontSize:12}}>📎</span>
               <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span>
@@ -1419,7 +1419,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       </div>
 
       {/* Future Action */}
-      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:`1px solid ${C.bdr}`}}>
+      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:'1px solid '+C.bdr}}>
         If Performance doesn't improve, it may result in further disciplinary action, up to and including termination of employment.
         <div style={{marginTop:6,fontSize:11,fontWeight:600,fontStyle:'italic'}}>My signature below signifies that I have read and understand the above report.</div>
       </div>
@@ -1432,7 +1432,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
           {key:'employer',label:'Employer Signature',name:f.employer_signature,ts:f.sup_sig_date,clear:()=>{up('employer_signature','');up('sup_sig_date','')}},
           {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,clear:()=>{up('witness_name','');up('witness_sig_date','')}}
         ].map((s,i)=>(
-          <div key={i} style={{border:`1px solid ${s.name?'#22C55E':C.bdr}`,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+          <div key={i} style={{border:'1px solid '+s.name?'#22C55E':C.bdr,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div>
                 <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
@@ -1440,8 +1440,8 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
               </div>
               <div style={{textAlign:'right'}}>
                 {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
-                {!s.name ? <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?`1px solid ${C.go}`:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
-                  : <button onClick={s.clear} style={{background:'transparent',border:`1px solid ${C.bdr}`,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>}
+                {!s.name ? <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?'1px solid '+C.go:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
+                  : <button onClick={s.clear} style={{background:'transparent',border:'1px solid '+C.bdr,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>}
               </div>
             </div>
           </div>
@@ -1517,7 +1517,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       for (const file of attachments) {
         const ts = Date.now()
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-        const path = `discipline/${f.employee_id || 'unknown'}/${ts}_${safeName}`
+        const path = 'discipline/'+(f.employee_id || 'unknown')+'/'+ts+'_'+safeName
         const { data: upData, error: upErr } = await supabase.storage.from('flowsuite-files').upload(path, file)
         if (upErr) { console.error('Upload error:', upErr); continue }
         const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(path)
@@ -1536,14 +1536,14 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
     return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
   }
 
-  const inp = {width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
   // ── Signature Overlay ──
   if (sigMode) {
     const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
     return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
-      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:`2px solid ${C.go}`,textAlign:'center'}}>
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
         <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
         <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>
@@ -1561,7 +1561,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   }
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
         <div>
           <div style={{fontSize:9,color:C.go,textTransform:'uppercase',letterSpacing:2}}>Minuteman Press Uptown</div>
@@ -1634,7 +1634,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
             <div style={{fontSize:9,color:C.g,marginTop:3}}>Records retire after 1 year from date. Only active progressive records count toward escalation.</div>
           </div>
         })()}
-        <Card C={C} style={{marginBottom:12,padding:'8px 12px',background:C.aD,border:`1px solid ${C.am}`}}>
+        <Card C={C} style={{marginBottom:12,padding:'8px 12px',background:C.aD,border:'1px solid '+C.am}}>
           <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Prior Discipline ({priorDisc.length})</div>
           {priorDisc.map((d,i)=>{
             const pdt=DISC_TYPES.find(t=>t.v===d.type)
@@ -1664,7 +1664,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           <button key={n} onClick={()=>toggleNature(n)} style={{
             padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
             background:selNatures.includes(n)?'#FEE2E2':'transparent',
-            border:`1px solid ${selNatures.includes(n)?'#DC2626':C.bdr}`,
+            border:'1px solid '+selNatures.includes(n)?'#DC2626':C.bdr,
             color:selNatures.includes(n)?'#DC2626':C.g
           }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>
         ))}
@@ -1705,7 +1705,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       </div>}
 
       {/* ── Reinstatement w/ Conditions Fields ── */}
-      {f.type==='reinstatement' && <div style={{background:`rgba(14,165,233,0.08)`,border:`1px solid ${RC}`,borderRadius:8,padding:'12px 16px',marginBottom:12}}>
+      {f.type==='reinstatement' && <div style={{background:'rgba(14,165,233,0.08)',border:'1px solid '+RC,borderRadius:8,padding:'12px 16px',marginBottom:12}}>
         <div style={{fontSize:11,fontWeight:700,color:RC,marginBottom:8}}>Reinstatement Terms</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
           <div>
@@ -1754,10 +1754,10 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 
       {/* ── Attachments (up to 7) ── */}
       <label style={{...lbl,marginBottom:6}}>Attachments <span style={{fontWeight:400,textTransform:'none'}}>({attachments.length}/7 — emails, documents, photos)</span></label>
-      <div style={{border:`1px dashed ${C.bdr}`,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
+      <div style={{border:'1px dashed '+C.bdr,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
         {attachments.length > 0 && <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:8}}>
           {attachments.map((file,i) => (
-            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:`1px solid ${C.bdr}`}}>
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid '+C.bdr}}>
               <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
                 <span style={{fontSize:12}}>📎</span>
                 <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span>
@@ -1775,7 +1775,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
 
       {/* ── Future Action Warning ── */}
       <label style={lbl}>Future Action if Unsatisfactory Performance Recurs</label>
-      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:`1px solid ${C.bdr}`}}>
+      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:'1px solid '+C.bdr}}>
         If Performance doesn't improve, it may result in further disciplinary action, up to and including termination of employment.
         <div style={{marginTop:6,fontSize:11,fontWeight:600,fontStyle:'italic'}}>My signature below signifies that I have read and understand the above report.</div>
       </div>
@@ -1791,7 +1791,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,
             clear:()=>{up('witness_name','');up('witness_sig_date','')}}
         ].map((s,i)=>(
-          <div key={i} style={{border:`1px solid ${s.name?'#22C55E':C.bdr}`,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+          <div key={i} style={{border:'1px solid '+s.name?'#22C55E':C.bdr,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div>
                 <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
@@ -1801,8 +1801,8 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
               <div style={{textAlign:'right'}}>
                 {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
                 {!s.name ?
-                  <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?`1px solid ${C.go}`:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
-                  : <button onClick={s.clear} style={{background:'transparent',border:`1px solid ${C.bdr}`,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>
+                  <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?'1px solid '+C.go:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
+                  : <button onClick={s.clear} style={{background:'transparent',border:'1px solid '+C.bdr,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>
                 }
               </div>
             </div>
@@ -1852,7 +1852,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
         </div>
 
         {/* Expanded detail */}
-        {viewSep?.id===s.id&&<div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.bdr}`}}>
+        {viewSep?.id===s.id&&<div style={{marginTop:10,paddingTop:10,borderTop:'1px solid '+C.bdr}}>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Effective Date</span><div>{fm(s.effective_date)||'—'}</div></div>
             <div style={{fontSize:11}}><span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>Type</span><div>{st?.l||s.separation_type}</div></div>
@@ -1906,7 +1906,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
                 setEmps(p=>p.map(e=>e.id===s.employee_id?{...e,status:'laid_off',recall_date:null}:e))
               }
             }}} style={{background:'transparent',color:'#EF4444',border:'1px solid #EF4444',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↺ Undo Recall</button>}
-            <button onClick={(e)=>{e.stopPropagation();setEditingSep(s);setMod('separation')}} style={{background:'transparent',color:C.go,border:`1px solid ${C.go}`,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>✏️ Edit</button>
+            <button onClick={(e)=>{e.stopPropagation();setEditingSep(s);setMod('separation')}} style={{background:'transparent',color:C.go,border:'1px solid '+C.go,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>✏️ Edit</button>
 
           </div>
         </div>}
@@ -1975,11 +1975,11 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
     onClose()
   }
 
-  const inp = {width:'100%',padding:8,background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
-    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:`1px solid ${C.bdr}`}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
         <div>
           <div style={{fontSize:9,color:sepType?.c||C.go,textTransform:'uppercase',letterSpacing:2}}>FlowSuite PeopleFlow</div>
@@ -1995,7 +1995,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
           <button key={t.v} onClick={()=>up('separation_type',t.v)} style={{
             padding:'6px 12px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',
             background:f.separation_type===t.v?t.c+'22':'transparent',
-            border:`1px solid ${f.separation_type===t.v?t.c:C.bdr}`,
+            border:'1px solid '+f.separation_type===t.v?t.c:C.bdr,
             color:f.separation_type===t.v?t.c:C.g
           }}>{t.l}</button>
         )}
@@ -2077,7 +2077,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
           <button key={item.id} onClick={()=>toggleEquip(item.id)} style={{
             padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
             background:equipChecked.includes(item.id)?'rgba(34,197,94,0.1)':'transparent',
-            border:`1px solid ${equipChecked.includes(item.id)?'#22C55E':C.bdr}`,
+            border:'1px solid '+equipChecked.includes(item.id)?'#22C55E':C.bdr,
             color:equipChecked.includes(item.id)?'#22C55E':C.g
           }}>{equipChecked.includes(item.id)?'✓':'○'} {item.l}</button>
         ))}
@@ -2110,7 +2110,7 @@ function OnbView({ac,onb,toggleOnb,C}){
     {recent.length===0?<Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>No recent hires.</Card>:
       recent.map(e=>{const ed=onb[e.id]||{};const dn=OBS.filter(s=>ed[s.id]).length;const pc=Math.round(dn/OBS.length*100);return<Card key={e.id} C={C} style={{marginBottom:10}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div><h3 style={{margin:0,fontSize:14}}>{gn(e)}</h3><div style={{fontSize:11,color:C.g}}>{fm(e.hire_date)} • Day {dbt(e.hire_date||td,td)}</div></div><div style={{fontSize:18,fontWeight:700,color:pc===100?C.gr:C.go}}>{pc}%</div></div>
-        <div style={{height:3,background:C.nL,borderRadius:99,marginBottom:8,overflow:'hidden'}}><div style={{height:'100%',width:`${pc}%`,background:pc===100?C.gr:C.go,borderRadius:99}}/></div>
+        <div style={{height:3,background:C.nL,borderRadius:99,marginBottom:8,overflow:'hidden'}}><div style={{height:'100%',width:pc+'%',background:pc===100?C.gr:C.go,borderRadius:99}}/></div>
         {phs.map(ph=><div key={ph} style={{marginBottom:6}}><div style={{fontSize:9,color:C.go,textTransform:'uppercase',marginBottom:2}}>{ph}</div>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>{OBS.filter(s=>s.p===ph).map(s=><label key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',fontSize:10,textDecoration:ed[s.id]?'line-through':'none',color:ed[s.id]?C.g:C.w}}>{ed[s.id]?'✓':'○'} {s.l}</label>)}</div></div>)}</Card>})}</div>)
 }
@@ -2120,7 +2120,7 @@ function DocsView({ac,docs,toggleDoc,C}){
     {ac.map(e=>{const ed=docs[e.id]||{};const dn=DOC_ITEMS.filter(d=>ed[d.id]).length;const pc=Math.round(dn/DOC_ITEMS.length*100);const cats=[...new Set(DOC_ITEMS.map(d=>d.c))]
       return<Card key={e.id} C={C} style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{gn(e)}</div><div style={{fontSize:12,fontWeight:700,color:pc===100?C.gr:pc>50?C.am:C.rd}}>{pc}%</div></div>
-        <div style={{height:2,background:C.nL,borderRadius:99,marginBottom:6,overflow:'hidden'}}><div style={{height:'100%',width:`${pc}%`,background:pc===100?C.gr:C.go}}/></div>
+        <div style={{height:2,background:C.nL,borderRadius:99,marginBottom:6,overflow:'hidden'}}><div style={{height:'100%',width:pc+'%',background:pc===100?C.gr:C.go}}/></div>
         {cats.map(cat=><div key={cat} style={{display:'flex',gap:2,flexWrap:'wrap',marginBottom:2}}>
           {DOC_ITEMS.filter(d=>d.c===cat).map(d=><span key={d.id} onClick={()=>toggleDoc(e.id,d.id,ed[d.id])} style={{padding:'2px 6px',borderRadius:4,fontSize:9,cursor:'pointer',background:ed[d.id]?C.grD:C.nL,color:ed[d.id]?C.gr:C.g,textDecoration:ed[d.id]?'line-through':'none'}}>{d.l}</span>)}</div>)}
       </Card>})}</div>)
@@ -2206,7 +2206,7 @@ function ResourcesView({C,isAdmin,isManager}){
       <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>Forms & Requests</h3>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8,marginBottom:8}}>
         {empForms.map(f=>(
-          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?`2px solid ${C.go}`:`1px solid ${C.bdr}`}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.go:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
             <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
               <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.go:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.go,flexShrink:0,fontWeight:700}}>{f.icon}</div>
               <div style={{flex:1}}>
@@ -2222,7 +2222,7 @@ function ResourcesView({C,isAdmin,isManager}){
         <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:6,marginTop:12}}>Management Forms — Send to Employee</div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
           {mgtForms.map(f=>(
-            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?`2px solid ${C.am}`:`1px solid ${C.bdr}`}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.am:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
               <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
                 <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.am:C.aD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.am,flexShrink:0,fontWeight:700}}>{f.icon}</div>
                 <div style={{flex:1}}>
@@ -2240,7 +2240,7 @@ function ResourcesView({C,isAdmin,isManager}){
         const form = FORMS.find(f=>f.id===activeForm)
         if(!form) return null
         return <Card C={C} style={{marginTop:12,padding:0,overflow:'hidden'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:`1px solid ${C.bdr}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid '+C.bdr}}>
             <div style={{fontWeight:600,fontSize:13,color:C.go}}>{form.l}</div>
             <div style={{display:'flex',gap:6,alignItems:'center'}}>
               <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>Open in new tab ↗</a>

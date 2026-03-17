@@ -413,7 +413,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     setDisc(p=>p.map(x=>x.id===reinstDisc.id?{...x,status:'closed'}:x))
     await supabase.from('employees').update({status:'Active'}).eq('id',reinstDisc.employee_id)
     setEmps(p=>p.map(e=>e.id===reinstDisc.employee_id?{...e,status:'Active'}:e))
-    sh(`Probation confirmed — ${toReverse.length} discipline(s) reversed, employee restored to Active ✓`)
+    sh(`Probation confirmed -- ${toReverse.length} discipline(s) reversed, employee restored to Active`)
   }
   const toggleOnb = async(empId,stepId,cur)=>{
     const nv=!cur
@@ -900,8 +900,10 @@ function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){
             <option value="">— None —</option>
             {managerOptions.map(m=><option key={m.id} value={m.id}>{gn(m)} ({m.role})</option>)}
           </select>
+          :k==='offer_status'?<select value={f[k]||''} onChange={e=>up(k,e.target.value)} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,fontFamily:'inherit'}}>
+            {['','Pending','Accepted','Declined'].map(s=><option key={s}>{s}</option>)}</select>
           :k==='emp_code'?<input value={f[k]||''} readOnly style={{width:'100%',padding:'6px 8px',background:C.nL,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.g,fontSize:12,boxSizing:'border-box',fontFamily:'inherit',cursor:'not-allowed'}}/>
-          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date','layoff_date','expected_recall_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
+          :<input value={f[k]||''} onChange={e=>up(k,e.target.value)} type={['hire_date','dob','seniority_date','layoff_date','expected_recall_date','offer_date','start_date'].includes(k)?'date':'text'} style={{width:'100%',padding:'6px 8px',background:C.ch,border:`1px solid ${C.bdr}`,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}}/>}
         </div>)}
       </div>
       <div style={{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}}><Btn ghost small onClick={onClose} C={C}>Cancel</Btn><Btn gold small onClick={()=>{onSave(f);onClose()}} C={C}>Save</Btn></div>

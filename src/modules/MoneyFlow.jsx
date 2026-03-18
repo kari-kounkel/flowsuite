@@ -4723,8 +4723,47 @@ function CashFlowForecaster({ orgId, C }) {
 
   const [dragIdx, setDragIdx] = useState(null)
   const [dragOver, setDragOver] = useState(null)
+  const [pushing, setPushing] = useState(false)
   const toggleMark = (id) => setBills(p => p.map(b => b.id === id ? { ...b, marked: !b.marked } : b))
   const setPayAmt = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payAmt: val } : b))
+  const setPayDate = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payDate: val } : b))
+
+  const pushToTasks = async () => {
+    const toQueue = bills.filter(b => b.marked && !b.queued)
+    if (!toQueue.length) { sh('No vendors marked to pay'); return }
+    setPushing(true)
+    const today = new Date().toISOString().split('T')[0]
+    // Earliest due date in the batch
+    const dueDates = toQueue.map(b => b.payDate).filter(Boolean).sort()
+    const dueDate = dueDates[0] || today
+    // Build one description listing all vendors
+    const lines = toQueue.map(b => {
+      const amt = '$' + (parseFloat(b.payAmt) || Math.abs(b.total)).toFixed(2)
+      return b.vendor + ' — ' + amt + (b.payDate ? ' (by ' + b.payDate + ')' : '')
+    })
+    const total = toQueue.reduce((s,b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
+    const description = 'AP Payment Run — ' + entity.toUpperCase() + '
+Total: $' + total.toFixed(2) + '
+
+' + lines.join('
+')
+    const { error } = await supabase.from('moneyflow_tasks').insert([{
+      org_id: orgId,
+      entity: entity,
+      type: 'AP',
+      source: 'cashflow_ap',
+      name: 'AP Payment Run — ' + entity.toUpperCase() + ' — $' + total.toFixed(2),
+      description,
+      due_date: dueDate,
+      status: 'open',
+      is_recurring: false,
+      recur_interval: 0,
+    }])
+    if (error) { sh('Error: ' + error.message); setPushing(false); return }
+    setBills(p => p.map(b => toQueue.find(q => (q.id||q.vendor) === (b.id||b.vendor)) ? { ...b, queued: true } : b))
+    setPushing(false)
+    sh('Payment run pushed to Tasks — ' + toQueue.length + ' vendors, $' + total.toFixed(2) + ' total')
+  }
   const onDragStart = (idx) => setDragIdx(idx)
   const onDragOver = (e, idx) => { e.preventDefault(); setDragOver(idx) }
   const onDrop = (idx) => {
@@ -4799,12 +4838,20 @@ function CashFlowForecaster({ orgId, C }) {
       {!loading && bills.length === 0 && <div style={{ padding:'40px 0', textAlign:'center', color:C.g, fontSize:13 }}>{'No AP data for this entity. Upload an AP Aging CSV to get started.'}</div>}
 
       {!loading && bills.length > 0 && <>
-        <div style={{ display:'flex', gap:24, marginBottom:12, flexWrap:'wrap' }}>
-          <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:C.rd }}>{fmt(totalOwed)}</span></div>
-          <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
-          <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
+          <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
+            <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:WARN }}>{fmt(totalOwed - markedTotal)}</span></div>
+            {bills.filter(b=>b.queued).length > 0 && <div style={{ fontSize:12, color:C.g }}>{'Queued to tasks: '}<span style={{ fontWeight:700, color:C.go }}>{bills.filter(b=>b.queued).length+' vendors'}</span></div>}
+          </div>
+          {bills.filter(b=>b.marked&&!b.queued).length > 0 && (
+            <button onClick={pushToTasks} disabled={pushing} style={{ padding:'6px 18px', borderRadius:6, border:'none', background:C.go, color:C.bg, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+              {pushing ? 'Pushing...' : ('Push ' + bills.filter(b=>b.marked&&!b.queued).length + ' to Tasks')}
+            </button>
+          )}
         </div>
-        <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Drag rows to prioritize. Check to mark for payment. Enter a partial amount to pay less than the full balance.'}</div>
+        <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Drag to prioritize. Check to mark for payment. Set a pay date per vendor. Push to Tasks when ready.'}</div>
 
         {bills.map((b, idx) => (
           <div key={b.id||idx}
@@ -4813,7 +4860,7 @@ function CashFlowForecaster({ orgId, C }) {
             onDragOver={e => onDragOver(e, idx)}
             onDrop={() => onDrop(idx)}
             onDragEnd={onDragEnd}
-            style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', marginBottom:6, borderRadius:8, background:dragOver===idx?C.gD:b.marked?C.grD:C.nL, border:'1px solid '+(dragOver===idx?C.go:b.marked?C.gr:C.bdr), cursor:'grab', opacity:dragIdx===idx?0.5:1, transition:'border-color 0.1s' }}>
+            style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', marginBottom:6, borderRadius:8, background:dragOver===idx?C.gD:b.queued?C.nL:b.marked?C.grD:C.nL, border:'1px solid '+(dragOver===idx?C.go:b.queued?C.go:b.marked?C.gr:C.bdr), cursor:b.queued?'default':'grab', opacity:dragIdx===idx?0.5:b.queued?0.65:1, transition:'border-color 0.1s' }}>
             <span style={{ fontSize:13, color:C.g, flexShrink:0, cursor:'grab', paddingRight:2 }}>{'⠿'}</span>
             <span style={{ fontSize:11, color:C.g, minWidth:20, textAlign:'right', flexShrink:0 }}>{idx+1}</span>
             <input type="checkbox" checked={b.marked} onChange={() => toggleMark(b.id||idx)} style={{ flexShrink:0, cursor:'pointer', width:14, height:14 }} />
@@ -4831,9 +4878,13 @@ function CashFlowForecaster({ orgId, C }) {
               <div style={{ fontSize:13, fontWeight:700, color:b.marked?C.gr:C.w }}>{fmt(b.total)}</div>
               <div style={{ fontSize:9, color:C.g }}>{'total owed'}</div>
             </div>
-            {b.marked && (
+            {b.marked && !b.queued && (
               <input value={b.payAmt} onChange={ev => setPayAmt(b.id||idx, ev.target.value)} placeholder={Math.abs(b.total).toFixed(2)} style={{ width:90, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
             )}
+            {b.marked && !b.queued && (
+              <input type="date" value={b.payDate||''} onChange={ev => setPayDate(b.id||idx, ev.target.value)} style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
+            )}
+            {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
           </div>
         ))}
       </>}

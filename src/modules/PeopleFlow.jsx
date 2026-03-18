@@ -2379,44 +2379,54 @@ function ResourcesView({C,isAdmin,isManager,emps,orgId}){
   const [pushNote, setPushNote] = useState('')
   const [pushing, setPushing] = useState(false)
   const [pushToast, setPushToast] = useState('')
+  const [customForms, setCustomForms] = useState([])
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newFormLabel, setNewFormLabel] = useState('')
+  const [newFormUrl, setNewFormUrl] = useState('')
+  const [newFormDesc, setNewFormDesc] = useState('')
   const canManage = isAdmin || isManager
 
   const shp = msg => { setPushToast(msg); setTimeout(()=>setPushToast(''),3000) }
 
-  const FORMS = [
-    {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',icon:'$',url:'https://form.jotform.com/260085486550056',access:'all',flow:'employee'},
-    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance — deducted from next check',icon:'up',url:'https://form.jotform.com/260495386436063',access:'all',flow:'employee'},
-    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Send to employee to sign after reimbursement is issued',icon:'v',url:'https://form.jotform.com/260085845634058',access:'manage',flow:'management'},
-    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions — send to employee for signature',icon:'S',url:'https://form.jotform.com/260084859075061',access:'manage',flow:'management'},
+  const BUILT_IN_FORMS = [
+    {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',url:'https://form.jotform.com/260085486550056',access:'all'},
+    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance',url:'https://form.jotform.com/260495386436063',access:'all'},
+    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Employee signature after reimbursement is issued',url:'https://form.jotform.com/260085845634058',access:'manage'},
+    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions',url:'https://form.jotform.com/260084859075061',access:'manage'},
   ]
 
-  const visibleForms = FORMS.filter(f => f.access === 'all' || canManage)
-  const empForms = visibleForms.filter(f => f.flow === 'employee')
-  const mgtForms = visibleForms.filter(f => f.flow === 'management')
+  const allForms = [...BUILT_IN_FORMS, ...customForms]
+  const visibleForms = allForms.filter(f => f.access === 'all' || canManage)
   const activeEmps = emps.filter(e=>e.status!=='Terminated'&&e.status!=='terminated'&&e.status!=='Inactive'&&e.status!=='inactive').sort((a,b)=>(a.last_name||'').localeCompare(b.last_name||''))
+
+  const addCustomForm = () => {
+    if (!newFormLabel.trim() || !newFormUrl.trim()) { shp('Label and URL required.'); return }
+    const id = 'custom_' + Date.now()
+    setCustomForms(p=>[...p,{id,l:newFormLabel.trim(),desc:newFormDesc.trim(),url:newFormUrl.trim(),access:'all',custom:true}])
+    setNewFormLabel(''); setNewFormUrl(''); setNewFormDesc(''); setShowAddForm(false)
+    shp('Form added.')
+  }
+
+  const removeCustomForm = (id) => setCustomForms(p=>p.filter(f=>f.id!==id))
 
   const handlePush = async () => {
     if (!pushEmp || !pushForm) { shp('Select an employee and a form.'); return }
     setPushing(true)
     const emp = activeEmps.find(e=>e.id===pushEmp)
-    const form = FORMS.find(f=>f.id===pushForm)
+    const form = allForms.find(f=>f.id===pushForm)
     if (!emp || !form) { shp('Invalid selection.'); setPushing(false); return }
+    const msg = (pushNote || 'Please complete: ' + form.l) + ' — ' + form.url
     const { error } = await supabase.from('policy_pushes').insert({
       org_id: orgId,
-      title: form.l + ' — ' + gn(emp),
-      content: (pushNote || 'Please complete the following form: ' + form.l),
-      target_type: 'employee',
-      target_id: emp.id,
-      form_url: form.url,
-      pushed_by: isAdmin ? 'admin' : 'manager',
-      created_at: new Date().toISOString()
+      pushed_by: 'admin',
+      pushed_to: [gn(emp)],
+      message: msg,
+      section_id: null
     })
     setPushing(false)
     if (error) { shp('Error: ' + error.message); return }
-    shp('Form pushed to ' + gn(emp) + ' ✓')
-    setPushEmp('')
-    setPushForm('')
-    setPushNote('')
+    shp('Form pushed to ' + gn(emp) + ' checkmark')
+    setPushEmp(''); setPushForm(''); setPushNote('')
   }
 
   const inp = {width:'100%',padding:'7px 10px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
@@ -2425,63 +2435,91 @@ function ResourcesView({C,isAdmin,isManager,emps,orgId}){
     <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>{'Employee Resources'}</h2>
     <div style={{fontSize:11,color:C.g,marginBottom:16}}>{'Forms and self-service submissions.'}</div>
 
-    {/* ── EMPLOYEE SELF-SERVICE FORMS ── */}
+    {/* Self-Service Forms */}
     <div style={{marginBottom:20}}>
-      <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'Self-Service Forms'}</div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>
+        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>{'Self-Service Forms'}</div>
+        {canManage && <button onClick={()=>setShowAddForm(p=>!p)} style={{fontSize:10,padding:'3px 10px',borderRadius:5,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}}>{showAddForm ? 'Cancel' : '+ Add Form'}</button>}
+      </div>
+
+      {/* Add custom form */}
+      {canManage && showAddForm && <Card C={C} style={{padding:'12px 14px',marginBottom:10}}>
+        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:8}}>{'New Form'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+          <div>
+            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'Label'}</div>
+            <input value={newFormLabel} onChange={e=>setNewFormLabel(e.target.value)} placeholder="e.g. Equipment Request" style={inp}/>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'URL (JotForm or PDF link)'}</div>
+            <input value={newFormUrl} onChange={e=>setNewFormUrl(e.target.value)} placeholder="https://form.jotform.com/..." style={inp}/>
+          </div>
+        </div>
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'Description (optional)'}</div>
+          <input value={newFormDesc} onChange={e=>setNewFormDesc(e.target.value)} placeholder="What is this form for?" style={inp}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end'}}>
+          <Btn gold small onClick={addCustomForm} C={C}>{'Add'}</Btn>
+        </div>
+      </Card>}
+
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8,marginBottom:8}}>
-        {empForms.map(f=>(
-          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.go:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
-            <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-              <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.go:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,color:activeForm===f.id?C.bg:C.go,flexShrink:0,fontWeight:700}}>{f.icon}</div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.go:C.w,marginBottom:2}}>{f.l}</div>
-                <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
-              </div>
-            </div>
+        {visibleForms.map(f=>(
+          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.go:'1px solid '+C.bdr,position:'relative'}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+            {f.custom && canManage && <button onClick={ev=>{ev.stopPropagation();removeCustomForm(f.id)}} style={{position:'absolute',top:6,right:8,background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>{'x'}</button>}
+            <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.go:C.w,marginBottom:3}}>{f.l}</div>
+            {f.desc && <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>}
           </Card>
         ))}
       </div>
 
-      {/* Embedded Form */}
+      {/* Embedded Form or PDF link */}
       {activeForm && (()=>{
-        const form = FORMS.find(f=>f.id===activeForm)
-        if(!form) return null
-        return <Card C={C} style={{marginTop:12,padding:0,overflow:'hidden'}}>
+        const form = allForms.find(f=>f.id===activeForm)
+        if (!form) return null
+        const isPDF = form.url && form.url.toLowerCase().endsWith('.pdf')
+        return <Card C={C} style={{marginTop:8,padding:0,overflow:'hidden'}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid '+C.bdr}}>
             <div style={{fontWeight:600,fontSize:13,color:C.go}}>{form.l}</div>
-            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+            <div style={{display:'flex',gap:8,alignItems:'center'}}>
               <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>{'Open in new tab'}</a>
-              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16}}>{'x'}</button>
+              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16,fontFamily:'inherit'}}>{'x'}</button>
             </div>
           </div>
-          <iframe src={form.url} style={{width:'100%',height:600,border:'none',background:C.bg2}} title={form.l} allow="camera;microphone"/>
+          {isPDF
+            ? <div style={{padding:'20px 14px',textAlign:'center'}}>
+                <a href={form.url} target="_blank" rel="noopener noreferrer" style={{color:C.go,fontWeight:600,fontSize:13}}>{'Open PDF: '+form.l+' (new tab)'}</a>
+              </div>
+            : <iframe src={form.url} style={{width:'100%',height:600,border:'none',background:C.bg2}} title={form.l} allow="camera;microphone"/>
+          }
         </Card>
       })()}
     </div>
 
-    {/* ── PUSH A FORM TO AN EMPLOYEE (admin/manager only) ── */}
+    {/* Push a Form to an Employee */}
     {canManage && <div style={{marginBottom:20}}>
       <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'Push a Form to an Employee'}</div>
       <Card C={C} style={{padding:'14px 16px'}}>
-        <div style={{fontSize:11,color:C.g,marginBottom:12}}>{'Select an employee and a form. They will receive a notification to complete it.'}</div>
+        <div style={{fontSize:11,color:C.g,marginBottom:12}}>{'Employee receives a notification in PaperFlow to complete the selected form.'}</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div>
             <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Employee'}</div>
             <select value={pushEmp} onChange={e=>setPushEmp(e.target.value)} style={inp}>
-              <option value="">{'— Select employee —'}</option>
+              <option value="">{'-- Select employee --'}</option>
               {activeEmps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
             </select>
           </div>
           <div>
             <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Form'}</div>
             <select value={pushForm} onChange={e=>setPushForm(e.target.value)} style={inp}>
-              <option value="">{'— Select form —'}</option>
-              {FORMS.map(f=><option key={f.id} value={f.id}>{f.l}</option>)}
+              <option value="">{'-- Select form --'}</option>
+              {allForms.map(f=><option key={f.id} value={f.id}>{f.l}</option>)}
             </select>
           </div>
         </div>
         <div style={{marginBottom:10}}>
-          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Note to employee (optional)'}</div>
+          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Note (optional)'}</div>
           <input value={pushNote} onChange={e=>setPushNote(e.target.value)} placeholder="e.g. Please complete by Friday" style={inp}/>
         </div>
         <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:10}}>
@@ -2489,24 +2527,6 @@ function ResourcesView({C,isAdmin,isManager,emps,orgId}){
           <Btn gold small onClick={handlePush} C={C}>{pushing?'Sending...':'Push Form'}</Btn>
         </div>
       </Card>
-
-      {/* Management forms */}
-      {mgtForms.length > 0 && <div style={{marginTop:12}}>
-        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{'Management Forms'}</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
-          {mgtForms.map(f=>(
-            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.am:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
-              <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.am:C.aD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,color:activeForm===f.id?C.bg:C.am,flexShrink:0,fontWeight:700}}>{f.icon}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.am:C.w,marginBottom:2}}>{f.l}</div>
-                  <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>}
     </div>}
   </div>)
 }

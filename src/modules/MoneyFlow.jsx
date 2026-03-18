@@ -4742,11 +4742,7 @@ function CashFlowForecaster({ orgId, C }) {
       return b.vendor + ' — ' + amt + (b.payDate ? ' (by ' + b.payDate + ')' : '')
     })
     const total = toQueue.reduce((s,b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
-    const description = 'AP Payment Run — ' + entity.toUpperCase() + '
-Total: $' + total.toFixed(2) + '
-
-' + lines.join('
-')
+    const description = 'AP Payment Run — ' + entity.toUpperCase() + ' | Total: $' + total.toFixed(2) + ' | ' + lines.join(' | ')
     const { error } = await supabase.from('moneyflow_tasks').insert([{
       org_id: orgId,
       entity: entity,
@@ -5382,7 +5378,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           t.id === task.id ? { ...t, due_date: task.due_date, _justAdvanced: false } : t
         ))
       } else {
-        writeTaskLog(task, 'advanced', 'Recurring date advanced from ' + task.due_date + ' to ' + newDate)
+        writeTaskLog(task, 'advanced', 'Advanced from ' + task.due_date + ' to ' + newDate)
       }
       setTimeout(() => setTasks(ts => ts.map(t =>
         t.id === task.id ? { ...t, _justAdvanced: false } : t

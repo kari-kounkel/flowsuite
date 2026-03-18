@@ -4280,18 +4280,24 @@ function CashDashboard({ orgId, C }) {
       })
   }, [orgId])
 
-  // Load data when date changes
+  // Load data when date changes — find most recent snapshot on or before selected date
   useEffect(() => {
     if (!selectedDate || !orgId) return
     setLoading(true)
     Promise.all([
-      supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('snapshot_date', selectedDate),
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', selectedDate).order('total', { ascending: true }),
-      supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', selectedDate).order('total', { ascending: false })
-    ]).then(([snapR, apR, arR]) => {
-      const snaps = snapR.data || []
-      setIazData(snaps.find(s => s.entity === 'iaz') || null)
-      setOmegaData(snaps.find(s => s.entity === 'omega') || null)
+      supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
+      supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+        if (!r.data || !r.data[0]) return { data: [] }
+        return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
+      }),
+      supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+        if (!r.data || !r.data[0]) return { data: [] }
+        return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
+      })
+    ]).then(([iazSnap, omegaSnap, apR, arR]) => {
+      setIazData((iazSnap.data || [])[0] || null)
+      setOmegaData((omegaSnap.data || [])[0] || null)
       setIazAP(apR.data || [])
       setOmegaAR(arR.data || [])
       setLoading(false)
@@ -4611,12 +4617,12 @@ function CashDashboard({ orgId, C }) {
     <div>
       {/* Date selector */}
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, flexWrap:'wrap' }}>
-        <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>Snapshot:</div>
-        <select value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }}>
-          {snapshots.map(d => <option key={d} value={d}>{d}</option>)}
-          {snapshots.length===0 && <option value="">No data yet</option>}
-        </select>
-        <div style={{ fontSize:10, color:C.g }}>Uploads auto-detect date from file header. Upload new data any time to update or add history.</div>
+        <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
+        <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
+        {snapshots.length > 0 && <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+          {snapshots.slice(0,6).map(d => <button key={d} onClick={()=>setSelectedDate(d)} style={{ padding:'3px 8px', borderRadius:4, border:'1px solid '+(selectedDate===d?C.go:C.bdrF), background:selectedDate===d?C.gD:'transparent', color:selectedDate===d?C.go:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{d}</button>)}
+        </div>}
+        <div style={{ fontSize:10, color:C.g }}>{'Shows most recent data on or before selected date.'}</div>
       </div>
 
       {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>Loading...</div>}

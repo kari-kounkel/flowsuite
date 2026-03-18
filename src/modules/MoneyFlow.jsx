@@ -4560,7 +4560,7 @@ function CashDashboard({ orgId, C }) {
 // ═══════════════════════════════════════════════════════
 // CASH FLOW FORECASTER — AP aging drag to prioritize
 // ═══════════════════════════════════════════════════════
-function CashFlowForecaster({ orgId, C }) {
+function CashFlowForecaster({ orgId, C, userEmail }) {
   const POS = C.go
   const NEG = '#B45055'
   const WARN = C.am
@@ -4571,6 +4571,8 @@ function CashFlowForecaster({ orgId, C }) {
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
+  const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
+  const canEditSched = SCHED_EDITORS.includes((userEmail||'').toLowerCase())
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
   useEffect(() => {
@@ -4787,8 +4789,14 @@ function CashFlowForecaster({ orgId, C }) {
               <input type="date" value={b.payDate||''} onChange={ev => setPayDate(b.id||idx, ev.target.value)} style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
-            {b.marked && !b.queued && <input value={b.notes||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,notes:ev.target.value}:x))} placeholder="Notes..." style={{ flex:1, minWidth:120, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }} />}
-            {b.marked && !b.queued && <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} placeholder="Sched. in bill pay $" style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />}
+            {canEditSched
+              ? <input value={b.notes||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,notes:ev.target.value}:x))} placeholder="Notes..." style={{ flex:1, minWidth:120, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }} />
+              : (b.notes ? <span style={{ fontSize:11, color:C.g, flex:1 }}>{b.notes}</span> : null)
+            }
+            {canEditSched
+              ? <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} placeholder="Sched. $" style={{ width:110, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />
+              : (b.scheduledAmt ? <span style={{ fontSize:11, color:WARN, flexShrink:0 }}>{'Sched: $'+parseFloat(b.scheduledAmt).toFixed(2)}</span> : null)
+            }
           </div>
         ))}
       </>}
@@ -5386,7 +5394,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         </div>
       </div>
       {tab === 'dashboard' && <CashDashboard orgId={orgId} C={C} />}
-      {tab === 'cashflow' && <CashFlowForecaster orgId={orgId} C={C} />}
+      {tab === 'cashflow' && <CashFlowForecaster orgId={orgId} C={C} userEmail={userEmail} />}
       {tab === 'budget' && <BudgetView orgId={orgId} C={C} />}
       {tab === 'accounting' && (
         <div>

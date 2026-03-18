@@ -682,13 +682,13 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           })()}
         </div>}
 
-        {isAdmin && !e.start_date && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
+        {isAdmin && (e.offer_status==='Pending' || !e.hire_date) && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
           {(!e.offer_status || e.offer_status==='Pending') &&
             <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>{'📄 Send Offer'}</Btn>}
           {e.offer_status==='Pending' &&
             <Btn small onClick={ev=>{ev.stopPropagation();setLetterMod({type:'union',emp:e})}} C={C} style={{background:C.gr,color:'#fff',border:'none'}}>{'✓ Accept + Notify Union'}</Btn>}
         </div>}
-        {isAdmin && e.start_date && e.offer_status==='Accepted' && e.seniority_date &&
+        {isAdmin && e.offer_status==='Accepted' && e.seniority_date &&
           <div style={{fontSize:10,color:C.g,padding:'6px 14px',borderTop:'1px solid '+C.bdr}}>{'Seniority eligible: '}<span style={{color:C.gr,fontWeight:700}}>{fm(e.seniority_date)}</span></div>}
 
       </Card>

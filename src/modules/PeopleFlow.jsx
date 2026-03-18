@@ -494,23 +494,55 @@ export default function PeopleFlowModule({ orgId, C }) {
     </div>
 
     {/* DASHBOARD */}
-    {view==='dashboard'&&<div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:10,marginBottom:16}}>
-        {getDashCards().map(s=>
-          <Card key={s.l} C={C}><div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1}}>{s.l}</div><div style={{fontSize:28,fontWeight:700,color:s.c}}>{s.v}</div></Card>)}
+    {view==='dashboard'&&(()=>{
+      const newHireList = ac.filter(e=>dbt(e.hire_date||td,td)<=90).sort((a,b)=>dbt(a.hire_date||td,td)-dbt(b.hire_date||td,td))
+      return <div>
+        {/* Headcount Stats */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:16}}>
+          {getDashCards().map(s=>(
+            <Card key={s.l} C={C} style={{padding:'14px 16px'}}>
+              <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{s.l}</div>
+              <div style={{fontSize:30,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
+            </Card>
+          ))}
+        </div>
+        {/* New Hires */}
+        {canManage && newHireList.length > 0 && <Card C={C} style={{marginBottom:16,padding:'14px 16px'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.am,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'★ New Hires — Within 90 Days'}</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8}}>
+            {newHireList.map(e=>{
+              const day = dbt(e.hire_date||td,td)
+              const pct = Math.min(100,Math.round(day/90*100))
+              const barColor = pct>=100?C.gr:pct>=60?C.am:C.bl
+              return <div key={e.id} style={{background:C.nL,borderRadius:8,padding:'10px 12px',border:'1px solid '+C.bdr}}>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:1}}>{gn(e)}</div>
+                <div style={{fontSize:10,color:C.g,marginBottom:6}}>{e.role||'—'}{' · '}{e.dept||'—'}</div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.g,marginBottom:3}}>
+                  <span>{'Day '+day+' of 90'}</span>
+                  <span style={{color:barColor,fontWeight:700}}>{pct+'%'}</span>
+                </div>
+                <div style={{height:3,borderRadius:99,background:C.bdr}}>
+                  <div style={{height:'100%',borderRadius:99,background:barColor,width:pct+'%',transition:'width 0.3s'}}/>
+                </div>
+              </div>
+            })}
+          </div>
+        </Card>}
+        {/* Admin Alerts */}
+        {isAdmin && alerts.length > 0 && <Card C={C} style={{marginBottom:16,padding:'14px 16px'}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.rd,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'⚠ Alerts'}</div>
+          {alerts.map((a,i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:i<alerts.length-1?'1px solid '+C.bdr:'none',gap:8}}>
+              <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
+              <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+                {a.reinstatementDisc && <button onClick={()=>{if(window.confirm('Confirm end of probation? This will reverse the last '+(a.reinstatementDisc.reverse_count||2)+' record(s) and restore to Active.'))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>{'Confirm'}</button>}
+                <Tag c={a.c}>{a.t}</Tag>
+              </div>
+            </div>
+          ))}
+        </Card>}
       </div>
-      {alerts.length>0&&<Card C={C} style={{marginBottom:16}}><h3 style={{margin:'0 0 8px',fontSize:13,color:C.go}}>⚠ Alerts</h3>
-        {alerts.map((a,i)=>(
-  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:i<alerts.length-1?'1px solid '+C.bdr:'none',gap:8}}>
-    <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
-    <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
-      {a.reinstatementDisc && <button onClick={()=>{if(confirm('Confirm end of probation for this employee?\n\nThis will reverse the last '+(a.reinstatementDisc.reverse_count||2)+' discipline record(s) and restore them to Active status.'))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>Confirm ✓</button>}
-      <Tag c={a.c}>{a.t}</Tag>
-    </div>
-  </div>
-))}</Card>}
-
-    </div>}
+    })()}
 
     {/* TEAM */}
     {view==='employees'&&<TeamView emps={emps} ac={ac} sel={sel} setSel={setSel} mod={mod} setMod={setMod} saveEmp={saveEmp} C={C} isAdmin={isAdmin} isManager={isManager} isHR={isHR} userEmpRecord={userEmpRecord} resolveReportsTo={resolveReportsTo} managerOptions={managerOptions} disc={disc} onb={onb}/>}

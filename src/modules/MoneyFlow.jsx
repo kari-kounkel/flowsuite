@@ -4787,20 +4787,33 @@ function CashFlowForecaster({ orgId, C }) {
 function BudgetView({ orgId, C }) {
   const [entity, setEntity] = useState('iaz')
   const [plData, setPlData] = useState([])
+  const [budgets, setBudgets] = useState([])
+  const [activeVersion, setActiveVersion] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [periods, setPeriods] = useState(8)
-  const [projectedPeriods, setProjectedPeriods] = useState(12)
+  const [basePeriods, setBasePeriods] = useState(8)
+  const [projPeriods, setProjPeriods] = useState(12)
+  const [editingRow, setEditingRow] = useState(null)
+  const [editVals, setEditVals] = useState({})
+  const [versionName, setVersionName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState('')
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
   useEffect(() => {
     if (!orgId) return
     setLoading(true)
-    supabase.from('cashflow_pl').select('*').eq('org_id', orgId).eq('entity', entity).order('period_end', { ascending: true })
-      .then(({ data }) => {
-        setPlData(data || [])
-        setLoading(false)
-      })
+    Promise.all([
+      supabase.from('cashflow_pl').select('*').eq('org_id', orgId).eq('entity', entity).order('period_end', { ascending: true }),
+      supabase.from('cashflow_budget').select('*').eq('org_id', orgId).eq('entity', entity).order('created_at', { ascending: false })
+    ]).then(([plR, budR]) => {
+      setPlData(plR.data || [])
+      const bud = budR.data || []
+      setBudgets(bud)
+      if (bud.length > 0 && !activeVersion) setActiveVersion(bud[0].id)
+      setLoading(false)
+    })
   }, [orgId, entity])
 
   const fmt = n => {
@@ -4810,29 +4823,62 @@ function BudgetView({ orgId, C }) {
     return Number(n) < 0 ? '(' + str + ')' : str
   }
 
-  // Build projection: average last N periods, project forward 6 periods
+  const fmtVar = n => {
+    if (n == null) return '—'
+    const abs = Math.abs(Number(n))
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    const sign = Number(n) >= 0 ? '+' : '-'
+    return sign + str
+  }
+
+  // Build projection periods from P&L history
   const buildProjection = () => {
     if (!plData.length) return []
-    const recent = plData.slice(-periods)
+    const recent = plData.slice(-basePeriods)
     const avgIncome = recent.reduce((s,p) => s + (p.income||0), 0) / recent.length
     const avgExpenses = recent.reduce((s,p) => s + (p.expenses||0), 0) / recent.length
-    const avgNet = avgIncome - avgExpenses
-
-    // Project 6 forward periods
-    const projected = []
-    const lastDate = new Date(recent[recent.length-1].period_end)
     const isWeekly = entity === 'iaz'
-    for (let i = 1; i <= projectedPeriods; i++) {
+    const lastDate = new Date(recent[recent.length-1].period_end)
+    const rows = []
+    for (let i = 1; i <= projPeriods; i++) {
       const d = new Date(lastDate)
       if (isWeekly) d.setDate(d.getDate() + (7 * i))
       else d.setMonth(d.getMonth() + (3 * i))
-      projected.push({ period_end: d.toISOString().split('T')[0], income: avgIncome, expenses: avgExpenses, net: avgNet, projected: true })
+      const pd = d.toISOString().split('T')[0]
+      // Check if there's an edit override for this row
+      const override = editVals[pd]
+      rows.push({
+        period_end: pd,
+        income: override ? (parseFloat(override.income) || avgIncome) : avgIncome,
+        expenses: override ? (parseFloat(override.expenses) || avgExpenses) : avgExpenses,
+        projected: true,
+        edited: !!override
+      })
     }
-    return projected
+    return rows
   }
 
   const projection = buildProjection()
-  const allPeriods = [...plData.slice(-periods), ...projection]
+  const activeBudgetData = budgets.find(b => b.id === activeVersion)
+  const activePeriods = activeBudgetData ? (activeBudgetData.periods || []) : null
+
+  // Save current projection as a named budget version
+  const saveBudget = async () => {
+    if (!versionName.trim()) { sh('Enter a version name first'); return }
+    setSaving(true)
+    const periods = projection.map(p => ({ period_end: p.period_end, income: p.income, expenses: p.expenses }))
+    const { data, error } = await supabase.from('cashflow_budget').insert({
+      org_id: orgId, entity, version_name: versionName.trim(),
+      base_periods: basePeriods, periods,
+      created_at: new Date().toISOString()
+    }).select().single()
+    if (error) { sh('Error: ' + error.message); setSaving(false); return }
+    setBudgets(p => [data, ...p])
+    setActiveVersion(data.id)
+    setVersionName('')
+    setSaving(false)
+    sh('Budget saved as "' + versionName + '" checkmark')
+  }
 
   const StatBox = ({ label, value, color }) => (
     <div style={{ background:C.nL, borderRadius:8, padding:'12px 14px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+(color||C.go) }}>
@@ -4841,74 +4887,136 @@ function BudgetView({ orgId, C }) {
     </div>
   )
 
-  const recentActual = plData.slice(-periods)
-  const avgIncome = recentActual.length ? recentActual.reduce((s,p)=>s+(p.income||0),0)/recentActual.length : 0
-  const avgExpenses = recentActual.length ? recentActual.reduce((s,p)=>s+(p.expenses||0),0)/recentActual.length : 0
+  const recent = plData.slice(-basePeriods)
+  const avgIncome = recent.length ? recent.reduce((s,p)=>s+(p.income||0),0)/recent.length : 0
+  const avgExpenses = recent.length ? recent.reduce((s,p)=>s+(p.expenses||0),0)/recent.length : 0
   const avgNet = avgIncome - avgExpenses
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+      {/* Controls */}
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ display:'flex', gap:4 }}>
           {ENTITIES.map(e => (
-            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
+            <button key={e.id} onClick={() => { setEntity(e.id); setEditVals({}) }} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-          <span style={{ fontSize:11, color:C.g }}>{'Base on last'}</span>
-          <select value={periods} onChange={e=>setPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <span style={{ fontSize:11, color:C.g }}>{'Base on'}</span>
+          <select value={basePeriods} onChange={e=>setBasePeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
             {[4,8,12,16,20,24].map(n => <option key={n} value={n}>{n} periods</option>)}
           </select>
-          <span style={{ fontSize:11, color:C.g }}>{'Project forward'}</span>
-          <select value={projectedPeriods} onChange={e=>setProjectedPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit' }}>
-            {[6,12,18,24,36,52,104].map(n => <option key={n} value={n}>{n} periods</option>)}
+          <span style={{ fontSize:11, color:C.g }}>{'Project'}</span>
+          <select value={projPeriods} onChange={e=>setProjPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
+            {[6,12,18,24,36,52,78,104].map(n => <option key={n} value={n}>{n} periods</option>)}
           </select>
         </div>
       </div>
 
       {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
 
-      {!loading && !plData.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No P&L data loaded yet. Run the cashflow_pl_seed.sql in Supabase first.'}</div>}
+      {!loading && !plData.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No P&L data. Run cashflow_pl_seed.sql in Supabase first.'}</div>}
 
       {!loading && plData.length > 0 && <>
-        {/* Summary averages */}
-        <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
-          {'Average Per Period — Last ' + periods + ' Periods'}
-        </div>
+        {/* Averages summary */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:20 }}>
-          <StatBox label="Avg Income" value={fmt(avgIncome)} color={C.gr} />
-          <StatBox label="Avg Expenses" value={fmt(avgExpenses)} color={C.rd} />
-          <StatBox label="Avg Net" value={fmt(avgNet)} color={avgNet>=0?C.gr:C.rd} />
+          <StatBox label={'Avg Income / Period (last '+basePeriods+')'} value={fmt(avgIncome)} color={C.gr} />
+          <StatBox label={'Avg Expenses / Period'} value={fmt(avgExpenses)} color={C.rd} />
+          <StatBox label={'Avg Net / Period'} value={fmt(avgNet)} color={avgNet>=0?C.gr:C.rd} />
         </div>
 
-        {/* Period table — actuals + projection */}
+        {/* Saved budget versions */}
+        {budgets.length > 0 && <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Saved Budget Versions'}</div>
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+            {budgets.map(b => (
+              <button key={b.id} onClick={() => setActiveVersion(activeVersion===b.id?null:b.id)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(activeVersion===b.id?C.go:C.bdrF), background:activeVersion===b.id?C.gD:'transparent', color:activeVersion===b.id?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>
+                {b.version_name}
+              </button>
+            ))}
+            <button onClick={() => setActiveVersion(null)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'+ New'}</button>
+          </div>
+        </div>}
+
+        {/* Save current as new version */}
+        {!activeVersion && <div style={{ display:'flex', gap:8, marginBottom:16, alignItems:'center' }}>
+          <input value={versionName} onChange={e=>setVersionName(e.target.value)} placeholder="Version name (e.g. Original 2026, Frank 5M Target)" style={{ flex:1, padding:'6px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
+          <button onClick={saveBudget} disabled={saving} style={{ padding:'6px 16px', borderRadius:6, border:'none', background:C.go, color:C.bg, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{saving?'Saving...':'Save Budget'}</button>
+        </div>}
+
+        {/* Projection table — editable */}
         <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
-          {'Actuals + 6-Period Projection'}
+          {activeVersion ? ('Comparing: ' + (activeBudgetData?.version_name||'') + ' vs Actuals') : 'Projection (click any row to edit)'}
         </div>
+
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead>
               <tr style={{ borderBottom:'1px solid '+C.bdr }}>
-                {['Period','Income','Expenses','Net',''].map(h => <th key={h} style={{ textAlign:'left', padding:'4px 8px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
+                {['Period', 'Income', 'Expenses', 'Net',
+                  activeVersion ? 'Budget Income' : '',
+                  activeVersion ? 'Budget Net' : '',
+                  activeVersion ? 'Variance' : '',
+                  ''
+                ].filter(Boolean).map(h => <th key={h} style={{ textAlign:'left', padding:'4px 8px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
               </tr>
             </thead>
             <tbody>
-              {allPeriods.map((p, i) => {
-                const net = p.projected ? p.net : (p.income - p.expenses)
+              {/* Actuals */}
+              {plData.slice(-basePeriods).map((p, i) => {
+                const budPeriod = activePeriods ? activePeriods.find(bp => bp.period_end === p.period_end) : null
+                const variance = budPeriod ? (p.income - budPeriod.income) : null
                 return (
-                  <tr key={i} style={{ borderBottom:'1px solid '+C.bdr, background:p.projected?'rgba(245,158,11,0.05)':'transparent', opacity:p.projected?0.85:1 }}>
-                    <td style={{ padding:'5px 8px', fontSize:11, color:p.projected?C.am:C.w, fontWeight:p.projected?400:500 }}>
-                      {p.period_end}
-                      {p.projected && <span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{'projected'}</span>}
-                    </td>
+                  <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
+                    <td style={{ padding:'5px 8px', fontSize:11, fontWeight:500 }}>{p.period_end}</td>
                     <td style={{ padding:'5px 8px', color:C.gr }}>{fmt(p.income)}</td>
                     <td style={{ padding:'5px 8px', color:C.rd }}>{fmt(p.expenses)}</td>
-                    <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
-                    <td style={{ padding:'5px 8px' }}>
-                      <div style={{ height:6, borderRadius:99, background:C.bdr, minWidth:60 }}>
-                        {p.income !== 0 && <div style={{ height:'100%', borderRadius:99, background:net>=0?C.gr:C.rd, width:Math.min(100,Math.abs(net/p.income)*100)+'%' }} />}
-                      </div>
+                    <td style={{ padding:'5px 8px', fontWeight:700, color:(p.income-p.expenses)>=0?C.gr:C.rd }}>{fmt(p.income-p.expenses)}</td>
+                    {activeVersion && <td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income):'—'}</td>}
+                    {activeVersion && <td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income-budPeriod.expenses):'—'}</td>}
+                    {activeVersion && <td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?(variance>=0?C.gr:C.rd):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
+                    <td style={{ padding:'5px 8px', fontSize:9, color:C.g }}>{'actual'}</td>
+                  </tr>
+                )
+              })}
+              {/* Projected — editable */}
+              {!activeVersion && projection.map((p, i) => {
+                const isEditing = editingRow === p.period_end
+                const net = p.income - p.expenses
+                return (
+                  <tr key={'proj'+i} style={{ borderBottom:'1px solid '+C.bdr, background:p.edited?'rgba(245,158,11,0.08)':'rgba(245,158,11,0.03)' }}>
+                    <td style={{ padding:'5px 8px', fontSize:11, color:p.edited?C.am:C.g }}>
+                      {p.period_end}
+                      <span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{p.edited?'edited':'projected'}</span>
                     </td>
+                    {isEditing ? <>
+                      <td style={{ padding:'3px 4px' }}><input autoFocus value={editVals[p.period_end]?.income ?? p.income.toFixed(0)} onChange={ev => setEditVals(prev => ({ ...prev, [p.period_end]: { ...(prev[p.period_end]||{}), income: ev.target.value, expenses: prev[p.period_end]?.expenses ?? p.expenses.toFixed(0) } }))} style={{ width:80, padding:'2px 6px', background:C.ch, border:'1px solid '+C.go, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }} /></td>
+                      <td style={{ padding:'3px 4px' }}><input value={editVals[p.period_end]?.expenses ?? p.expenses.toFixed(0)} onChange={ev => setEditVals(prev => ({ ...prev, [p.period_end]: { ...(prev[p.period_end]||{}), expenses: ev.target.value, income: prev[p.period_end]?.income ?? p.income.toFixed(0) } }))} style={{ width:80, padding:'2px 6px', background:C.ch, border:'1px solid '+C.go, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }} /></td>
+                      <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
+                      <td><button onClick={()=>setEditingRow(null)} style={{ padding:'2px 8px', borderRadius:4, border:'none', background:C.go, color:C.bg, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{'Done'}</button></td>
+                    </> : <>
+                      <td style={{ padding:'5px 8px', color:C.gr, cursor:'pointer' }} onClick={()=>setEditingRow(p.period_end)}>{fmt(p.income)}</td>
+                      <td style={{ padding:'5px 8px', color:C.rd, cursor:'pointer' }} onClick={()=>setEditingRow(p.period_end)}>{fmt(p.expenses)}</td>
+                      <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
+                      <td><button onClick={()=>setEditingRow(p.period_end)} style={{ padding:'2px 8px', borderRadius:4, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>{'edit'}</button></td>
+                    </>}
+                  </tr>
+                )
+              })}
+              {/* Projected vs saved budget */}
+              {activeVersion && activePeriods && projection.map((p, i) => {
+                const budPeriod = activePeriods.find(bp => bp.period_end === p.period_end)
+                const variance = budPeriod ? (p.income - budPeriod.income) : null
+                return (
+                  <tr key={'proj'+i} style={{ borderBottom:'1px solid '+C.bdr, background:'rgba(245,158,11,0.03)' }}>
+                    <td style={{ padding:'5px 8px', fontSize:11, color:C.g }}>{p.period_end}<span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{'projected'}</span></td>
+                    <td style={{ padding:'5px 8px', color:C.gr }}>{fmt(p.income)}</td>
+                    <td style={{ padding:'5px 8px', color:C.rd }}>{fmt(p.expenses)}</td>
+                    <td style={{ padding:'5px 8px', fontWeight:700, color:(p.income-p.expenses)>=0?C.gr:C.rd }}>{fmt(p.income-p.expenses)}</td>
+                    {<td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income):'—'}</td>}
+                    {<td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income-budPeriod.expenses):'—'}</td>}
+                    {<td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?(variance>=0?C.gr:C.rd):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
+                    <td style={{ padding:'5px 8px', fontSize:9, color:C.am }}>{'projected'}</td>
                   </tr>
                 )
               })}
@@ -4916,6 +5024,8 @@ function BudgetView({ orgId, C }) {
           </table>
         </div>
       </>}
+
+      {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
     </div>
   )
 }
@@ -5134,60 +5244,11 @@ export default function MoneyFlowModule({ orgId, C }) {
           {pill('◆ Dashboard', tab === 'dashboard', () => setTab('dashboard'))}
           {pill('Cash Flow', tab === 'cashflow', () => setTab('cashflow'))}
           {pill('Budget', tab === 'budget', () => setTab('budget'))}
-          {pill('Tasks', tab === 'tasks', () => setTab('tasks'))}
           {pill('Accounting', tab === 'accounting', () => setTab('accounting'))}
         </div>
       </div>
 
-      {/* ── TASK CARDS TAB ── */}
-      {tab === 'tasks' && (
-        <div>
-          {/* Filters + Add button */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            {['all','omega','iaz'].map(e => pill(
-              e === 'all' ? 'All Entities' : ENTITY_COLORS[e].label,
-              filterEntity === e,
-              () => setFilterEntity(e)
-            ))}
-            <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
-            {['all','AP','AR','PR','Admin'].map(t => pill(
-              t === 'all' ? 'All Types' : t,
-              filterType === t,
-              () => setFilterType(t)
-            ))}
-            <span style={{ flex: 1 }} />
-            <button onClick={openNewTask} style={{
-              background: C.go, border: 'none', color: '#fff',
-              padding: '6px 16px', borderRadius: 20, cursor: 'pointer',
-              fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
-            }}>+ Add Task</button>
-          </div>
 
-          {loading && <p style={{ color: C.g, fontSize: 13 }}>Loading tasks…</p>}
-          {error && <div style={{ color: '#e07070', fontSize: 12, marginBottom: 12 }}>⚠ {error}</div>}
-
-          {!loading && (
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              {filtered.length === 0 && <p style={{ color: C.g, fontSize: 13 }}>No tasks match this filter.</p>}
-              {filtered.map(task => (
-                <TaskCard
-                  key={task.id} task={task} C={C}
-                  onToggleDone={toggleDone} onEdit={openEditTask}
-                  allResources={allResources}
-                />
-              ))}
-            </div>
-          )}
-
-          <div style={{
-            marginTop: 24, padding: '10px 14px', borderLeft: `3px solid ${C.go}`,
-            background: (C.gD), borderRadius: '0 8px 8px 0',
-            fontSize: 11, color: C.g, maxWidth: 500,
-          }}>
-            <strong style={{ color: C.go }}>Sidebar:</strong> Flip a card to see accounts + docs needed. Mark done when posted. Recurring tasks advance their own due date. Nothing leaves until QBO says so.
-          </div>
-        </div>
-      )}
 
       {/* ── DASHBOARD TAB ── */}
       {tab === 'dashboard' && <CashDashboard orgId={orgId} C={C} />}
@@ -5200,6 +5261,7 @@ export default function MoneyFlowModule({ orgId, C }) {
       {tab === 'accounting' && (
         <div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
+            {subPill('Tasks', jeSubTab === 'tasks', () => setJeSubTab('tasks'))}
             {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
@@ -5208,6 +5270,34 @@ export default function MoneyFlowModule({ orgId, C }) {
             {subPill('Payroll Orders', jeSubTab === 'payroll', () => setJeSubTab('payroll'))}
             {subPill('Resources', jeSubTab === 'resources', () => setJeSubTab('resources'))}
           </div>
+          {jeSubTab === 'tasks' && (
+            <div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                {['all','omega','iaz'].map(e => pill(
+                  e === 'all' ? 'All Entities' : ENTITY_COLORS[e].label,
+                  filterEntity === e,
+                  () => setFilterEntity(e)
+                ))}
+                <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
+                {['all','AP','AR','PR','Admin'].map(t => pill(
+                  t === 'all' ? 'All Types' : t,
+                  filterType === t,
+                  () => setFilterType(t)
+                ))}
+                <span style={{ flex: 1 }} />
+                <button onClick={openNewTask} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>{'+ Add Task'}</button>
+              </div>
+              {loading && <p style={{ color: C.g, fontSize: 13 }}>{'Loading tasks...'}</p>}
+              {!loading && (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {filtered.length === 0 && <p style={{ color: C.g, fontSize: 13 }}>{'No tasks match this filter.'}</p>}
+                  {filtered.map(task => (
+                    <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} allResources={allResources} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory

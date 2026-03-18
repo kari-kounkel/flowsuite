@@ -459,18 +459,15 @@ export default function PeopleFlowModule({ orgId, C }) {
     })
   }
   // ── Tab Configuration (role-filtered) ──
-  const ADMIN_TABS = ['onboard','documents','reports']
+  const ADMIN_TABS = ['onboard']
   const MANAGER_TABS = ['onboard']
   const allTabs=[
     {k:'dashboard',l:'Home',i:'◆'},
     {k:'employees',l:'Team',i:'◉'},
     {k:'orgchart',l:'Org',i:'⊞'},
     {k:'workplace',l:'HR Inbox',i:'⚡'},
-    {k:'onboard',l:'Onb',i:'★'},
-    {k:'union',l:'Union',i:'⊕'},
-    {k:'documents',l:'Docs',i:'▤'},
-    {k:'resources',l:'Resources',i:'◇'},
-    {k:'reports',l:'Rpt',i:'◧'}
+    {k:'onboard',l:'Onboarding',i:'★'},
+    {k:'resources',l:'Resources',i:'◇'}
   ]
   const canAccessTab = (tabKey) => {
     if (isAdmin) return true
@@ -685,14 +682,14 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           })()}
         </div>}
 
-        {isAdmin && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
+        {isAdmin && !e.start_date && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
           {(!e.offer_status || e.offer_status==='Pending') &&
-            <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>📄 Send Offer</Btn>}
+            <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>{'📄 Send Offer'}</Btn>}
           {e.offer_status==='Pending' &&
-            <Btn small onClick={ev=>{ev.stopPropagation();setLetterMod({type:'union',emp:e})}} C={C} style={{background:C.gr,color:'#fff',border:'none'}}>✓ Accept + Notify Union</Btn>}
-          {e.offer_status==='Accepted' && e.seniority_date &&
-            <div style={{fontSize:10,color:C.g,padding:'4px 0'}}>Seniority eligible: <span style={{color:C.gr,fontWeight:700}}>{fm(e.seniority_date)}</span></div>}
+            <Btn small onClick={ev=>{ev.stopPropagation();setLetterMod({type:'union',emp:e})}} C={C} style={{background:C.gr,color:'#fff',border:'none'}}>{'✓ Accept + Notify Union'}</Btn>}
         </div>}
+        {isAdmin && e.start_date && e.offer_status==='Accepted' && e.seniority_date &&
+          <div style={{fontSize:10,color:C.g,padding:'6px 14px',borderTop:'1px solid '+C.bdr}}>{'Seniority eligible: '}<span style={{color:C.gr,fontWeight:700}}>{fm(e.seniority_date)}</span></div>}
 
       </Card>
     })}

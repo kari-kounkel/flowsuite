@@ -4531,9 +4531,7 @@ function CashDashboard({ orgId, C }) {
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
         <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
-        {snapshots.length > 0 && <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
-          {snapshots.slice(0,6).map(d => <button key={d} onClick={()=>setSelectedDate(d)} style={{ padding:'3px 8px', borderRadius:4, border:'1px solid '+(selectedDate===d?C.go:C.bdrF), background:selectedDate===d?C.gD:'transparent', color:selectedDate===d?C.go:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{d}</button>)}
-        </div>}
+
         <div style={{ flex:1 }} />
         {['both','iaz','omega'].map(e => (
           <button key={e} onClick={()=>setEntityView(e)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(entityView===e?C.go:C.bdrF), background:entityView===e?C.gD:'transparent', color:entityView===e?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>

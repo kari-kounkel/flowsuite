@@ -4254,191 +4254,376 @@ function JEHistoryTab({ orgId, C }) {
 // CASH DASHBOARD — upload QBO CSVs, view entity panels
 // ═══════════════════════════════════════════════════════
 function CashDashboard({ orgId, C }) {
-  const [entity, setEntity] = useState('iaz')
-  const [data, setData] = useState({
-    iaz: { balance: null, payroll: null, uploaded: {} },
-    omega: { balance: null, payroll: null, uploaded: {} }
-  })
+  const [snapshots, setSnapshots] = useState([])
+  const [selectedDate, setSelectedDate] = useState('')
+  const [iazData, setIazData] = useState(null)
+  const [omegaData, setOmegaData] = useState(null)
+  const [iazAP, setIazAP] = useState([])
+  const [omegaAR, setOmegaAR] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(null)
   const [toast, setToast] = useState('')
-  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3500) }
 
-  const ENTITIES = [
-    { id: 'iaz', label: 'IAZ Corporation' },
-    { id: 'omega', label: 'Omega LLC' }
-  ]
+  // Load available snapshot dates on mount
+  useEffect(() => {
+    if (!orgId) return
+    supabase.from('cashflow_snapshots')
+      .select('snapshot_date,entity')
+      .eq('org_id', orgId)
+      .order('snapshot_date', { ascending: false })
+      .then(({ data }) => {
+        if (!data || !data.length) { setLoading(false); return }
+        const dates = [...new Set(data.map(r => r.snapshot_date))].sort((a,b) => b.localeCompare(a))
+        setSnapshots(dates)
+        setSelectedDate(dates[0])
+      })
+  }, [orgId])
 
+  // Load data when date changes
+  useEffect(() => {
+    if (!selectedDate || !orgId) return
+    setLoading(true)
+    Promise.all([
+      supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('snapshot_date', selectedDate),
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', selectedDate).order('total', { ascending: true }),
+      supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', selectedDate).order('total', { ascending: false })
+    ]).then(([snapR, apR, arR]) => {
+      const snaps = snapR.data || []
+      setIazData(snaps.find(s => s.entity === 'iaz') || null)
+      setOmegaData(snaps.find(s => s.entity === 'omega') || null)
+      setIazAP(apR.data || [])
+      setOmegaAR(arR.data || [])
+      setLoading(false)
+    })
+  }, [selectedDate, orgId])
+
+  const fmt = n => {
+    if (n == null) return '—'
+    const abs = Math.abs(Number(n))
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    return Number(n) < 0 ? '(' + str + ')' : str
+  }
+
+  // Parse date from QBO file header
+  const parseDateFromHeader = (text) => {
+    const lines = text.split('\n').slice(0, 5).join(' ')
+    // "As of March 17, 2026" pattern
+    const asOf = lines.match(/As of ([A-Za-z]+ \d{1,2},? \d{4})/i)
+    if (asOf) {
+      const d = new Date(asOf[1])
+      if (!isNaN(d)) return d.toISOString().split('T')[0]
+    }
+    // "January 1, 2025-March 17, 2026" — use end date
+    const range = lines.match(/[A-Za-z]+ \d{1,2},? \d{4}[-–]([A-Za-z]+ \d{1,2},? \d{4})/)
+    if (range) {
+      const d = new Date(range[1])
+      if (!isNaN(d)) return d.toISOString().split('T')[0]
+    }
+    return null
+  }
+
+  const any = (arr, fn) => arr.some(fn)
   const parseBalanceSheet = (text) => {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     const cashAccounts = []
     const ccAccounts = []
-    const otherAccounts = []
-    let totalCash = 0
-    let totalCC = 0
-    let totalAR = 0
-    let petty = null
-
-    lines.forEach(line => {
-      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+    let loc_balance = null
+    let ar_total = 0
+    lines.forEach(row => {
+      const parts = row.split(',').map(s => s.replace(/"/g,'').trim())
       const label = parts[0] || ''
-      const raw = (parts[parts.length-1]||'').replace(/[$,]/g,'')
-      const val = parseFloat(raw) || 0
+      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
       const low = label.toLowerCase()
-      if (!label || low.startsWith('total bank') || low === 'bank accounts' || low === 'cash and cash equivalents') return
-      if (low.includes('petty cash')) {
-        petty = { label, val }
-        totalCash += val
-      } else if (low.includes('checking') || low.includes('savings')) {
-        cashAccounts.push({ label, val })
-        totalCash += val
-      } else if (low.includes('credit card') || low.includes('visa') || low.includes('amex') || low.includes('mastercard') || low.includes('discover')) {
-        ccAccounts.push({ label, val })
-        totalCC += val
-      } else if (low.includes('accounts receivable') || low === 'a/r' || (low.includes('receivable') && !low.includes('total'))) {
-        totalAR = val
+      if (!label || low.startsWith('total') || low === 'bank accounts' || low === 'assets' || low === 'current assets') return
+      if (any(['checking','savings','cash on hand','postage','operating account','2805','2813'], x => low.includes(x)) && !low.includes('closed')) {
+        cashAccounts.push({ label, value: val })
+      } else if (any(['amex','visa','mastercard','discover'], x => low.includes(x))) {
+        ccAccounts.push({ label, value: val })
+      } else if (label.includes('LOC') && !label.includes('MEDA')) {
+        loc_balance = val
+      } else if (label.includes('11000') || (low.includes('accounts receivable') && !low.includes('total'))) {
+        ar_total = val
       }
     })
-    return { cashAccounts, ccAccounts, petty, otherAccounts, totalCash, totalCC, totalAR }
+    return { cashAccounts, ccAccounts, loc_balance, ar_total }
+  }
+
+  const parseARaging = (text) => {
+    const rows = []
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
+    lines.forEach(line => {
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const label = parts[0]
+      if (!label || ['customer','total','a/r aging','infinity','as of','wednesday'].some(x => label.toLowerCase().includes(x))) return
+      rows.push({ customer: label, current_amt: pv(parts[1]), d30: pv(parts[2]), d60: pv(parts[3]), d90: pv(parts[4]), over90: pv(parts[5]), total: pv(parts[6]) })
+    })
+    return rows
+  }
+
+  const parseAPaging = (text) => {
+    const rows = []
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
+    lines.forEach((line, idx) => {
+      if (idx === 0) return
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const vendor = parts[0]
+      if (!vendor || ['vendor','total','totals','a/p aging','as of'].some(x => vendor.toLowerCase().includes(x))) return
+      const curr=pv(parts[1]), d30=pv(parts[2]), d60=pv(parts[3]), d90=pv(parts[4]), over90=pv(parts[5])
+      const total = curr+d30+d60+d90+over90
+      if (total === 0) return
+      rows.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
+    })
+    return rows
   }
 
   const parsePayroll = (text) => {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    let grossPay = 0, netPay = 0, taxes = 0, period = ''
+    const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
+    let gross = 0, taxes = 0, period = ''
+    // Find last period row — date range pattern
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      const label = (parts[0]||'').toLowerCase()
-      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
-      if (label.includes('gross') || label.includes('total wages') || label.includes('total compensation')) grossPay = val || grossPay
-      if (label.includes('net pay') || label.includes('total net')) netPay = val || netPay
-      if (label.includes('total tax') || label === 'taxes') taxes = val || taxes
-      if (label.includes('period') || label.includes('pay date') || label.includes('check date')) period = parts[1] || parts[2] || period
+      if (/d{4}-d{2}-d{2}/.test(parts[0]) || /d{1,2}/d{1,2}/d{4}/.test(parts[0])) {
+        const g = pv(parts[3]) || pv(parts[2])
+        if (g > gross) { gross = g; taxes = Math.abs(pv(parts[7]||parts[6]||'0')); period = parts[0] }
+      }
     })
-    return { grossPay, netPay, taxes, period }
+    return { payroll_gross: gross, payroll_net: gross - taxes, payroll_taxes: taxes, payroll_period: period }
   }
 
-  const handleUpload = (eid, type, file) => {
+
+  const handleUpload = async (entity, type, file) => {
     if (!file) return
+    setUploading(entity + '_' + type)
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       const text = e.target.result
-      let parsed = null
-      if (type === 'balance') parsed = parseBalanceSheet(text)
-      else if (type === 'payroll') parsed = parsePayroll(text)
-      setData(p => ({
-        ...p,
-        [eid]: {
-          ...p[eid],
-          [type]: parsed,
-          uploaded: { ...p[eid].uploaded, [type]: file.name + ' — ' + new Date().toLocaleTimeString() }
+      const detectedDate = parseDateFromHeader(text)
+      const snapDate = detectedDate || selectedDate || new Date().toISOString().split('T')[0]
+
+      try {
+        if (type === 'balance') {
+          const parsed = parseBalanceSheet(text)
+          // Upsert snapshot
+          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
+          if (existing) {
+            await supabase.from('cashflow_snapshots').update({
+              cash_accounts: parsed.cashAccounts,
+              cc_accounts: parsed.ccAccounts,
+              loc_balance: parsed.loc_balance,
+              ar_total: parsed.ar_total,
+              uploaded_at: new Date().toISOString()
+            }).eq('id', existing.id)
+          } else {
+            await supabase.from('cashflow_snapshots').insert({
+              org_id: orgId, entity, snapshot_date: snapDate,
+              cash_accounts: parsed.cashAccounts, cc_accounts: parsed.ccAccounts,
+              loc_balance: parsed.loc_balance, ar_total: parsed.ar_total
+            })
+          }
+          sh('Balance Sheet loaded' + (detectedDate ? ' — dated ' + snapDate : '') + ' checkmark')
+        } else if (type === 'ar') {
+          const rows = parseARaging(text)
+          await supabase.from('cashflow_ar').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
+          if (rows.length) await supabase.from('cashflow_ar').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
+          sh(rows.length + ' AR customers loaded checkmark')
+        } else if (type === 'ap') {
+          const rows = parseAPaging(text)
+          await supabase.from('cashflow_ap').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
+          if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
+          sh(rows.length + ' AP vendors loaded checkmark')
+        } else if (type === 'payroll') {
+          const parsed = parsePayroll(text)
+          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
+          if (existing) {
+            await supabase.from('cashflow_snapshots').update({ ...parsed, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
+          } else {
+            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, ...parsed })
+          }
+          sh('Payroll loaded — ' + parsed.payroll_period + ' checkmark')
         }
-      }))
-      sh(file.name + ' loaded')
+        // Refresh date list and reload
+        const { data: allSnaps } = await supabase.from('cashflow_snapshots').select('snapshot_date').eq('org_id',orgId).order('snapshot_date',{ascending:false})
+        if (allSnaps) {
+          const dates = [...new Set(allSnaps.map(r => r.snapshot_date))].sort((a,b)=>b.localeCompare(a))
+          setSnapshots(dates)
+          setSelectedDate(snapDate)
+        }
+      } catch(err) {
+        sh('Error: ' + err.message)
+      }
+      setUploading(null)
     }
     reader.readAsText(file)
   }
 
-  const fmt = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const ent = data[entity]
+  const inpStyle = { display:'none' }
+  const UpBtn = ({ entity, type, label }) => {
+    const key = entity + '_' + type
+    const busy = uploading === key
+    return (
+      <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:5, border:'1px solid '+C.bdr, cursor: busy?'wait':'pointer', fontSize:10, color:C.g, fontFamily:'inherit', background:'transparent' }}>
+        {busy ? 'Loading...' : ('↑ ' + label)}
+        <input type="file" accept=".csv" style={inpStyle} disabled={busy} onChange={ev=>handleUpload(entity,type,ev.target.files[0])} />
+      </label>
+    )
+  }
 
-  const UploadBtn = ({ type, label, eid }) => (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: '1px solid ' + (ent.uploaded[type] ? C.gr : C.bdr), cursor: 'pointer', fontSize: 11, color: ent.uploaded[type] ? C.gr : C.g, background: 'transparent', fontFamily: 'inherit' }}>
-      {ent.uploaded[type] ? ('✓ ' + label) : ('↑ ' + label)}
-      <input type="file" accept=".csv" style={{ display: 'none' }} onChange={ev => handleUpload(eid, type, ev.target.files[0])} />
-    </label>
-  )
-
-  const StatBox = ({ label, value, color, warn, sub }) => (
-    <div style={{ background: C.nL, borderRadius: 8, padding: '14px 16px', border: '1px solid ' + (warn ? C.rd : C.bdr), borderLeft: '3px solid ' + (color || C.go) }}>
-      <div style={{ fontSize: 9, color: C.g, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: warn ? C.rd : (color || C.go), lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>{sub}</div>}
+  const SBox = ({ label, value, color, warn, sub, small }) => (
+    <div style={{ background:C.nL, borderRadius:8, padding: small?'10px 12px':'14px 16px', border:'1px solid '+(warn?C.rd:C.bdr), borderLeft:'3px solid '+(color||C.go) }}>
+      <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize: small?18:22, fontWeight:700, color: warn?C.rd:(color||C.go), lineHeight:1 }}>{value}</div>
+      {sub && <div style={{ fontSize:9, color:C.g, marginTop:3 }}>{sub}</div>}
     </div>
   )
 
-  const SectionHeader = ({ title }) => (
-    <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>{title}</div>
+  const SecHead = ({ title, entity, uploads }) => (
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
+      <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1 }}>{title}</div>
+      <div style={{ display:'flex', gap:4 }}>
+        {uploads && uploads.map(u => <UpBtn key={u.type} entity={entity} type={u.type} label={u.label} />)}
+      </div>
+    </div>
   )
 
-  const EmptyState = ({ msg }) => (
-    <div style={{ fontSize: 12, color: C.g, padding: '16px 0', fontStyle: 'italic' }}>{msg}</div>
-  )
+  const EntityCol = ({ title, snap, ap, ar, entity }) => {
+    const cash = snap ? (snap.cash_accounts || []) : []
+    const cc = snap ? (snap.cc_accounts || []) : []
+    const loc = snap ? snap.loc_balance : null
+    const arTotal = snap ? snap.ar_total : null
+    const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
+
+    const uploadDefs = entity === 'iaz'
+      ? [{ type:'balance', label:'Balance Sheet' }, { type:'ap', label:'AP Aging' }, { type:'payroll', label:'Payroll' }]
+      : [{ type:'balance', label:'Balance Sheet' }, { type:'ar', label:'AR Aging' }]
+
+    return (
+      <div style={{ flex:1, minWidth:0 }}>
+        {/* Entity header */}
+        <div style={{ fontWeight:700, fontSize:15, color:C.go, marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <span>{title}</span>
+          <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+            {uploadDefs.map(u => <UpBtn key={u.type} entity={entity} type={u.type} label={u.label} />)}
+          </div>
+        </div>
+
+        {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>No data for this date. Upload a Balance Sheet to get started.</div>}
+
+        {snap && <>
+          {/* Cash */}
+          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Cash</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
+            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={a.value>=0?C.gr:C.rd} warn={a.value<0} small />)}
+            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={totalCash>=0?C.go:C.rd} warn={totalCash<0} small />}
+          </div>
+
+          {/* CC */}
+          {cc.length > 0 && <>
+            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Credit Cards</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
+              {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={C.rd} warn sub="owed" small />)}
+            </div>
+          </>}
+
+          {/* LOC */}
+          {loc !== null && loc !== 0 && <>
+            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Line of Credit</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
+              <SBox label="US Bank LOC" value={fmt(Math.abs(loc))} color={loc>0?C.am:C.gr} sub={loc>0?'drawn':'credit balance'} small />
+            </div>
+          </>}
+
+          {/* AR */}
+          {(arTotal !== null && arTotal !== 0) && <>
+            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Accounts Receivable</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom: ar.length?6:14 }}>
+              <SBox label="Total AR" value={fmt(arTotal)} color={C.am} small />
+            </div>
+            {ar.length > 0 && <div style={{ marginBottom:14 }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
+                  {['Customer','Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {ar.map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
+                    <td style={{ padding:'4px 6px', fontWeight:600, fontSize:11 }}>{r.customer}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:C.gr }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?C.am:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?C.am:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?C.rd:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?C.rd:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700 }}>{fmt(r.total)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>}
+          </>}
+
+          {/* AP */}
+          {ap.length > 0 && <>
+            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
+              {'Accounts Payable (' + ap.length + ' vendors)'}
+            </div>
+            <div style={{ marginBottom:14, maxHeight:300, overflowY:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                <thead><tr style={{ borderBottom:'1px solid '+C.bdr, position:'sticky', top:0, background:C.bg2 }}>
+                  {['Vendor','Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {ap.filter(v=>v.total!==0).map((v,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
+                    <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{v.vendor}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:v.current_amt?C.gr:C.g }}>{v.current_amt?fmt(v.current_amt):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d30?C.am:C.g }}>{v.d30?fmt(v.d30):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d60?C.am:C.g }}>{v.d60?fmt(v.d60):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d90?C.rd:C.g }}>{v.d90?fmt(v.d90):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:11, color:v.over90?C.rd:C.g }}>{v.over90?fmt(v.over90):'—'}</td>
+                    <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:v.total<0?C.gr:C.w }}>{fmt(v.total)}</td>
+                  </tr>)}
+                </tbody>
+              </table>
+            </div>
+          </>}
+
+          {/* Payroll */}
+          {snap.payroll_gross > 0 && <>
+            <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Last Payroll{snap.payroll_period?' — '+snap.payroll_period:''}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 }}>
+              <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
+              <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={C.am} small />
+              <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={C.gr} small />
+            </div>
+          </>}
+        </>}
+      </div>
+    )
+  }
 
   return (
     <div>
-      {/* Entity toggle + upload bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {ENTITIES.map(e => (
-            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid ' + (entity === e.id ? C.go : C.bdrF), background: entity === e.id ? C.gD : 'transparent', color: entity === e.id ? C.go : C.g, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{e.label}</button>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <span style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: 1 }}>Upload:</span>
-          <UploadBtn type="balance" label="Balance Sheet" eid={entity} />
-          <UploadBtn type="payroll" label="Payroll Summary" eid={entity} />
-        </div>
+      {/* Date selector */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, flexWrap:'wrap' }}>
+        <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>Snapshot:</div>
+        <select value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }}>
+          {snapshots.map(d => <option key={d} value={d}>{d}</option>)}
+          {snapshots.length===0 && <option value="">No data yet</option>}
+        </select>
+        <div style={{ fontSize:10, color:C.g }}>Uploads auto-detect date from file header. Upload new data any time to update or add history.</div>
       </div>
 
-      {ent.uploaded.balance && <div style={{ fontSize: 10, color: C.g, marginBottom: 16 }}>{'Last upload: ' + ent.uploaded.balance}</div>}
+      {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>Loading...</div>}
 
-      {/* ── CASH ACCOUNTS ── */}
-      <SectionHeader title="Cash Accounts" />
-      {ent.balance
-        ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
-            {ent.balance.cashAccounts.length === 0 && ent.balance.petty === null
-              ? <EmptyState msg="No checking or savings accounts found in this Balance Sheet." />
-              : null
-            }
-            {ent.balance.cashAccounts.map((a, i) => (
-              <StatBox key={i} label={a.label} value={fmt(a.val)} color={a.val >= 0 ? C.gr : C.rd} warn={a.val < 0} />
-            ))}
-            {ent.balance.petty && <StatBox label={ent.balance.petty.label} value={fmt(ent.balance.petty.val)} color={C.bl} />}
-            {ent.balance.cashAccounts.length > 1 && (
-              <StatBox label="Total Cash" value={fmt(ent.balance.totalCash)} color={ent.balance.totalCash >= 0 ? C.go : C.rd} warn={ent.balance.totalCash < 0} sub="All cash accounts combined" />
-            )}
-          </div>
-        : <div style={{ marginBottom: 20 }}><EmptyState msg="Upload a Balance Sheet CSV to see cash accounts." /></div>
-      }
-
-      {/* ── CREDIT CARDS ── */}
-      {ent.balance && ent.balance.ccAccounts.length > 0 && <>
-        <SectionHeader title="Credit Cards" />
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
-          {ent.balance.ccAccounts.map((a, i) => (
-            <StatBox key={i} label={a.label} value={fmt(Math.abs(a.val))} color={C.rd} warn={true} sub="Balance owed" />
-          ))}
-          {ent.balance.ccAccounts.length > 1 && (
-            <StatBox label="Total CC Owed" value={fmt(Math.abs(ent.balance.totalCC))} color={C.rd} warn={true} />
-          )}
+      {!loading && (
+        <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
+          <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={[]} entity="iaz" />
+          <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />
+          <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />
         </div>
-      </>}
+      )}
 
-      {/* ── ACCOUNTS RECEIVABLE ── */}
-      <SectionHeader title="Accounts Receivable" />
-      {ent.balance
-        ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
-            {ent.balance.totalAR > 0
-              ? <StatBox label="Total AR" value={fmt(ent.balance.totalAR)} color={C.am} sub="From Balance Sheet — totals from FLEX" />
-              : <EmptyState msg="No AR balance found. AR totals pull from Balance Sheet." />
-            }
-          </div>
-        : <div style={{ marginBottom: 20 }}><EmptyState msg="Upload a Balance Sheet CSV to see AR." /></div>
-      }
-
-      {/* ── LAST PAYROLL ── */}
-      <SectionHeader title="Last Payroll" />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
-        {ent.payroll
-          ? <>
-              {ent.payroll.period && <StatBox label="Pay Period" value={ent.payroll.period} color={C.g} />}
-              <StatBox label="Gross Pay" value={fmt(ent.payroll.grossPay)} color={C.bl} />
-              <StatBox label="Net Pay" value={fmt(ent.payroll.netPay)} color={C.gr} />
-              <StatBox label="Taxes + Deductions" value={fmt(ent.payroll.taxes)} color={C.am} />
-            </>
-          : <EmptyState msg="Upload a Payroll Summary CSV to see last payroll." />
-        }
-      </div>
-
-      {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1000 }}>{toast}</div>}
+      {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
     </div>
   )
 }

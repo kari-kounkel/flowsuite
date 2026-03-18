@@ -254,6 +254,10 @@ export default function PeopleFlowModule({ orgId, C }) {
   const [toast, setToast] = useState('')
   const [userEmail, setUserEmail] = useState('')
   const [userEmpRecord, setUserEmpRecord] = useState(null)
+  const [xJobs, setXJobs] = useState({active:0,waiting:0,rush:0,overdue:0})
+  const [xTasks, setXTasks] = useState({open:0,overdue:0,started:0})
+  const [xMoney, setXMoney] = useState({openTasks:0})
+  const [xPaper, setXPaper] = useState({unacked:0,pushTitle:''})
 
   const isAdmin = ADMIN_EMAILS.includes(userEmail.toLowerCase())
   const isHR = HR_EMAILS.includes(userEmail.toLowerCase())
@@ -307,6 +311,32 @@ export default function PeopleFlowModule({ orgId, C }) {
     }
     load()
   }, [orgId])
+
+  useEffect(() => {
+    if (!orgId || !userEmail) return
+    const loadCross = async () => {
+      const now = new Date().toISOString()
+      const [jobsR, tasksR, moneyR, paperR, acksR] = await Promise.all([
+        supabase.from('job_sleeves').select('id,status,is_rush,due_date').in('status',['active','waiting']),
+        supabase.from('tasks').select('id,is_complete,due_date,priority').eq('org_id',orgId).eq('is_complete',false),
+        supabase.from('moneyflow_tasks').select('id,status').eq('org_id',orgId).neq('status','complete'),
+        supabase.from('policy_pushes').select('id,title,created_at').eq('org_id',orgId).order('created_at',{ascending:false}).limit(1),
+        supabase.from('push_acknowledgments').select('id,status,push_id').eq('org_id',orgId).eq('user_email',userEmail.toLowerCase())
+      ])
+      const jobs = jobsR.data || []
+      const overdueJobs = jobs.filter(j=>j.due_date && new Date(j.due_date)<new Date())
+      setXJobs({active:jobs.filter(j=>j.status==='active').length,waiting:jobs.filter(j=>j.status==='waiting').length,rush:jobs.filter(j=>j.is_rush).length,overdue:overdueJobs.length})
+      const tasks = tasksR.data || []
+      const overdueTasks = tasks.filter(t=>t.due_date && new Date(t.due_date)<new Date())
+      setXTasks({open:tasks.length,overdue:overdueTasks.length,started:tasks.filter(t=>t.priority==='high').length})
+      setXMoney({openTasks:(moneyR.data||[]).length})
+      const latestPush = (paperR.data||[])[0]
+      const acks = acksR.data || []
+      const unacked = latestPush ? (acks.find(a=>a.push_id===latestPush.id && a.status==='acknowledged') ? 0 : 1) : 0
+      setXPaper({unacked, pushTitle: latestPush ? latestPush.title : ''})
+    }
+    loadCross()
+  }, [orgId, userEmail])
 
   const ac = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='laid_off')
 
@@ -496,51 +526,91 @@ export default function PeopleFlowModule({ orgId, C }) {
     {/* DASHBOARD */}
     {view==='dashboard'&&(()=>{
       const newHireList = ac.filter(e=>dbt(e.hire_date||td,td)<=90).sort((a,b)=>dbt(a.hire_date||td,td)-dbt(b.hire_date||td,td))
+      const avgOnbPct = newHireList.length > 0 ? Math.round(newHireList.reduce((sum,e)=>{
+        const ed = onb[e.id]||{}; return sum + Math.round(OBS.filter(s=>ed[s.id]).length/OBS.length*100)
+      },0)/newHireList.length) : null
+
+      const StatCard = ({label,value,sub,color,warn}) => (
+        <Card C={C} style={{padding:'14px 16px',borderLeft: warn ? '3px solid '+C.rd : '3px solid transparent'}}>
+          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{label}</div>
+          <div style={{fontSize:28,fontWeight:700,color:color||C.go,lineHeight:1}}>{value}</div>
+          {sub && <div style={{fontSize:10,color:C.g,marginTop:4}}>{sub}</div>}
+        </Card>
+      )
+
       return <div>
-        {/* Headcount Stats */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:10,marginBottom:16}}>
-          {getDashCards().map(s=>(
-            <Card key={s.l} C={C} style={{padding:'14px 16px'}}>
-              <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{s.l}</div>
-              <div style={{fontSize:30,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
-            </Card>
-          ))}
+        <div style={{fontSize:11,color:C.g,marginBottom:14,fontWeight:500,textTransform:'uppercase',letterSpacing:1}}>{'FlowSuite — Operations Snapshot'}</div>
+
+        {/* ── PEOPLE ── */}
+        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'◉ People'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:16}}>
+          <StatCard label={'Active'} value={ac.length} color={C.gr}/>
+          <StatCard label={'Union'} value={ac.filter(e=>e.union_status&&e.union_status!=='Non-Union'&&e.union_status!=='1099').length} color={C.bl}/>
+          <StatCard label={'New Hires'} value={newHireList.length} sub={avgOnbPct!==null ? 'avg '+avgOnbPct+'% onboarded' : null} color={C.am}/>
+          {emps.filter(e=>e.status==='laid_off').length > 0 && <StatCard label={'Laid Off'} value={emps.filter(e=>e.status==='laid_off').length} color={'#6366F1'}/>}
         </div>
-        {/* New Hires */}
-        {canManage && newHireList.length > 0 && <Card C={C} style={{marginBottom:16,padding:'14px 16px'}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.am,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'★ New Hires — Within 90 Days'}</div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8}}>
+
+        {/* ── SCAN FLOW ── */}
+        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'📦 ScanFlow — Jobs'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:16}}>
+          <StatCard label={'Active'} value={xJobs.active} color={C.gr}/>
+          <StatCard label={'Waiting'} value={xJobs.waiting} color={C.am}/>
+          <StatCard label={'Rush'} value={xJobs.rush} color={C.rd} warn={xJobs.rush>0}/>
+          <StatCard label={'Overdue'} value={xJobs.overdue} color={C.rd} warn={xJobs.overdue>0}/>
+        </div>
+
+        {/* ── TASK FLOW ── */}
+        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'✅ TaskFlow — Work Items'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:16}}>
+          <StatCard label={'Open Tasks'} value={xTasks.open} color={C.bl}/>
+          <StatCard label={'Overdue'} value={xTasks.overdue} color={C.rd} warn={xTasks.overdue>0}/>
+        </div>
+
+        {/* ── MONEY FLOW ── */}
+        {canManage && <div>
+          <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'💰 MoneyFlow — Action Items'}</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10,marginBottom:16}}>
+            <StatCard label={'Open Items'} value={xMoney.openTasks} color={xMoney.openTasks>0?C.am:C.gr} warn={xMoney.openTasks>0}/>
+          </div>
+        </div>}
+
+        {/* ── PAPER FLOW ── */}
+        {xPaper.unacked > 0 && <Card C={C} style={{marginBottom:16,padding:'14px 16px',borderLeft:'3px solid '+C.am}}>
+          <div style={{fontSize:10,color:C.am,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{'📄 PaperFlow — Action Required'}</div>
+          <div style={{fontSize:13,color:C.w,marginBottom:8}}>{'You have an unacknowledged policy update: '}<span style={{fontWeight:700}}>{xPaper.pushTitle||'Policy Update'}</span></div>
+          <div style={{fontSize:11,color:C.g}}>{'Go to PaperFlow to review and acknowledge.'}</div>
+        </Card>}
+
+        {/* ── NEW HIRES DETAIL (admin/manager only) ── */}
+        {canManage && newHireList.length > 0 && <div>
+          <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'★ New Hire Progress'}</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:8,marginBottom:16}}>
             {newHireList.map(e=>{
               const day = dbt(e.hire_date||td,td)
               const pct = Math.min(100,Math.round(day/90*100))
               const barColor = pct>=100?C.gr:pct>=60?C.am:C.bl
+              const onbDone = OBS.filter(s=>(onb[e.id]||{})[s.id]).length
+              const onbPct = Math.round(onbDone/OBS.length*100)
+              const onbColor = onbPct===100?C.gr:onbPct>=50?C.am:C.rd
               return <div key={e.id} style={{background:C.nL,borderRadius:8,padding:'10px 12px',border:'1px solid '+C.bdr}}>
                 <div style={{fontWeight:600,fontSize:13,marginBottom:1}}>{gn(e)}</div>
-                <div style={{fontSize:10,color:C.g,marginBottom:6}}>{e.role||'—'}{' · '}{e.dept||'—'}</div>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:C.g,marginBottom:3}}>
-                  <span>{'Day '+day+' of 90'}</span>
-                  <span style={{color:barColor,fontWeight:700}}>{pct+'%'}</span>
+                <div style={{fontSize:10,color:C.g,marginBottom:8}}>{e.role||'—'}{' · '}{e.dept||'—'}</div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:C.g,marginBottom:2}}>
+                  <span>{'Probation'}</span><span style={{color:barColor,fontWeight:700}}>{'Day '+day+' / 90'}</span>
+                </div>
+                <div style={{height:3,borderRadius:99,background:C.bdr,marginBottom:6}}>
+                  <div style={{height:'100%',borderRadius:99,background:barColor,width:pct+'%'}}/>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:C.g,marginBottom:2}}>
+                  <span>{'Onboarding'}</span><span style={{color:onbColor,fontWeight:700}}>{onbPct+'%'}</span>
                 </div>
                 <div style={{height:3,borderRadius:99,background:C.bdr}}>
-                  <div style={{height:'100%',borderRadius:99,background:barColor,width:pct+'%',transition:'width 0.3s'}}/>
+                  <div style={{height:'100%',borderRadius:99,background:onbColor,width:onbPct+'%'}}/>
                 </div>
               </div>
             })}
           </div>
-        </Card>}
-        {/* Admin Alerts */}
-        {isAdmin && alerts.length > 0 && <Card C={C} style={{marginBottom:16,padding:'14px 16px'}}>
-          <div style={{fontSize:11,fontWeight:700,color:C.rd,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'⚠ Alerts'}</div>
-          {alerts.map((a,i)=>(
-            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 0',borderBottom:i<alerts.length-1?'1px solid '+C.bdr:'none',gap:8}}>
-              <span style={{fontSize:12,color:C.w,flex:1}}>{a.m}</span>
-              <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
-                {a.reinstatementDisc && <button onClick={()=>{if(window.confirm('Confirm end of probation? This will reverse the last '+(a.reinstatementDisc.reverse_count||2)+' record(s) and restore to Active.'))confirmProbationEnd(a.reinstatementDisc)}} style={{background:RC,border:'none',color:'#fff',borderRadius:6,padding:'3px 10px',fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:700}}>{'Confirm'}</button>}
-                <Tag c={a.c}>{a.t}</Tag>
-              </div>
-            </div>
-          ))}
-        </Card>}
+        </div>}
       </div>
     })()}
 
@@ -628,15 +698,17 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
     return { total: empDisc.length, active }
   }
 
+  const isPreHire = (e) => e.offer_status==='Pending' || !e.hire_date
+
   return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-      <h2 style={{margin:0,fontSize:18}}>Team ({activeVisible.length})</h2>
-      {isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>+ Add</Btn>}
+      <h2 style={{margin:0,fontSize:18}}>{'Team ('+activeVisible.length+')'}</h2>
+      {isAdmin&&<Btn small gold onClick={()=>{setSel(null);setMod('emp')}} C={C}>{'+ Add'}</Btn>}
     </div>
 
     {visibleEmps.length === 0 && !isAdmin && <Card C={C} style={{padding:20,textAlign:'center',color:C.g}}>
-      <div style={{fontSize:13,marginBottom:4}}>Your account isn't linked to an employee record yet.</div>
-      <div style={{fontSize:11}}>Ask HR to make sure your login email matches your employee record.</div>
+      <div style={{fontSize:13,marginBottom:4}}>{'Your account isn't linked to an employee record yet.'}</div>
+      <div style={{fontSize:11}}>{'Ask HR to make sure your login email matches your employee record.'}</div>
     </Card>}
 
     {visibleEmps.length > 0 && <input placeholder="Search team..." value={filter} onChange={e=>setFilter(e.target.value)} style={{width:'100%',padding:'8px 12px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:8,color:C.w,fontSize:13,marginBottom:10,boxSizing:'border-box',outline:'none',fontFamily:'inherit'}}/>}
@@ -645,11 +717,15 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
       const isExpanded = expandedId === e.id
       const onbPct = getOnbPct(e.id)
       const {total:discTotal, active:discActive} = getDiscCounts(e.id)
-      const statusColor = e.status==='Active'||e.status==='active'?C.gr:e.status==='Terminated'||e.status==='terminated'?C.rd:e.status==='laid_off'?'#6366F1':C.am
+      const st = e.status||'active'
+      const statusColor = st==='Active'||st==='active'?C.gr:st==='Terminated'||st==='terminated'?C.rd:st==='laid_off'?'#6366F1':st==='probation'?C.am:C.am
+      const statusLabel = st==='laid_off'?'Laid Off':st==='probation'?'Probation':st.charAt(0).toUpperCase()+st.slice(1)
       const onbPctColor = onbPct===null?C.g:onbPct===100?C.gr:onbPct>=50?C.am:C.rd
       const canSeeDisc = isAdmin||isHR||isManager
+      const preHire = isPreHire(e)
 
       return <Card key={e.id} C={C} style={{marginBottom:8,padding:0,overflow:'hidden'}}>
+        {/* ── Card Header ── */}
         <div
           onClick={()=>{
             if(isAdmin){setSel(e);setMod('emp')}
@@ -658,27 +734,31 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 14px',cursor:'pointer'}}
         >
           <div style={{minWidth:0,flex:1}}>
-            <div style={{fontWeight:700,fontSize:14,marginBottom:1}}>{gn(e)}</div>
-            <div style={{fontSize:11,color:C.g}}>{e.role||'—'} · {e.dept||e.department||'—'}</div>
+            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+              <span style={{fontWeight:700,fontSize:14}}>{gn(e)}</span>
+              {preHire && <span style={{fontSize:9,padding:'2px 6px',borderRadius:99,background:'rgba(245,158,11,0.15)',color:C.am,fontWeight:700,border:'1px solid rgba(245,158,11,0.3)'}}>{'PRE-HIRE'}</span>}
+            </div>
+            <div style={{fontSize:11,color:C.g,marginTop:1}}>{e.role||'—'}{' · '}{e.dept||e.department||'—'}</div>
           </div>
           <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0,marginLeft:8}}>
-            <Tag c={statusColor}>{e.status==='laid_off'?'Laid Off':e.status||'Active'}</Tag>
+            <Tag c={statusColor}>{statusLabel}</Tag>
             {canSeeDisc && onbPct !== null && <div style={{textAlign:'center',minWidth:36}}>
-              <div style={{fontSize:13,fontWeight:700,color:onbPctColor}}>{onbPct}%</div>
-              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>Onb</div>
+              <div style={{fontSize:13,fontWeight:700,color:onbPctColor}}>{onbPct+'%'}</div>
+              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{'Onb'}</div>
             </div>}
-            {canSeeDisc && discTotal > 0 && <div style={{textAlign:'center',minWidth:28}}>
-              <div style={{fontSize:13,fontWeight:700,color:discActive>0?C.rd:C.g}}>{discActive > 0 ? discActive : discTotal}</div>
-              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{discActive>0?'Active':'Disc'}</div>
+            {canSeeDisc && discActive > 0 && <div style={{textAlign:'center',minWidth:28}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.rd}}>{discActive}</div>
+              <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{'Disc'}</div>
             </div>}
             {!isAdmin && <span style={{fontSize:10,color:C.g,marginLeft:2}}>{isExpanded?'▲':'▼'}</span>}
           </div>
         </div>
 
+        {/* ── Expandable Panel (non-admin) ── */}
         {!isAdmin && isExpanded && <div style={{padding:'10px 14px',paddingTop:0,borderTop:'1px solid '+C.bdr}}>
           {onbPct !== null && <div style={{marginBottom:10,paddingTop:10}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,fontSize:10,color:C.g}}>
-              <span>Onboarding Progress</span><span style={{color:onbPctColor,fontWeight:700}}>{onbPct}%</span>
+              <span>{'Onboarding Progress'}</span><span style={{color:onbPctColor,fontWeight:700}}>{onbPct+'%'}</span>
             </div>
             <div style={{height:4,borderRadius:99,background:C.nL}}>
               <div style={{height:'100%',borderRadius:99,background:onbPctColor,width:onbPct+'%',transition:'width 0.3s'}}/>
@@ -693,12 +773,12 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
             )}
           </div>
           {canSeeDisc && discTotal > 0 && (()=>{
-            const empDisc = disc.filter(d => d.employee_id === e.id).sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+            const empDisc = disc.filter(d=>d.employee_id===e.id).sort((a,b)=>new Date(b.date||b.created_at)-new Date(a.date||a.created_at))
             return <div style={{paddingTop:8,borderTop:'1px solid '+C.bdr}}>
               <div style={{fontSize:9,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>
-                Discipline History ({empDisc.length}) · {discActive} active progressive
+                {'Discipline History ('+empDisc.length+') · '+discActive+' active progressive'}
               </div>
-              {empDisc.map((d,i) => {
+              {empDisc.map((d,i)=>{
                 const pdt = DISC_TYPES.find(t=>t.v===d.type)
                 const active = isDiscActive(d)
                 const isProgressive = PROGRESSION_CHAIN.includes(d.type)
@@ -714,7 +794,8 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
           })()}
         </div>}
 
-        {isAdmin && (e.offer_status==='Pending' || !e.hire_date) && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
+        {/* ── Pre-hire action buttons (admin only, no hire_date or Pending) ── */}
+        {isAdmin && preHire && <div style={{display:'flex',gap:6,padding:'8px 14px',borderTop:'1px solid '+C.bdr,flexWrap:'wrap'}}>
           {(!e.offer_status || e.offer_status==='Pending') &&
             <Btn small gold onClick={ev=>{ev.stopPropagation();setLetterMod({type:'offer',emp:e})}} C={C}>{'📄 Send Offer'}</Btn>}
           {e.offer_status==='Pending' &&

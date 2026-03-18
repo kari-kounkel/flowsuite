@@ -4721,16 +4721,24 @@ function CashFlowForecaster({ orgId, C }) {
       })
   }, [orgId, entity])
 
+  const [dragIdx, setDragIdx] = useState(null)
+  const [dragOver, setDragOver] = useState(null)
   const toggleMark = (id) => setBills(p => p.map(b => b.id === id ? { ...b, marked: !b.marked } : b))
   const setPayAmt = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payAmt: val } : b))
-  const moveUp = (idx) => {
-    if (idx === 0) return
-    setBills(p => { const a=[...p]; const t=a[idx-1]; a[idx-1]=a[idx]; a[idx]=t; return a })
+  const onDragStart = (idx) => setDragIdx(idx)
+  const onDragOver = (e, idx) => { e.preventDefault(); setDragOver(idx) }
+  const onDrop = (idx) => {
+    if (dragIdx === null || dragIdx === idx) { setDragIdx(null); setDragOver(null); return }
+    setBills(p => {
+      const a = [...p]
+      const item = a.splice(dragIdx, 1)[0]
+      a.splice(idx, 0, item)
+      return a
+    })
+    setDragIdx(null)
+    setDragOver(null)
   }
-  const moveDown = (idx) => {
-    if (idx === bills.length-1) return
-    setBills(p => { const a=[...p]; const t=a[idx+1]; a[idx+1]=a[idx]; a[idx]=t; return a })
-  }
+  const onDragEnd = () => { setDragIdx(null); setDragOver(null) }
 
   const fmt = n => {
     if (n == null) return '—'
@@ -4796,14 +4804,17 @@ function CashFlowForecaster({ orgId, C }) {
           <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
           <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
         </div>
-        <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Use arrows to prioritize. Check to mark for payment. Enter partial amount to pay less than full balance.'}</div>
+        <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Drag rows to prioritize. Check to mark for payment. Enter a partial amount to pay less than the full balance.'}</div>
 
         {bills.map((b, idx) => (
-          <div key={b.id||idx} style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', marginBottom:6, borderRadius:8, background:b.marked?C.grD:C.nL, border:'1px solid '+(b.marked?C.gr:C.bdr) }}>
-            <div style={{ display:'flex', flexDirection:'column', gap:1, flexShrink:0 }}>
-              <button onClick={() => moveUp(idx)} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:10, padding:'0 2px', fontFamily:'inherit', lineHeight:1 }}>{'▲'}</button>
-              <button onClick={() => moveDown(idx)} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:10, padding:'0 2px', fontFamily:'inherit', lineHeight:1 }}>{'▼'}</button>
-            </div>
+          <div key={b.id||idx}
+            draggable
+            onDragStart={() => onDragStart(idx)}
+            onDragOver={e => onDragOver(e, idx)}
+            onDrop={() => onDrop(idx)}
+            onDragEnd={onDragEnd}
+            style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', marginBottom:6, borderRadius:8, background:dragOver===idx?C.gD:b.marked?C.grD:C.nL, border:'1px solid '+(dragOver===idx?C.go:b.marked?C.gr:C.bdr), cursor:'grab', opacity:dragIdx===idx?0.5:1, transition:'border-color 0.1s' }}>
+            <span style={{ fontSize:13, color:C.g, flexShrink:0, cursor:'grab', paddingRight:2 }}>{'⠿'}</span>
             <span style={{ fontSize:11, color:C.g, minWidth:20, textAlign:'right', flexShrink:0 }}>{idx+1}</span>
             <input type="checkbox" checked={b.marked} onChange={() => toggleMark(b.id||idx)} style={{ flexShrink:0, cursor:'pointer', width:14, height:14 }} />
             <div style={{ flex:1, minWidth:0 }}>
@@ -4851,11 +4862,6 @@ function BudgetView({ orgId, C }) {
   const [showDetail, setShowDetail] = useState(false)
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
-
-  const POS = C.go
-  const NEG = '#B45055'
-  const WARN = C.am
-  const mColor = (n) => Number(n) >= 0 ? POS : NEG
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 

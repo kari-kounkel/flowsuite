@@ -4576,6 +4576,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   useEffect(() => {
     if (!orgId) return
     loadScheduled()
+    loadSchedPmts()
   }, [orgId, entity])
 
   useEffect(() => {
@@ -4610,6 +4611,23 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   const [dragOver, setDragOver] = useState(null)
   const [pushing, setPushing] = useState(false)
   const [scheduled, setScheduled] = useState({}) // keyed by vendor name
+  const [schedPmts, setSchedPmts] = useState([]) // ap_scheduled_payments rows
+  const [schedModal, setSchedModal] = useState(null) // null | { vendor, existing: row|null }
+
+  const loadSchedPmts = async () => {
+    const { data } = await supabase.from('ap_scheduled_payments')
+      .select('*').eq('org_id', orgId).eq('entity', entity)
+      .eq('status', 'pending').order('scheduled_date', { ascending: true })
+    setSchedPmts(data || [])
+  }
+
+  // keyed by vendor — most recent pending entry
+  const schedPmtMap = {}
+  schedPmts.forEach(p => {
+    if (!schedPmtMap[p.vendor] || p.scheduled_date > schedPmtMap[p.vendor].scheduled_date) {
+      schedPmtMap[p.vendor] = p
+    }
+  })
 
   const loadScheduled = async () => {
     const { data } = await supabase.from('cashflow_ap_notes')
@@ -4811,6 +4829,16 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
                 {b.d90?'61-90d: '+fmt(b.d90)+'  ':''}
                 {b.over90?'90+: '+fmt(b.over90):''}
               </div>
+              {schedPmtMap[b.vendor] && (() => {
+                const sp = schedPmtMap[b.vendor]
+                const seriesLabel = sp.series_total > 1 ? ' · '+sp.series_num+'/'+sp.series_total : ''
+                const amtLabel = sp.amount ? ' · $'+parseFloat(sp.amount).toFixed(2) : ''
+                return (
+                  <div style={{ marginTop:4, display:'inline-flex', alignItems:'center', gap:4, padding:'2px 7px', borderRadius:99, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)', fontSize:9, color:WARN, fontWeight:600 }}>
+                    {'📅 Sched: '+new Date(sp.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+amtLabel+' · '+(sp.payment_type==='partial'?'Partial':'Full')+seriesLabel}
+                  </div>
+                )
+              })()}
             </div>
             <div style={{ textAlign:'right', flexShrink:0, minWidth:80 }}>
               <div style={{ fontSize:13, fontWeight:700, color:b.marked?C.gr:C.w }}>{fmt(b.total)}</div>
@@ -4831,16 +4859,151 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
               ? <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} onBlur={ev=>saveScheduled(b.vendor,'scheduled_amt',ev.target.value)} placeholder="Sched. $" style={{ width:110, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />
               : (b.scheduledAmt ? <span style={{ fontSize:11, color:WARN, flexShrink:0 }}>{'Sched: $'+parseFloat(b.scheduledAmt).toFixed(2)}</span> : null)
             }
+            {canEditSched && (
+              <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
+                style={{ flexShrink:0, padding:'3px 9px', borderRadius:5, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
+                {schedPmtMap[b.vendor] ? '📅 Edit' : '+ Schedule'}
+              </button>
+            )}
           </div>
         ))}
       </>}
 
       {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
+      {schedModal && <SchedPayModal
+        orgId={orgId} entity={entity} C={C}
+        vendor={schedModal.vendor} existing={schedModal.existing}
+        allPmts={schedPmts.filter(p => p.vendor === schedModal.vendor)}
+        onClose={() => setSchedModal(null)}
+        onSaved={() => { loadSchedPmts(); setSchedModal(null); sh('Scheduled payment saved ✓') }}
+        onExpired={() => { loadSchedPmts(); setSchedModal(null); sh('Marked as paid/expired ✓') }}
+      />}
     </div>
   )
 }
 
-function BudgetView({ orgId, C }) {
+// ═══════════════════════════════════════════════════════
+// SCHEDULED PAYMENT MODAL — shared by CashFlow + APRecon
+// ═══════════════════════════════════════════════════════
+function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSaved, onExpired, C }) {
+  const WARN = C.am
+  const today = new Date().toISOString().split('T')[0]
+  const blank = { vendor, amount: '', scheduled_date: '', payment_type: 'full', series_num: '', series_total: '', notes: '', status: 'pending' }
+  const [form, setForm] = useState(existing ? { ...existing, amount: existing.amount || '', series_num: existing.series_num || '', series_total: existing.series_total || '', notes: existing.notes || '' } : blank)
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const isAgreement = parseInt(form.series_total) > 1
+
+  const handleSave = async () => {
+    if (!form.scheduled_date) return
+    setSaving(true)
+    const payload = {
+      org_id: orgId, entity, vendor: form.vendor,
+      amount: form.amount ? parseFloat(form.amount) : null,
+      scheduled_date: form.scheduled_date,
+      payment_type: form.payment_type,
+      series_num: isAgreement ? parseInt(form.series_num) || null : null,
+      series_total: isAgreement ? parseInt(form.series_total) || null : null,
+      notes: form.notes || null,
+      status: 'pending'
+    }
+    if (existing?.id) {
+      await supabase.from('ap_scheduled_payments').update(payload).eq('id', existing.id)
+    } else {
+      await supabase.from('ap_scheduled_payments').insert([payload])
+    }
+    setSaving(false)
+    onSaved()
+  }
+
+  const handleExpire = async (id) => {
+    await supabase.from('ap_scheduled_payments').update({ status: 'paid' }).eq('id', id)
+    onExpired()
+  }
+
+  const inp = { width:'100%', padding:'6px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:12, boxSizing:'border-box', fontFamily:'inherit' }
+  const lbl = { fontSize:10, color:C.g, textTransform:'uppercase', display:'block', marginBottom:3 }
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background:C.bg2||C.bg, borderRadius:12, padding:24, width:460, maxHeight:'85vh', overflowY:'auto', border:'1px solid '+C.bdrF }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
+          <div>
+            <div style={{ fontSize:9, color:WARN, textTransform:'uppercase', letterSpacing:2, fontWeight:700 }}>Scheduled Payment</div>
+            <div style={{ fontSize:16, fontWeight:700, color:C.w, marginTop:2 }}>{vendor}</div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:18 }}>✕</button>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+          <div>
+            <label style={lbl}>Scheduled Date</label>
+            <input type="date" value={form.scheduled_date} onChange={e => set('scheduled_date', e.target.value)} style={inp} />
+          </div>
+          <div>
+            <label style={lbl}>Amount</label>
+            <input value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" style={inp} />
+          </div>
+        </div>
+
+        <div style={{ marginBottom:12 }}>
+          <label style={lbl}>Payment Type</label>
+          <div style={{ display:'flex', gap:6 }}>
+            {['full','partial'].map(t => (
+              <button key={t} onClick={() => set('payment_type', t)} style={{ flex:1, padding:'7px', borderRadius:6, border:'1px solid '+(form.payment_type===t?WARN:C.bdrF), background:form.payment_type===t?'rgba(245,158,11,0.12)':'transparent', color:form.payment_type===t?WARN:C.g, fontSize:12, cursor:'pointer', fontFamily:'inherit', fontWeight:600, textTransform:'capitalize' }}>{t}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom:12 }}>
+          <label style={{ ...lbl, display:'flex', alignItems:'center', gap:6 }}>
+            <input type="checkbox" checked={isAgreement} onChange={e => { if (!e.target.checked) { set('series_total',''); set('series_num','') } else { set('series_total','3'); set('series_num','1') } }} style={{ accentColor:WARN }} />
+            Part of a payment agreement / series
+          </label>
+          {isAgreement && (
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:8 }}>
+              <div>
+                <label style={lbl}>Payment #</label>
+                <input value={form.series_num} onChange={e => set('series_num', e.target.value)} placeholder="e.g. 1" style={inp} />
+              </div>
+              <div>
+                <label style={lbl}>Of Total</label>
+                <input value={form.series_total} onChange={e => set('series_total', e.target.value)} placeholder="e.g. 3" style={inp} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <label style={lbl}>Notes (promise to pay details, ref #, etc.)</label>
+          <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="e.g. agreed to 3 payments, ref call 3/15..." style={{ ...inp, resize:'vertical', lineHeight:1.5 }} />
+        </div>
+
+        <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+          <button onClick={onClose} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !form.scheduled_date} style={{ padding:'6px 18px', borderRadius:6, border:'none', background:WARN, color:'#000', fontSize:12, fontWeight:700, cursor:saving||!form.scheduled_date?'not-allowed':'pointer', fontFamily:'inherit', opacity:saving||!form.scheduled_date?0.6:1 }}>{saving ? 'Saving...' : existing ? 'Update' : 'Save Payment'}</button>
+        </div>
+
+        {/* Existing series entries for this vendor */}
+        {allPmts.length > 0 && (
+          <div style={{ marginTop:16, paddingTop:14, borderTop:'1px solid '+C.bdrF }}>
+            <div style={{ fontSize:10, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>All Scheduled — {vendor}</div>
+            {allPmts.map(p => (
+              <div key={p.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 8px', borderRadius:6, background:C.nL, border:'1px solid '+C.bdrF, marginBottom:4, fontSize:11 }}>
+                <span style={{ color:WARN, fontWeight:600 }}>{new Date(p.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>
+                {p.amount && <span style={{ color:C.w }}>${parseFloat(p.amount).toFixed(2)}</span>}
+                <span style={{ color:C.g, textTransform:'capitalize' }}>{p.payment_type}</span>
+                {p.series_total > 1 && <span style={{ color:C.g }}>{p.series_num+'/'+p.series_total}</span>}
+                {p.notes && <span style={{ color:C.g, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.notes}</span>}
+                <button onClick={() => handleExpire(p.id)} style={{ marginLeft:'auto', flexShrink:0, padding:'2px 8px', borderRadius:4, border:'1px solid #22C55E', background:'transparent', color:'#22C55E', fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>✓ Paid</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
   const POS = C.go
   const NEG = '#B45055'
   const WARN = C.am
@@ -5207,7 +5370,12 @@ function APReconView({ orgId, C, userEmail }) {
   const [loading, setLoading] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
   const [toast, setToast] = useState('')
+  const [schedPmts, setSchedPmts] = useState([])
+  const [schedModal, setSchedModal] = useState(null)
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
+  const canEditSched = SCHED_EDITORS.includes((userEmail||'').toLowerCase())
 
   const POS = C.go
   const NEG = '#B45055'
@@ -5254,6 +5422,25 @@ function APReconView({ orgId, C, userEmail }) {
       .order('archived_at', { ascending: false }).limit(100)
       .then(({ data }) => setHistory(data || []))
   }, [orgId, entity, showHistory])
+
+  useEffect(() => {
+    if (!orgId) return
+    loadSchedPmts()
+  }, [orgId, entity])
+
+  const loadSchedPmts = async () => {
+    const { data } = await supabase.from('ap_scheduled_payments')
+      .select('*').eq('org_id', orgId).eq('entity', entity)
+      .eq('status', 'pending').order('scheduled_date', { ascending: true })
+    setSchedPmts(data || [])
+  }
+
+  const schedPmtMap = {}
+  schedPmts.forEach(p => {
+    if (!schedPmtMap[p.vendor] || p.scheduled_date > schedPmtMap[p.vendor].scheduled_date) {
+      schedPmtMap[p.vendor] = p
+    }
+  })
 
   const saveRecon = async (vendor, field, val) => {
     const now = new Date().toISOString()
@@ -5335,6 +5522,14 @@ function APReconView({ orgId, C, userEmail }) {
                 {b.d90?'61-90: '+fmt(b.d90)+'  ':''}
                 {b.over90?'90+: '+fmt(b.over90):''}
               </div>
+              {schedPmtMap[b.vendor] && (() => {
+                const sp = schedPmtMap[b.vendor]
+                const seriesLabel = sp.series_total > 1 ? ' · '+sp.series_num+'/'+sp.series_total : ''
+                const amtLabel = sp.amount ? ' · $'+parseFloat(sp.amount).toFixed(2) : ''
+                return <div style={{ marginTop:4, display:'inline-flex', alignItems:'center', gap:4, padding:'2px 7px', borderRadius:99, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)', fontSize:9, color:WARN, fontWeight:600 }}>
+                  {'📅 '+new Date(sp.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+amtLabel+' · '+(sp.payment_type==='partial'?'Partial':'Full')+seriesLabel}
+                </div>
+              })()}
             </div>
             <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right' }}>{fmt(b.total)}</div>
             <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor,'recon_status',ev.target.value)} style={{ ...inp, width:'100%' }}>
@@ -5342,6 +5537,12 @@ function APReconView({ orgId, C, userEmail }) {
             </select>
             <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
             <div style={{ textAlign:'right' }}>
+              {canEditSched && (
+                <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
+                  style={{ display:'block', width:'100%', marginBottom:4, padding:'3px 0', borderRadius:4, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
+                  {schedPmtMap[b.vendor] ? '📅 Edit' : '+ Sched'}
+                </button>
+              )}
               {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, display:'block', marginBottom:2 }}>{b.recon_status}</span>}
               {b.reviewed_at && <span style={{ fontSize:9, color:C.g, display:'block' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
             </div>
@@ -5364,12 +5565,17 @@ function APReconView({ orgId, C, userEmail }) {
       </>}
 
       {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
+      {schedModal && <SchedPayModal
+        orgId={orgId} entity={entity} C={C}
+        vendor={schedModal.vendor} existing={schedModal.existing}
+        allPmts={schedPmts.filter(p => p.vendor === schedModal.vendor)}
+        onClose={() => setSchedModal(null)}
+        onSaved={() => { loadSchedPmts(); setSchedModal(null); sh('Scheduled payment saved ✓') }}
+        onExpired={() => { loadSchedPmts(); setSchedModal(null); sh('Marked as paid ✓') }}
+      />}
     </div>
   )
-}
-
-
-export default function MoneyFlowModule({ orgId, C }) {
+}({ orgId, C }) {
   const [tab, setTab] = useState('dashboard')
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)

@@ -4692,6 +4692,10 @@ function CashDashboard({ orgId, C }) {
 // CASH FLOW FORECASTER — AP aging drag to prioritize
 // ═══════════════════════════════════════════════════════
 function CashFlowForecaster({ orgId, C }) {
+  const POS = C.go
+  const NEG = '#B45055'
+  const WARN = C.am
+  const mColor = (n) => Number(n) >= 0 ? POS : NEG
   const [entity, setEntity] = useState('iaz')
   const [bills, setBills] = useState([])
   const [loading, setLoading] = useState(true)
@@ -4829,6 +4833,10 @@ function CashFlowForecaster({ orgId, C }) {
 }
 
 function BudgetView({ orgId, C }) {
+  const POS = C.go
+  const NEG = '#B45055'
+  const WARN = C.am
+  const mColor = (n) => Number(n) >= 0 ? POS : NEG
   const [entity, setEntity] = useState('iaz')
   const [plData, setPlData] = useState([])
   const [budgets, setBudgets] = useState([])

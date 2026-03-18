@@ -265,6 +265,7 @@ export default function PeopleFlowModule({ orgId, C }) {
   const [disc, setDisc] = useState([])
   const [separations, setSeparations] = useState([])
   const [reports, setReports] = useState([])
+  const [injuries, setInjuries] = useState([])
   const [onb, setOnb] = useState({})
   const [docs, setDocs] = useState({})
   const [view, setView] = useState('dashboard')
@@ -313,17 +314,19 @@ export default function PeopleFlowModule({ orgId, C }) {
   useEffect(() => {
     if (!orgId) return
     const load = async () => {
-      const [eR, dR, oR, dcR, rR, sR] = await Promise.all([
+      const [eR, dR, oR, dcR, rR, sR, iR] = await Promise.all([
         supabase.from('employees').select('*').eq('org_id', orgId),
         supabase.from('disciplines').select('*').eq('org_id', orgId),
         supabase.from('onboarding').select('*').eq('org_id', orgId),
         supabase.from('documents').select('*').eq('org_id', orgId),
         supabase.from('workplace_reports').select('*').eq('org_id', orgId),
-        supabase.from('separations').select('*').eq('org_id', orgId)
+        supabase.from('separations').select('*').eq('org_id', orgId),
+        supabase.from('injuries').select('*').eq('org_id', orgId)
       ])
       setEmps(eR.data||[])
       setDisc(dR.data||[])
       setSeparations(sR.data||[])
+      setInjuries(iR.data||[])
       const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]={completed:r.completed,completed_date:r.completed_date||null,row_id:r.id}}); setOnb(om)
       const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]={received:r.received,received_date:r.received_date||null,file_url:r.file_url||null,row_id:r.id}}); setDocs(dm)
       setReports(rR.data||[])
@@ -682,9 +685,10 @@ export default function PeopleFlowModule({ orgId, C }) {
       disc={disc} setDisc={setDisc} saveDisc={saveDisc}
       reports={reports} saveReport={saveReport} setReports={setReports}
       separations={separations} setSeparations={setSeparations} saveSeparation={saveSeparation} recallEmployee={recallEmployee}
+      injuries={injuries} setInjuries={setInjuries}
       emps={emps} setEmps={setEmps} ac={ac} mod={mod} setMod={setMod} C={C}
       isAdmin={isAdmin} isHR={isHR} isManager={isManager}
-      userEmail={userEmail} userEmpRecord={userEmpRecord}
+      userEmail={userEmail} userEmpRecord={userEmpRecord} orgId={orgId}
     />}
 
     {/* ONBOARDING */}
@@ -1182,15 +1186,15 @@ function UnionView({ac, C}){
 }
 
 // ═══════════════════════════════════════════
-// ── WORKPLACE VIEW (Reports + Discipline) ──
-// ═══════════════════════════════════════════
-function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord}){
+// ── WORKPLACE VIEW (Reports + Discipline + Injuries) ──
+// ═══════════════════════════════════════════════════════
+function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,separations,setSeparations,saveSeparation,recallEmployee,injuries,setInjuries,emps,setEmps,ac,mod,setMod,C,isAdmin,isHR,isManager,userEmail,userEmpRecord,orgId}){
   const [subTab, setSubTab] = useState('reports')
 
   return(<div>
     <h2 style={{fontSize:18,marginTop:0,marginBottom:8}}>Workplace</h2>
-    <div style={{display:'flex',gap:2,marginBottom:16}}>
-      {[{k:'reports',l:'Reports',i:'◉',show:true},{k:'discipline',l:'Formal Discipline',i:'⚡',show:isHR},{k:'separations',l:'Separations',i:'◇',show:isHR}].map(t=>{
+    <div style={{display:'flex',gap:2,marginBottom:16,flexWrap:'wrap'}}>
+      {[{k:'reports',l:'Reports',i:'◉',show:true},{k:'discipline',l:'Formal Discipline',i:'⚡',show:isHR},{k:'separations',l:'Separations',i:'◇',show:isHR},{k:'injuries',l:'Injuries',i:'🩹',show:isHR}].map(t=>{
         if (!t.show) return null
         return <button key={t.k} onClick={()=>setSubTab(t.k)} style={{
           background:subTab===t.k?C.gD:'transparent',
@@ -1219,6 +1223,292 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,sepa
       emps={emps} setEmps={setEmps} ac={ac} disc={disc} mod={mod} setMod={setMod} C={C}
       userEmail={userEmail} userEmpRecord={userEmpRecord}
     />}
+
+    {subTab==='injuries'&&isHR&&<InjuriesSubView
+      injuries={injuries} setInjuries={setInjuries}
+      emps={emps} ac={ac} C={C}
+      userEmail={userEmail} orgId={orgId}
+    />}
+  </div>)
+}
+
+// ── Injuries Sub-Tab (HR Only) ──
+// ════════════════════════════════
+function InjuriesSubView({injuries,setInjuries,emps,ac,C,userEmail,orgId}){
+  const [showForm, setShowForm] = useState(false)
+  const [viewRecord, setViewRecord] = useState(null)
+  const [editRecord, setEditRecord] = useState(null)
+
+  const empName = (id) => {
+    const e = emps.find(x=>x.id===id)
+    return e ? ((e.preferred_name||e.first_name||'')+ ' ' +e.last_name).trim() : '—'
+  }
+
+  const STATUS_COLORS = {open:'#EF4444', monitoring:'#F59E0B', closed:'#6B7280'}
+  const OSHA_COLORS = {yes:'#EF4444', no:'#22C55E', tbd:'#F59E0B'}
+
+  const sorted = [...injuries].sort((a,b)=>new Date(b.injury_date)-new Date(a.injury_date))
+
+  return(<div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <div>
+        <div style={{fontSize:14,fontWeight:700,color:C.go}}>Injury Reports</div>
+        <div style={{fontSize:12,color:C.g}}>HR only — workers' comp, OSHA, and return-to-work tracking</div>
+      </div>
+      <Btn onClick={()=>setShowForm(true)} C={C}>+ Report Injury</Btn>
+    </div>
+
+    {sorted.length===0&&<div style={{fontSize:12,color:C.g,padding:'20px 0',textAlign:'center'}}>No injury reports on file.</div>}
+
+    {sorted.map(inj=>{
+      const sc = STATUS_COLORS[inj.status]||'#6B7280'
+      const oc = OSHA_COLORS[inj.osha_recordable]||'#F59E0B'
+      return(
+        <div key={inj.id} onClick={()=>setViewRecord(inj)} style={{
+          background:C.bg,border:'1px solid '+C.bdrF,borderRadius:8,padding:'10px 14px',
+          marginBottom:8,cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'
+        }}>
+          <div>
+            <div style={{fontSize:13,fontWeight:600,color:C.go,marginBottom:2}}>{empName(inj.employee_id)}</div>
+            <div style={{fontSize:11,color:C.g}}>{inj.injury_date} · {inj.location||'Location not recorded'}</div>
+            <div style={{fontSize:11,color:C.g,marginTop:2}}>{(inj.nature||'')}{inj.body_part?' · '+inj.body_part:''}</div>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4}}>
+            <Tag style={{background:sc+'22',color:sc,border:'1px solid '+sc+'44',fontSize:10}}>{(inj.status||'open').toUpperCase()}</Tag>
+            <Tag style={{background:oc+'22',color:oc,border:'1px solid '+oc+'44',fontSize:10}}>OSHA: {(inj.osha_recordable||'tbd').toUpperCase()}</Tag>
+            {inj.sfm_confirmation&&<Tag style={{background:'#3B82F622',color:'#3B82F6',border:'1px solid #3B82F644',fontSize:10}}>SFM ✓</Tag>}
+          </div>
+        </div>
+      )
+    })}
+
+    {showForm&&<InjuryFormModal
+      onSave={async(f)=>{
+        const payload={...f,org_id:orgId,reported_by:userEmail,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
+        const{data,error}=await supabase.from('injuries').insert(payload).select().single()
+        if(!error&&data){setInjuries(p=>[...p,data]);setShowForm(false)}
+      }}
+      onClose={()=>setShowForm(false)}
+      emps={ac} C={C} userEmail={userEmail}
+    />}
+
+    {viewRecord&&!editRecord&&<InjuryViewModal
+      record={viewRecord}
+      onClose={()=>setViewRecord(null)}
+      onEdit={()=>setEditRecord(viewRecord)}
+      empName={empName(viewRecord.employee_id)}
+      C={C}
+    />}
+
+    {editRecord&&<InjuryFormModal
+      record={editRecord}
+      onSave={async(f)=>{
+        const payload={...f,updated_at:new Date().toISOString()}
+        const{error}=await supabase.from('injuries').update(payload).eq('id',editRecord.id)
+        if(!error){setInjuries(p=>p.map(x=>x.id===editRecord.id?{...x,...payload}:x));setEditRecord(null);setViewRecord(null)}
+      }}
+      onClose={()=>{setEditRecord(null);setViewRecord(null)}}
+      emps={ac} C={C} userEmail={userEmail}
+    />}
+  </div>)
+}
+
+// ── Injury Form Modal ──
+function InjuryFormModal({record,onSave,onClose,emps,C,userEmail}){
+  const blank={employee_id:'',injury_date:'',injury_time:'',location:'',description:'',body_part:'',nature:'',witness_names:'',immediate_action:'',treated_by:'none',medical_provider:'',sfm_report_method:'',sfm_confirmation:'',sfm_reported_date:'',sfm_reported_by:userEmail||'',osha_recordable:'tbd',osha_days_away:0,osha_days_restricted:0,osha_case_number:'',rtw_light_duty_offered:false,rtw_restrictions:'',rtw_date:'',rtw_full_duty_date:'',status:'open',notes:''}
+  const [f,setF]=useState(record||blank)
+  const upd=(k,v)=>setF(p=>({...p,[k]:v}))
+  const lbl={fontSize:10,color:C.g,textTransform:'uppercase',fontWeight:700,marginBottom:3,marginTop:10,display:'block'}
+  const inp={width:'100%',padding:'6px 8px',border:'1px solid '+C.bdrF,borderRadius:5,fontSize:12,background:C.bg,color:C.go,fontFamily:'inherit',boxSizing:'border-box'}
+  const sel={...inp}
+
+  return(<div style={{position:'fixed',inset:0,background:'#0008',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+    <div style={{background:C.bg,borderRadius:10,padding:20,width:'100%',maxWidth:600,maxHeight:'90vh',overflowY:'auto',border:'1px solid '+C.bdrF}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div style={{fontSize:15,fontWeight:700,color:C.go}}>🩹 {record?'Edit':'Report'} Injury</div>
+        <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:C.g}}>✕</button>
+      </div>
+
+      <div style={{background:'#FEF3C7',border:'1px solid #F59E0B',borderRadius:6,padding:'8px 12px',fontSize:11,color:'#92400E',marginBottom:12}}>
+        <b>SFM Work Injury Hotline: (855) 675-3501</b> · Report online at sfmic.com (policy # required) · Or email FirstReports@sfmic.com
+      </div>
+
+      <label style={lbl}>Employee</label>
+      <select style={sel} value={f.employee_id} onChange={e=>upd('employee_id',e.target.value)}>
+        <option value=''>— Select Employee —</option>
+        {emps.map(e=><option key={e.id} value={e.id}>{((e.preferred_name||e.first_name||'')+' '+e.last_name).trim()}</option>)}
+      </select>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div><label style={lbl}>Date of Injury</label><input style={inp} type='date' value={f.injury_date} onChange={e=>upd('injury_date',e.target.value)}/></div>
+        <div><label style={lbl}>Time of Injury</label><input style={inp} type='time' value={f.injury_time} onChange={e=>upd('injury_time',e.target.value)}/></div>
+      </div>
+
+      <label style={lbl}>Location / Area</label>
+      <input style={inp} value={f.location} onChange={e=>upd('location',e.target.value)} placeholder='e.g. Production floor, shipping dock'/>
+
+      <label style={lbl}>Description of Injury</label>
+      <textarea style={{...inp,minHeight:60,resize:'vertical'}} value={f.description} onChange={e=>upd('description',e.target.value)} placeholder='What happened? Be specific.'/>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div><label style={lbl}>Body Part Affected</label><input style={inp} value={f.body_part} onChange={e=>upd('body_part',e.target.value)} placeholder='e.g. Right wrist'/></div>
+        <div><label style={lbl}>Nature of Injury</label><input style={inp} value={f.nature} onChange={e=>upd('nature',e.target.value)} placeholder='e.g. Laceration, strain'/></div>
+      </div>
+
+      <label style={lbl}>Witness Names</label>
+      <input style={inp} value={f.witness_names} onChange={e=>upd('witness_names',e.target.value)} placeholder='Names of anyone who witnessed the injury'/>
+
+      <label style={lbl}>Immediate Action Taken</label>
+      <input style={inp} value={f.immediate_action} onChange={e=>upd('immediate_action',e.target.value)} placeholder='e.g. First aid applied, sent to clinic'/>
+
+      <label style={lbl}>Treatment</label>
+      <select style={sel} value={f.treated_by} onChange={e=>upd('treated_by',e.target.value)}>
+        <option value='none'>No treatment needed</option>
+        <option value='first_aid'>First Aid Only</option>
+        <option value='clinic'>Clinic / Urgent Care</option>
+        <option value='er'>Emergency Room</option>
+      </select>
+
+      {(f.treated_by==='clinic'||f.treated_by==='er')&&<>
+        <label style={lbl}>Medical Provider / Facility</label>
+        <input style={inp} value={f.medical_provider} onChange={e=>upd('medical_provider',e.target.value)} placeholder='Provider name and address'/>
+      </>}
+
+      <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginTop:16,marginBottom:4,borderTop:'1px solid '+C.bdrF,paddingTop:12}}>SFM / Workers' Comp</div>
+
+      <label style={lbl}>How was SFM notified?</label>
+      <select style={sel} value={f.sfm_report_method} onChange={e=>upd('sfm_report_method',e.target.value)}>
+        <option value=''>— Not yet reported —</option>
+        <option value='hotline'>Work Injury Hotline (855) 675-3501</option>
+        <option value='online'>Online at sfmic.com</option>
+        <option value='email'>Email — FirstReports@sfmic.com</option>
+        <option value='na'>Not required (first aid only)</option>
+      </select>
+
+      {f.sfm_report_method&&f.sfm_report_method!=='na'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div><label style={lbl}>SFM Confirmation #</label><input style={inp} value={f.sfm_confirmation} onChange={e=>upd('sfm_confirmation',e.target.value)}/></div>
+        <div><label style={lbl}>Date Reported to SFM</label><input style={inp} type='date' value={f.sfm_reported_date} onChange={e=>upd('sfm_reported_date',e.target.value)}/></div>
+      </div>}
+
+      <label style={lbl}>Reported to SFM by</label>
+      <input style={inp} value={f.sfm_reported_by} onChange={e=>upd('sfm_reported_by',e.target.value)}/>
+
+      <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginTop:16,marginBottom:4,borderTop:'1px solid '+C.bdrF,paddingTop:12}}>OSHA Recordkeeping</div>
+
+      <label style={lbl}>OSHA Recordable?</label>
+      <select style={sel} value={f.osha_recordable} onChange={e=>upd('osha_recordable',e.target.value)}>
+        <option value='tbd'>TBD — Pending determination</option>
+        <option value='yes'>Yes — Recordable</option>
+        <option value='no'>No — Not recordable</option>
+      </select>
+
+      {f.osha_recordable==='yes'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+        <div><label style={lbl}>Days Away from Work</label><input style={inp} type='number' min='0' value={f.osha_days_away} onChange={e=>upd('osha_days_away',parseInt(e.target.value)||0)}/></div>
+        <div><label style={lbl}>Days Restricted</label><input style={inp} type='number' min='0' value={f.osha_days_restricted} onChange={e=>upd('osha_days_restricted',parseInt(e.target.value)||0)}/></div>
+        <div><label style={lbl}>OSHA Case #</label><input style={inp} value={f.osha_case_number} onChange={e=>upd('osha_case_number',e.target.value)}/></div>
+      </div>}
+
+      <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginTop:16,marginBottom:4,borderTop:'1px solid '+C.bdrF,paddingTop:12}}>Return to Work</div>
+
+      <label style={lbl}>Light Duty Offered?</label>
+      <select style={sel} value={f.rtw_light_duty_offered?'yes':'no'} onChange={e=>upd('rtw_light_duty_offered',e.target.value==='yes')}>
+        <option value='no'>No</option>
+        <option value='yes'>Yes</option>
+      </select>
+
+      {f.rtw_light_duty_offered&&<>
+        <label style={lbl}>Work Restrictions</label>
+        <textarea style={{...inp,minHeight:48,resize:'vertical'}} value={f.rtw_restrictions} onChange={e=>upd('rtw_restrictions',e.target.value)} placeholder='Describe physician-ordered restrictions'/>
+      </>}
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        <div><label style={lbl}>Return to Work Date</label><input style={inp} type='date' value={f.rtw_date} onChange={e=>upd('rtw_date',e.target.value)}/></div>
+        <div><label style={lbl}>Full Duty Release Date</label><input style={inp} type='date' value={f.rtw_full_duty_date} onChange={e=>upd('rtw_full_duty_date',e.target.value)}/></div>
+      </div>
+
+      <label style={lbl}>Status</label>
+      <select style={sel} value={f.status} onChange={e=>upd('status',e.target.value)}>
+        <option value='open'>Open</option>
+        <option value='monitoring'>Monitoring</option>
+        <option value='closed'>Closed</option>
+      </select>
+
+      <label style={lbl}>Internal Notes</label>
+      <textarea style={{...inp,minHeight:60,resize:'vertical'}} value={f.notes} onChange={e=>upd('notes',e.target.value)} placeholder='HR notes — not shared with employee'/>
+
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
+        <Btn onClick={onClose} C={C} style={{background:'transparent',color:C.g,border:'1px solid '+C.bdrF}}>Cancel</Btn>
+        <Btn onClick={()=>{if(!f.employee_id||!f.injury_date){alert('Employee and injury date are required.');return}onSave(f)}} C={C}>Save Injury Report</Btn>
+      </div>
+    </div>
+  </div>)
+}
+
+// ── Injury View Modal ──
+function InjuryViewModal({record,onClose,onEdit,empName,C}){
+  const r=record
+  const row=(l,v)=>v?<div style={{marginBottom:6}}><span style={{fontSize:10,color:C.g,textTransform:'uppercase',fontWeight:700}}>{l}: </span><span style={{fontSize:12,color:C.go}}>{v}</span></div>:null
+  const SC={open:'#EF4444',monitoring:'#F59E0B',closed:'#6B7280'}
+  const OC={yes:'#EF4444',no:'#22C55E',tbd:'#F59E0B'}
+  const sc=SC[r.status]||'#6B7280'
+  const oc=OC[r.osha_recordable]||'#F59E0B'
+
+  return(<div style={{position:'fixed',inset:0,background:'#0008',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+    <div style={{background:C.bg,borderRadius:10,padding:20,width:'100%',maxWidth:560,maxHeight:'90vh',overflowY:'auto',border:'1px solid '+C.bdrF}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div style={{fontSize:15,fontWeight:700,color:C.go}}>🩹 Injury Report</div>
+        <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:18,color:C.g}}>✕</button>
+      </div>
+
+      <div style={{display:'flex',gap:8,marginBottom:12}}>
+        <Tag style={{background:sc+'22',color:sc,border:'1px solid '+sc+'44'}}>{(r.status||'open').toUpperCase()}</Tag>
+        <Tag style={{background:oc+'22',color:oc,border:'1px solid '+oc+'44'}}>OSHA: {(r.osha_recordable||'tbd').toUpperCase()}</Tag>
+        {r.sfm_confirmation&&<Tag style={{background:'#3B82F622',color:'#3B82F6',border:'1px solid #3B82F644'}}>SFM ✓ {r.sfm_confirmation}</Tag>}
+      </div>
+
+      {row('Employee',empName)}
+      {row('Date of Injury',r.injury_date+(r.injury_time?' at '+r.injury_time:''))}
+      {row('Location',r.location)}
+      {row('Description',r.description)}
+      {row('Body Part',r.body_part)}
+      {row('Nature',r.nature)}
+      {row('Witnesses',r.witness_names)}
+      {row('Immediate Action',r.immediate_action)}
+      {row('Treatment',{none:'None required',first_aid:'First Aid Only',clinic:'Clinic/Urgent Care',er:'Emergency Room'}[r.treated_by]||r.treated_by)}
+      {row('Medical Provider',r.medical_provider)}
+
+      <div style={{borderTop:'1px solid '+C.bdrF,marginTop:10,paddingTop:10}}>
+        <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:6}}>SFM / Workers' Comp</div>
+        {row('Report Method',{hotline:'Work Injury Hotline',online:'Online (sfmic.com)',email:'Email (FirstReports@sfmic.com)',na:'Not required'}[r.sfm_report_method]||r.sfm_report_method)}
+        {row('Confirmation #',r.sfm_confirmation)}
+        {row('Reported Date',r.sfm_reported_date)}
+        {row('Reported By',r.sfm_reported_by)}
+      </div>
+
+      <div style={{borderTop:'1px solid '+C.bdrF,marginTop:10,paddingTop:10}}>
+        <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:6}}>OSHA</div>
+        {row('Recordable',r.osha_recordable?.toUpperCase())}
+        {r.osha_recordable==='yes'&&<>{row('Days Away',r.osha_days_away)}{row('Days Restricted',r.osha_days_restricted)}{row('Case #',r.osha_case_number)}</>}
+      </div>
+
+      <div style={{borderTop:'1px solid '+C.bdrF,marginTop:10,paddingTop:10}}>
+        <div style={{fontSize:11,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:6}}>Return to Work</div>
+        {row('Light Duty Offered',r.rtw_light_duty_offered?'Yes':'No')}
+        {row('Restrictions',r.rtw_restrictions)}
+        {row('RTW Date',r.rtw_date)}
+        {row('Full Duty Date',r.rtw_full_duty_date)}
+      </div>
+
+      {r.notes&&<div style={{borderTop:'1px solid '+C.bdrF,marginTop:10,paddingTop:10}}>
+        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',fontWeight:700,marginBottom:4}}>Internal Notes</div>
+        <div style={{fontSize:12,color:C.go}}>{r.notes}</div>
+      </div>}
+
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
+        <Btn onClick={onClose} C={C} style={{background:'transparent',color:C.g,border:'1px solid '+C.bdrF}}>Close</Btn>
+        <Btn onClick={onEdit} C={C}>Edit</Btn>
+      </div>
+    </div>
   </div>)
 }
 

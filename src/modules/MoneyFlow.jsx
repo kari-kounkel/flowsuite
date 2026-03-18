@@ -4649,146 +4649,273 @@ function CashDashboard({ orgId, C }) {
 // ═══════════════════════════════════════════════════════
 function CashFlowForecaster({ orgId, C }) {
   const [entity, setEntity] = useState('iaz')
-  const [bills, setBills] = useState({ iaz: [], omega: [] })
+  const [bills, setBills] = useState([])
+  const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
-  const ENTITIES = [{ id: 'iaz', label: 'IAZ' }, { id: 'omega', label: 'Omega' }]
+  const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
-  const parseAPAging = (text, eid) => {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    const parsed = []
-    lines.forEach((line, idx) => {
-      if (idx === 0) return // skip header
-      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      const vendor = parts[0]
-      if (!vendor || vendor.toLowerCase().includes('total')) return
-      const total = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
-      if (total === 0) return
-      parsed.push({
-        id: eid + '_' + idx,
-        vendor,
-        current: parseFloat((parts[1]||'').replace(/[$,]/g,'')) || 0,
-        d30: parseFloat((parts[2]||'').replace(/[$,]/g,'')) || 0,
-        d60: parseFloat((parts[3]||'').replace(/[$,]/g,'')) || 0,
-        d90: parseFloat((parts[4]||'').replace(/[$,]/g,'')) || 0,
-        over90: parseFloat((parts[5]||'').replace(/[$,]/g,'')) || 0,
-        total,
-        payAmt: '',
-        marked: false,
-        priority: parsed.length
+  useEffect(() => {
+    if (!orgId) return
+    setLoading(true)
+    // Get most recent AP snapshot
+    supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).order('snapshot_date', { ascending: false }).limit(1)
+      .then(({ data }) => {
+        if (!data || !data[0]) { setBills([]); setLoading(false); return }
+        const latestDate = data[0].snapshot_date
+        supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('over90', { ascending: false })
+          .then(({ data: apData }) => {
+            const rows = (apData || []).filter(r => r.total !== 0).map((r, i) => ({ ...r, payAmt: '', marked: false, priority: i }))
+            setBills(rows)
+            setLoading(false)
+          })
       })
-    })
-    return parsed
+  }, [orgId, entity])
+
+  const toggleMark = (id) => setBills(p => p.map(b => b.id === id ? { ...b, marked: !b.marked } : b))
+  const setPayAmt = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payAmt: val } : b))
+  const moveUp = (idx) => {
+    if (idx === 0) return
+    setBills(p => { const a=[...p]; const t=a[idx-1]; a[idx-1]=a[idx]; a[idx]=t; return a })
+  }
+  const moveDown = (idx) => {
+    if (idx === bills.length-1) return
+    setBills(p => { const a=[...p]; const t=a[idx+1]; a[idx+1]=a[idx]; a[idx]=t; return a })
   }
 
-  const handleUpload = (eid, file) => {
+  const fmt = n => {
+    if (n == null) return '—'
+    const abs = Math.abs(Number(n))
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    return Number(n) < 0 ? '(' + str + ')' : str
+  }
+
+  const markedTotal = bills.filter(b => b.marked).reduce((s, b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
+  const totalOwed = bills.reduce((s, b) => s + Math.abs(b.total), 0)
+
+  const handleCSVUpload = (file) => {
     if (!file) return
     const reader = new FileReader()
-    reader.onload = e => {
-      const parsed = parseAPAging(e.target.result, eid)
-      setBills(p => ({ ...p, [eid]: parsed }))
-      sh(parsed.length + ' vendors loaded from ' + file.name)
+    reader.onload = async (e) => {
+      const text = e.target.result
+      const lines = text.split('
+').map(l => l.trim()).filter(Boolean)
+      const parsed = []
+      const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
+      lines.forEach((line, idx) => {
+        if (idx === 0) return
+        const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+        const vendor = parts[0]
+        if (!vendor || ['vendor','total','totals','a/p'].some(x => vendor.toLowerCase().includes(x))) return
+        const curr=pv(parts[1]), d30=pv(parts[2]), d60=pv(parts[3]), d90=pv(parts[4]), over90=pv(parts[5])
+        const total = curr+d30+d60+d90+over90
+        if (total === 0) return
+        parsed.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
+      })
+      if (!parsed.length) { sh('No vendors found in file'); return }
+      // Save to Supabase — use today as snapshot date
+      const snapDate = new Date().toISOString().split('T')[0]
+      await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
+      await supabase.from('cashflow_ap').insert(parsed.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
+      const rows = parsed.map((r, i) => ({ ...r, payAmt: '', marked: false, priority: i }))
+      setBills(rows)
+      sh(parsed.length + ' vendors loaded')
     }
     reader.readAsText(file)
   }
 
-  const toggleMark = (eid, id) => setBills(p => ({ ...p, [eid]: p[eid].map(b => b.id === id ? { ...b, marked: !b.marked } : b) }))
-  const setPayAmt = (eid, id, val) => setBills(p => ({ ...p, [eid]: p[eid].map(b => b.id === id ? { ...b, payAmt: val } : b) }))
-
-  const moveUp = (eid, idx) => {
-    if (idx === 0) return
-    setBills(p => {
-      const arr = [...p[eid]]
-      const tmp = arr[idx-1]; arr[idx-1] = arr[idx]; arr[idx] = tmp
-      return { ...p, [eid]: arr }
-    })
-  }
-  const moveDown = (eid, idx) => {
-    const arr = bills[eid]
-    if (idx === arr.length-1) return
-    setBills(p => {
-      const a = [...p[eid]]
-      const tmp = a[idx+1]; a[idx+1] = a[idx]; a[idx] = tmp
-      return { ...p, [eid]: a }
-    })
-  }
-
-  const fmt = n => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  const currentBills = bills[entity]
-  const markedTotal = currentBills.filter(b => b.marked).reduce((s, b) => s + (parseFloat(b.payAmt) || b.total), 0)
-  const totalOwed = currentBills.reduce((s, b) => s + b.total, 0)
-
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 4 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+        <div style={{ display:'flex', gap:4 }}>
           {ENTITIES.map(e => (
-            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid ' + (entity === e.id ? C.go : C.bdrF), background: entity === e.id ? C.gD : 'transparent', color: entity === e.id ? C.go : C.g, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{e.label}</button>
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
         </div>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 11, color: C.g, fontFamily: 'inherit' }}>
-          Upload AP Aging CSV
-          <input type="file" accept=".csv" style={{ display: 'none' }} onChange={ev => handleUpload(entity, ev.target.files[0])} />
+        <label style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:5, border:'1px solid '+C.bdr, cursor:'pointer', fontSize:11, color:C.g, fontFamily:'inherit' }}>
+          {'Upload AP Aging CSV'}
+          <input type="file" accept=".csv" style={{ display:'none' }} onChange={ev => handleCSVUpload(ev.target.files[0])} />
         </label>
       </div>
 
-      {currentBills.length === 0
-        ? <div style={{ padding: '40px 0', textAlign: 'center', color: C.g, fontSize: 13 }}>Upload an Unpaid Bills (AP Aging) CSV to get started.</div>
-        : <>
-            <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 12, color: C.g }}>Total owed: <span style={{ fontWeight: 700, color: C.rd }}>{fmt(totalOwed)}</span></div>
-              <div style={{ fontSize: 12, color: C.g }}>Marked to pay: <span style={{ fontWeight: 700, color: C.gr }}>{fmt(markedTotal)}</span></div>
-              <div style={{ fontSize: 12, color: C.g }}>Remaining: <span style={{ fontWeight: 700, color: C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
+      {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'Loading...'}</div>}
+
+      {!loading && bills.length === 0 && <div style={{ padding:'40px 0', textAlign:'center', color:C.g, fontSize:13 }}>{'No AP data for this entity. Upload an AP Aging CSV to get started.'}</div>}
+
+      {!loading && bills.length > 0 && <>
+        <div style={{ display:'flex', gap:24, marginBottom:12, flexWrap:'wrap' }}>
+          <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:C.rd }}>{fmt(totalOwed)}</span></div>
+          <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:C.gr }}>{fmt(markedTotal)}</span></div>
+          <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
+        </div>
+        <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Use arrows to prioritize. Check to mark for payment. Enter partial amount to pay less than full balance.'}</div>
+
+        {bills.map((b, idx) => (
+          <div key={b.id||idx} style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', marginBottom:6, borderRadius:8, background:b.marked?C.grD:C.nL, border:'1px solid '+(b.marked?C.gr:C.bdr) }}>
+            <div style={{ display:'flex', flexDirection:'column', gap:1, flexShrink:0 }}>
+              <button onClick={() => moveUp(idx)} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:10, padding:'0 2px', fontFamily:'inherit', lineHeight:1 }}>{'▲'}</button>
+              <button onClick={() => moveDown(idx)} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:10, padding:'0 2px', fontFamily:'inherit', lineHeight:1 }}>{'▼'}</button>
             </div>
-
-            <div style={{ fontSize: 10, color: C.g, marginBottom: 8 }}>Drag to prioritize — use arrows. Check to mark for payment. Enter partial amount to pay less than full balance.</div>
-
-            {currentBills.map((b, idx) => (
-              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', marginBottom: 6, borderRadius: 8, background: b.marked ? C.grD : C.nL, border: '1px solid ' + (b.marked ? C.gr : C.bdr) }}>
-                {/* Priority arrows */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
-                  <button onClick={() => moveUp(entity, idx)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 10, padding: '0 2px', fontFamily: 'inherit', lineHeight: 1 }}>▲</button>
-                  <button onClick={() => moveDown(entity, idx)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 10, padding: '0 2px', fontFamily: 'inherit', lineHeight: 1 }}>▼</button>
-                </div>
-                <span style={{ fontSize: 11, color: C.g, minWidth: 20, textAlign: 'right', flexShrink: 0 }}>{idx+1}</span>
-                {/* Mark checkbox */}
-                <input type="checkbox" checked={b.marked} onChange={() => toggleMark(entity, b.id)} style={{ flexShrink: 0, cursor: 'pointer', width: 14, height: 14 }} />
-                {/* Vendor */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{b.vendor}</div>
-                  <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>
-                    {b.current > 0 ? 'Current: ' + fmt(b.current) + '  ' : ''}
-                    {b.d30 > 0 ? '1-30d: ' + fmt(b.d30) + '  ' : ''}
-                    {b.d60 > 0 ? '31-60d: ' + fmt(b.d60) + '  ' : ''}
-                    {b.d90 > 0 ? '61-90d: ' + fmt(b.d90) + '  ' : ''}
-                    {b.over90 > 0 ? '90+: ' + fmt(b.over90) : ''}
-                  </div>
-                </div>
-                {/* Total */}
-                <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 80 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: b.marked ? C.gr : C.w }}>{fmt(b.total)}</div>
-                  <div style={{ fontSize: 9, color: C.g }}>total owed</div>
-                </div>
-                {/* Pay amount */}
-                {b.marked && (
-                  <input
-                    value={b.payAmt}
-                    onChange={ev => setPayAmt(entity, b.id, ev.target.value)}
-                    placeholder={b.total.toFixed(2)}
-                    style={{ width: 90, padding: '4px 8px', background: C.ch, border: '1px solid ' + C.bdr, borderRadius: 5, color: C.w, fontSize: 12, fontFamily: 'inherit', flexShrink: 0 }}
-                  />
-                )}
+            <span style={{ fontSize:11, color:C.g, minWidth:20, textAlign:'right', flexShrink:0 }}>{idx+1}</span>
+            <input type="checkbox" checked={b.marked} onChange={() => toggleMark(b.id||idx)} style={{ flexShrink:0, cursor:'pointer', width:14, height:14 }} />
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontWeight:600, fontSize:13 }}>{b.vendor}</div>
+              <div style={{ fontSize:9, color:C.g, marginTop:2 }}>
+                {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
+                {b.d30?'1-30d: '+fmt(b.d30)+'  ':''}
+                {b.d60?'31-60d: '+fmt(b.d60)+'  ':''}
+                {b.d90?'61-90d: '+fmt(b.d90)+'  ':''}
+                {b.over90?'90+: '+fmt(b.over90):''}
               </div>
-            ))}
-          </>
-      }
+            </div>
+            <div style={{ textAlign:'right', flexShrink:0, minWidth:80 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:b.marked?C.gr:C.w }}>{fmt(b.total)}</div>
+              <div style={{ fontSize:9, color:C.g }}>{'total owed'}</div>
+            </div>
+            {b.marked && (
+              <input value={b.payAmt} onChange={ev => setPayAmt(b.id||idx, ev.target.value)} placeholder={Math.abs(b.total).toFixed(2)} style={{ width:90, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
+            )}
+          </div>
+        ))}
+      </>}
 
-      {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1000 }}>{toast}</div>}
+      {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
     </div>
   )
 }
+
+function BudgetView({ orgId, C }) {
+  const [entity, setEntity] = useState('iaz')
+  const [plData, setPlData] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [periods, setPeriods] = useState(8)
+
+  const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
+
+  useEffect(() => {
+    if (!orgId) return
+    setLoading(true)
+    supabase.from('cashflow_pl').select('*').eq('org_id', orgId).eq('entity', entity).order('period_end', { ascending: true })
+      .then(({ data }) => {
+        setPlData(data || [])
+        setLoading(false)
+      })
+  }, [orgId, entity])
+
+  const fmt = n => {
+    if (n == null) return '—'
+    const abs = Math.abs(Number(n))
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    return Number(n) < 0 ? '(' + str + ')' : str
+  }
+
+  // Build projection: average last N periods, project forward 6 periods
+  const buildProjection = () => {
+    if (!plData.length) return []
+    const recent = plData.slice(-periods)
+    const avgIncome = recent.reduce((s,p) => s + (p.income||0), 0) / recent.length
+    const avgExpenses = recent.reduce((s,p) => s + (p.expenses||0), 0) / recent.length
+    const avgNet = avgIncome - avgExpenses
+
+    // Project 6 forward periods
+    const projected = []
+    const lastDate = new Date(recent[recent.length-1].period_end)
+    const isWeekly = entity === 'iaz'
+    for (let i = 1; i <= 6; i++) {
+      const d = new Date(lastDate)
+      if (isWeekly) d.setDate(d.getDate() + (7 * i))
+      else d.setMonth(d.getMonth() + (3 * i))
+      projected.push({ period_end: d.toISOString().split('T')[0], income: avgIncome, expenses: avgExpenses, net: avgNet, projected: true })
+    }
+    return projected
+  }
+
+  const projection = buildProjection()
+  const allPeriods = [...plData.slice(-periods), ...projection]
+
+  const StatBox = ({ label, value, color }) => (
+    <div style={{ background:C.nL, borderRadius:8, padding:'12px 14px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+(color||C.go) }}>
+      <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:18, fontWeight:700, color:color||C.go, lineHeight:1 }}>{value}</div>
+    </div>
+  )
+
+  const recentActual = plData.slice(-periods)
+  const avgIncome = recentActual.length ? recentActual.reduce((s,p)=>s+(p.income||0),0)/recentActual.length : 0
+  const avgExpenses = recentActual.length ? recentActual.reduce((s,p)=>s+(p.expenses||0),0)/recentActual.length : 0
+  const avgNet = avgIncome - avgExpenses
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+        <div style={{ display:'flex', gap:4 }}>
+          {ENTITIES.map(e => (
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
+          ))}
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:11, color:C.g }}>{'Base on last'}</span>
+          <select value={periods} onChange={e=>setPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit' }}>
+            {[4,8,12,16,20,24].map(n => <option key={n} value={n}>{n} periods</option>)}
+          </select>
+        </div>
+      </div>
+
+      {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
+
+      {!loading && !plData.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No P&L data loaded yet. Run the cashflow_pl_seed.sql in Supabase first.'}</div>}
+
+      {!loading && plData.length > 0 && <>
+        {/* Summary averages */}
+        <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
+          {'Average Per Period — Last ' + periods + ' Periods'}
+        </div>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:20 }}>
+          <StatBox label="Avg Income" value={fmt(avgIncome)} color={C.gr} />
+          <StatBox label="Avg Expenses" value={fmt(avgExpenses)} color={C.rd} />
+          <StatBox label="Avg Net" value={fmt(avgNet)} color={avgNet>=0?C.gr:C.rd} />
+        </div>
+
+        {/* Period table — actuals + projection */}
+        <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
+          {'Actuals + 6-Period Projection'}
+        </div>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr style={{ borderBottom:'1px solid '+C.bdr }}>
+                {['Period','Income','Expenses','Net',''].map(h => <th key={h} style={{ textAlign:'left', padding:'4px 8px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {allPeriods.map((p, i) => {
+                const net = p.projected ? p.net : (p.income - p.expenses)
+                return (
+                  <tr key={i} style={{ borderBottom:'1px solid '+C.bdr, background:p.projected?'rgba(245,158,11,0.05)':'transparent', opacity:p.projected?0.85:1 }}>
+                    <td style={{ padding:'5px 8px', fontSize:11, color:p.projected?C.am:C.w, fontWeight:p.projected?400:500 }}>
+                      {p.period_end}
+                      {p.projected && <span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{'projected'}</span>}
+                    </td>
+                    <td style={{ padding:'5px 8px', color:C.gr }}>{fmt(p.income)}</td>
+                    <td style={{ padding:'5px 8px', color:C.rd }}>{fmt(p.expenses)}</td>
+                    <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
+                    <td style={{ padding:'5px 8px' }}>
+                      <div style={{ height:6, borderRadius:99, background:C.bdr, minWidth:60 }}>
+                        {p.income !== 0 && <div style={{ height:'100%', borderRadius:99, background:net>=0?C.gr:C.rd, width:Math.min(100,Math.abs(net/p.income)*100)+'%' }} />}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </>}
+    </div>
+  )
+}
+
 
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('dashboard')
@@ -4822,6 +4949,7 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   // JE Generator sub-tab
   const [jeSubTab, setJeSubTab] = useState('checklist')
+  const [budgetEntity, setBudgetEntity] = useState('iaz')
 
   // ── LIFTED IIF STATE (persists across tab switches) ──
   const [iifParsedData, setIifParsedData] = useState(null)
@@ -5003,6 +5131,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           {pill('Cash Flow', tab === 'cashflow', () => setTab('cashflow'))}
           {pill('Pay Plan', tab === 'payroll', () => setTab('payroll'))}
           {pill('Tasks', tab === 'tasks', () => setTab('tasks'))}
+          {pill('Budget', tab === 'budget', () => setTab('budget'))}
           {pill('Accounting', tab === 'accounting', () => setTab('accounting'))}
         </div>
       </div>
@@ -5062,6 +5191,7 @@ export default function MoneyFlowModule({ orgId, C }) {
 
       {/* ── CASH FLOW TAB ── */}
       {tab === 'cashflow' && <CashFlowForecaster orgId={orgId} C={C} />}
+      {tab === 'budget' && <BudgetView orgId={orgId} C={C} />}
 
       {/* ── ACCOUNTING TAB ── */}
       {tab === 'accounting' && (

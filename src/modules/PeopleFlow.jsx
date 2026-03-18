@@ -972,10 +972,12 @@ function EmpModal({emp,onSave,onClose,C,resolveReportsTo,managerOptions}){
 }
 
 // ═══════════════════════════════════════════
-// ── ORG CHART VIEW (Tree from reports_to) ──
+// ── ORG TAB — Chart + Seniority toggle ──
 // ═══════════════════════════════════════════
 function OrgChartView({emps, C}){
-  // Build tree: find roots (no reports_to or reports_to not in employee list)
+  const [mode, setMode] = useState('chart')
+
+  // ── Org chart helpers ──
   const empIds = new Set(emps.map(e=>e.id))
   const roots = emps.filter(e => !e.reports_to || !empIds.has(e.reports_to))
     .sort((a,b) => {
@@ -990,19 +992,13 @@ function OrgChartView({emps, C}){
         const order = {'C-Level':0,'Manager':1,'Lead':2,'Staff':3}
         return (order[a.role]||3) - (order[b.role]||3)
       })
-
     return (
       <div key={emp.id} style={{marginLeft: depth * 24, marginBottom: 4}}>
-        <div style={{
-          display:'inline-flex', alignItems:'center', gap:8,
-          padding:'6px 12px', borderRadius:8,
-          background:rc.bg, border:'1px solid '+rc.border,
-          fontSize:12
-        }}>
+        <div style={{display:'inline-flex',alignItems:'center',gap:8,padding:'6px 12px',borderRadius:8,background:rc.bg,border:'1px solid '+rc.border,fontSize:12}}>
           <div style={{width:8,height:8,borderRadius:99,background:rc.border,flexShrink:0}}/>
           <div>
             <span style={{fontWeight:600,color:rc.text}}>{gn(emp)}</span>
-            <span style={{color:rc.text,opacity:0.7,marginLeft:6,fontSize:10}}>{emp.role||'Staff'} • {emp.dept||'—'}</span>
+            <span style={{color:rc.text,opacity:0.7,marginLeft:6,fontSize:10}}>{emp.role||'Staff'}{' • '}{emp.dept||'—'}</span>
           </div>
         </div>
         {directs.map(d => renderNode(d, depth+1))}
@@ -1010,23 +1006,70 @@ function OrgChartView({emps, C}){
     )
   }
 
+  // ── Seniority list helpers ──
+  const activeEmps = emps.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
+  const byHireDate = [...activeEmps].sort((a,b)=>new Date(a.hire_date||'2099-01-01')-new Date(b.hire_date||'2099-01-01'))
+
+  const btnStyle = (active) => ({
+    padding:'5px 14px',borderRadius:6,fontSize:11,fontWeight:600,fontFamily:'inherit',cursor:'pointer',
+    background:active?C.gD:'transparent',
+    border:'1px solid '+(active?C.go:C.bdrF),
+    color:active?C.go:C.g
+  })
+
   return(<div>
-    <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>Organization Chart</h2>
-    <div style={{fontSize:11,color:C.g,marginBottom:12}}>View only — full hierarchy from reporting structure.</div>
-    <div style={{display:'flex',gap:12,marginBottom:16,flexWrap:'wrap'}}>
-      {Object.entries(ROLE_COLORS).map(([role,rc])=>(
-        <div key={role} style={{display:'flex',alignItems:'center',gap:4,fontSize:10}}>
-          <div style={{width:8,height:8,borderRadius:99,background:rc.border}}/>
-          <span style={{color:C.g}}>{role}</span>
-        </div>
-      ))}
+    {/* Toggle */}
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <h2 style={{margin:0,fontSize:18}}>{mode==='chart'?'Organization Chart':'Seniority List'}</h2>
+      <div style={{display:'flex',gap:4}}>
+        <button style={btnStyle(mode==='chart')} onClick={()=>setMode('chart')}>{'⊞ Org Chart'}</button>
+        <button style={btnStyle(mode==='seniority')} onClick={()=>setMode('seniority')}>{'★ Seniority'}</button>
+      </div>
     </div>
-    <Card C={C} style={{padding:16,overflowX:'auto'}}>
-      {roots.length === 0
-        ? <div style={{color:C.g,textAlign:'center',padding:20}}>No reporting structure found. Set "Reports To" on employee records.</div>
-        : roots.map(r => renderNode(r, 0))
-      }
-    </Card>
+
+    {/* ── ORG CHART ── */}
+    {mode==='chart' && <div>
+      <div style={{display:'flex',gap:12,marginBottom:12,flexWrap:'wrap'}}>
+        {Object.entries(ROLE_COLORS).map(([role,rc])=>(
+          <div key={role} style={{display:'flex',alignItems:'center',gap:4,fontSize:10}}>
+            <div style={{width:8,height:8,borderRadius:99,background:rc.border}}/>
+            <span style={{color:C.g}}>{role}</span>
+          </div>
+        ))}
+      </div>
+      <Card C={C} style={{padding:16,overflowX:'auto'}}>
+        {roots.length === 0
+          ? <div style={{color:C.g,textAlign:'center',padding:20}}>{'No reporting structure found. Set "Reports To" on employee records.'}</div>
+          : roots.map(r => renderNode(r, 0))
+        }
+      </Card>
+    </div>}
+
+    {/* ── SENIORITY LIST ── */}
+    {mode==='seniority' && <div>
+      <div style={{fontSize:11,color:C.g,marginBottom:12}}>{'All active employees sorted by hire date — earliest first.'}</div>
+      <Card C={C} style={{padding:0,overflow:'hidden'}}>
+        {byHireDate.map((e,i)=>{
+          const rc = ROLE_COLORS[e.role] || ROLE_COLORS['Staff']
+          const isUnion = e.union_status && e.union_status!=='Non-Union' && e.union_status!=='1099'
+          return <div key={e.id} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 16px',borderBottom:'1px solid '+C.bdr,background:i===0?C.gD:'transparent'}}>
+            <div style={{fontSize:13,fontWeight:700,color:i===0?C.go:C.g,minWidth:28,textAlign:'right'}}>{i+1}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,display:'flex',alignItems:'center',gap:6}}>
+                {gn(e)}
+                {i===0 && <span style={{fontSize:9,padding:'1px 6px',borderRadius:99,background:C.go,color:C.bg,fontWeight:700}}>{'TOP'}</span>}
+                {isUnion && <span style={{fontSize:9,padding:'1px 6px',borderRadius:99,background:'rgba(59,130,246,0.15)',color:C.bl,border:'1px solid rgba(59,130,246,0.3)'}}>{'Union'}</span>}
+              </div>
+              <div style={{fontSize:10,color:C.g,marginTop:1}}>{e.role||'—'}{' · '}{e.dept||'—'}</div>
+            </div>
+            <div style={{textAlign:'right',flexShrink:0}}>
+              <div style={{fontSize:11,color:C.w,fontWeight:500}}>{e.hire_date ? new Date(e.hire_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</div>
+              <div style={{fontSize:9,color:C.g,marginTop:1}}>{e.seniority_date ? 'Seniority: '+new Date(e.seniority_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'No seniority date'}</div>
+            </div>
+          </div>
+        })}
+      </Card>
+    </div>}
   </div>)
 }
 

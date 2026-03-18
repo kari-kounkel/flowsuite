@@ -5577,7 +5577,9 @@ function APReconView({ orgId, C, userEmail }) {
       />}
     </div>
   )
-}({ orgId, C }) {
+}
+
+export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('dashboard')
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)

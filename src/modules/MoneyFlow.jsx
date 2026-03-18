@@ -5193,6 +5193,77 @@ function BudgetView({ orgId, C }) {
 }
 
 
+function TaskLogView({ orgId, C }) {
+  const [log, setLog] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+
+  useEffect(() => {
+    if (!orgId) return
+    setLoading(true)
+    supabase.from('moneyflow_task_log')
+      .select('*').eq('org_id', orgId)
+      .order('logged_at', { ascending: false })
+      .limit(200)
+      .then(({ data }) => { setLog(data || []); setLoading(false) })
+  }, [orgId])
+
+  const ACTION_COLORS = {
+    completed: '#22C55E',
+    reopened: C.am,
+    advanced: C.go,
+  }
+
+  const filtered = filter === 'all' ? log : log.filter(l => l.action === filter)
+
+  const fmtDateTime = (s) => {
+    if (!s) return '—'
+    const d = new Date(s)
+    return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' })
+  }
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:C.go }}>{'Task Activity History'}</div>
+        <div style={{ display:'flex', gap:4 }}>
+          {['all','completed','advanced','reopened'].map(f => (
+            <button key={f} onClick={()=>setFilter(f)} style={{ padding:'3px 10px', borderRadius:5, border:'1px solid '+(filter===f?C.go:C.bdrF), background:filter===f?C.gD:'transparent', color:filter===f?C.go:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit', textTransform:'capitalize' }}>{f}</button>
+          ))}
+        </div>
+      </div>
+
+      {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
+
+      {!loading && !filtered.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No activity logged yet. Mark tasks done to start building history.'}</div>}
+
+      {!loading && filtered.length > 0 && (
+        <div>
+          {filtered.map((entry, i) => (
+            <div key={entry.id||i} style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'8px 0', borderBottom:'1px solid '+C.bdr }}>
+              <div style={{ width:8, height:8, borderRadius:99, background:ACTION_COLORS[entry.action]||C.g, marginTop:4, flexShrink:0 }} />
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                  <span style={{ fontWeight:600, fontSize:12, color:C.w }}>{entry.task_name}</span>
+                  <span style={{ fontSize:10, padding:'1px 7px', borderRadius:99, background:(ACTION_COLORS[entry.action]||C.g)+'22', color:ACTION_COLORS[entry.action]||C.g, fontWeight:600, textTransform:'capitalize' }}>{entry.action}</span>
+                  {entry.entity && <span style={{ fontSize:10, color:C.g }}>{entry.entity.toUpperCase()}</span>}
+                  {entry.type && <span style={{ fontSize:10, color:C.g }}>{entry.type}</span>}
+                </div>
+                {entry.note && <div style={{ fontSize:11, color:C.g, marginTop:2 }}>{entry.note}</div>}
+              </div>
+              <div style={{ fontSize:10, color:C.g, flexShrink:0, textAlign:'right' }}>
+                <div>{fmtDateTime(entry.logged_at)}</div>
+                {entry.logged_by && entry.logged_by !== 'unknown' && <div style={{ marginTop:2 }}>{entry.logged_by}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('dashboard')
   const [tasks, setTasks] = useState([])
@@ -5280,13 +5351,25 @@ export default function MoneyFlowModule({ orgId, C }) {
   // ── TOGGLE DONE ──
   // If recurring + marking done → advance due_date by recur_interval, keep status 'open'
   // If not recurring → toggle between open/done
+  const writeTaskLog = async (task, action, note) => {
+    await supabase.from('moneyflow_task_log').insert([{
+      org_id: orgId,
+      task_id: task.id,
+      task_name: task.name,
+      entity: task.entity,
+      type: task.type,
+      action,
+      note: note || null,
+      logged_at: new Date().toISOString(),
+      logged_by: userEmail || 'unknown'
+    }])
+  }
+
   async function toggleDone(task) {
     const isDone = task.status === 'done'
 
     if (!isDone && task.is_recurring && task.recur_interval > 0) {
-      // Advance the date, keep open — update state immediately for visual feedback
       const newDate = advanceDueDate(task.due_date, task.recur_interval)
-      // Optimistic update first so card shows new date immediately
       setTasks(ts => ts.map(t =>
         t.id === task.id ? { ...t, due_date: newDate, _justAdvanced: true } : t
       ))
@@ -5295,17 +5378,16 @@ export default function MoneyFlowModule({ orgId, C }) {
         .update({ due_date: newDate, updated_at: new Date().toISOString() })
         .eq('id', task.id)
       if (err) {
-        // Revert on error
         setTasks(ts => ts.map(t =>
           t.id === task.id ? { ...t, due_date: task.due_date, _justAdvanced: false } : t
         ))
+      } else {
+        writeTaskLog(task, 'advanced', 'Recurring date advanced from ' + task.due_date + ' to ' + newDate)
       }
-      // Clear the flash after 2 seconds
       setTimeout(() => setTasks(ts => ts.map(t =>
         t.id === task.id ? { ...t, _justAdvanced: false } : t
       )), 2000)
     } else {
-      // Toggle status — optimistic update
       const newStatus = isDone ? 'open' : 'done'
       setTasks(ts => ts.map(t =>
         t.id === task.id ? { ...t, status: newStatus } : t
@@ -5315,10 +5397,11 @@ export default function MoneyFlowModule({ orgId, C }) {
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', task.id)
       if (err) {
-        // Revert on error
         setTasks(ts => ts.map(t =>
           t.id === task.id ? { ...t, status: task.status } : t
         ))
+      } else {
+        writeTaskLog(task, newStatus === 'done' ? 'completed' : 'reopened', null)
       }
     }
   }
@@ -5424,6 +5507,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
             {subPill('Tasks', jeSubTab === 'tasks', () => setJeSubTab('tasks'))}
+            {subPill('Task History', jeSubTab === 'tasklog', () => setJeSubTab('tasklog'))}
             {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
@@ -5460,6 +5544,7 @@ export default function MoneyFlowModule({ orgId, C }) {
               )}
             </div>
           )}
+          {jeSubTab === 'tasklog' && <TaskLogView orgId={orgId} C={C} />}
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory

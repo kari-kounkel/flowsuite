@@ -4587,8 +4587,19 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
         if (!data || !data[0]) { setBills([]); setLoading(false); return }
         const latestDate = data[0].snapshot_date
         supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('over90', { ascending: false })
-          .then(({ data: apData }) => {
-            const rows = (apData || []).filter(r => r.total !== 0).map((r, i) => ({ ...r, payAmt: '', marked: false, priority: i }))
+          .then(async ({ data: apData }) => {
+            const { data: schedData } = await supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
+            const schedMap = {}
+            if (schedData) schedData.forEach(r => { schedMap[r.vendor] = r })
+            setScheduled(schedMap)
+            const rows = (apData || []).filter(r => r.total !== 0).map((r, i) => ({
+              ...r,
+              payAmt: '',
+              marked: false,
+              priority: i,
+              scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
+              notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
+            }))
             setBills(rows)
             setLoading(false)
           })
@@ -4725,9 +4736,22 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
       }
       await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
       await supabase.from('cashflow_ap').insert(parsed.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
-      const rows = parsed.map((r, i) => ({ ...r, payAmt: '', marked: false, priority: i }))
+      // Re-load scheduled notes and merge — scheduled amounts survive the upload
+      const { data: schedData } = await supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
+      const schedMap = {}
+      if (schedData) schedData.forEach(r => { schedMap[r.vendor] = r })
+      setScheduled(schedMap)
+      const rows = parsed.map((r, i) => ({
+        ...r,
+        payAmt: '',
+        marked: false,
+        priority: i,
+        scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
+        notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
+      }))
       setBills(rows)
-      sh(parsed.length + ' vendors loaded')
+      const scheduledCount = Object.values(schedMap).filter(s => s.scheduled_amt).length
+      sh(parsed.length + ' vendors loaded' + (scheduledCount ? ' — ' + scheduledCount + ' scheduled amounts carried forward' : ''))
     }
     reader.readAsText(file)
   }
@@ -4800,11 +4824,11 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
             {canEditSched
-              ? <input value={b.notes||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,notes:ev.target.value}:x))} placeholder="Notes..." style={{ flex:1, minWidth:120, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }} />
+              ? <input value={b.notes||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,notes:ev.target.value}:x))} onBlur={ev=>saveScheduled(b.vendor,'notes',ev.target.value)} placeholder="Notes..." style={{ flex:1, minWidth:120, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }} />
               : (b.notes ? <span style={{ fontSize:11, color:C.g, flex:1 }}>{b.notes}</span> : null)
             }
             {canEditSched
-              ? <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} placeholder="Sched. $" style={{ width:110, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />
+              ? <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} onBlur={ev=>saveScheduled(b.vendor,'scheduled_amt',ev.target.value)} placeholder="Sched. $" style={{ width:110, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />
               : (b.scheduledAmt ? <span style={{ fontSize:11, color:WARN, flexShrink:0 }}>{'Sched: $'+parseFloat(b.scheduledAmt).toFixed(2)}</span> : null)
             }
           </div>

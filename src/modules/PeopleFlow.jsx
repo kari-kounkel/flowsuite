@@ -5,24 +5,43 @@ import { generateLetterPDF, buildOfferLetterHTML, buildUnionLetterHTML } from '.
 
 // ── Constants ──
 const OBS = [
-  {id:'w4',p:'Tax & Legal',l:'W-4 Federal'},{id:'i9',p:'Tax & Legal',l:'I-9 Verification'},
-  {id:'sw',p:'Tax & Legal',l:'State W-4'},{id:'dd',p:'Tax & Legal',l:'Direct Deposit'},
-  {id:'hb',p:'Benefits',l:'Health Benefits'},{id:'rt',p:'Benefits',l:'401k Enrollment'},
-  {id:'eh',p:'Handbook',l:'Employee Handbook'},{id:'sp',p:'Handbook',l:'Safety Policy'},
-  {id:'ha',p:'Handbook',l:'Harassment Policy'},{id:'it',p:'Setup',l:'IT/Email Setup'},
-  {id:'bd',p:'Setup',l:'Badge/Access'},{id:'tr',p:'Setup',l:'Equipment/Tools'},
-  {id:'mt',p:'Training',l:'Mentor Assigned'},{id:'ot',p:'Training',l:'Orientation Complete'},
-  {id:'jt',p:'Training',l:'Job Training Started'},{id:'p30',p:'Review',l:'30-Day Check-in'},
-  {id:'p60',p:'Review',l:'60-Day Check-in'},{id:'p90',p:'Review',l:'90-Day Review'}
+  // Pre-Hire
+  {id:'app_accepted',  p:'Pre-Hire',   l:'Accept Application'},
+  {id:'interview',     p:'Pre-Hire',   l:'Interview(s) Conducted'},
+  {id:'offer_letter',  p:'Pre-Hire',   l:'Job Offer Letter Issued'},
+  // Hire Day
+  {id:'manual_issued', p:'Hire Day',   l:'Employment Manual Issued'},
+  {id:'union_report',  p:'Hire Day',   l:'Report to Union (Ruth & Marty)'},
+  {id:'start_date',    p:'Hire Day',   l:'Start Date Confirmed'},
+  {id:'qbo_email',     p:'Hire Day',   l:'QuickBooks Onboarding Email Sent'},
+  {id:'i9_docs',       p:'Hire Day',   l:'I-9 Supporting Docs Uploaded'},
+  {id:'mn_new_hire',   p:'Hire Day',   l:'MN New Hire Reported'},
+  // Benefits (30-day window)
+  {id:'benefits_offer',p:'Benefits',   l:'Benefits Offered (Health/Dental/Vision/Sam\'s/LegalShield)'},
+  {id:'union_contract',p:'Benefits',   l:'Union Contract Issued'},
+  // Setup
+  {id:'badge',         p:'Setup',      l:'Employee Badge Issued'},
+  {id:'training_manual',p:'Setup',     l:'Training Manual Issued'},
+  // Training
+  {id:'training_start',p:'Training',   l:'Training Begins'},
+  {id:'union_enroll',  p:'Training',   l:'Union Enrollment Confirmed (from Ruth/Marty)'},
+  {id:'withhold_info', p:'Training',   l:'Withholding Authorization Info Sent (Dues & Pension)'},
+  {id:'withhold_init', p:'Training',   l:'Withholdings Initiated'},
+  {id:'org_chart',     p:'Training',   l:'Org Chart Reviewed'},
+  // Completion
+  {id:'orientation',   p:'Completion', l:'Orientation Complete'},
+  {id:'checkin_30',    p:'Completion', l:'30-Day Check-In'},
 ]
+
 const DOC_ITEMS = [
-  {id:'offer_letter',c:'Hiring',l:'Offer Letter'},{id:'app',c:'Hiring',l:'Application'},
-  {id:'bg',c:'Hiring',l:'Background Check'},{id:'w4f',c:'Tax',l:'W-4 Federal'},
-  {id:'w4s',c:'Tax',l:'W-4 State'},{id:'i9f',c:'Tax',l:'I-9'},
-  {id:'ddf',c:'Tax',l:'Direct Deposit Form'},{id:'hbe',c:'Benefits',l:'Health Benefits Election'},
-  {id:'rte',c:'Benefits',l:'401k Enrollment'},{id:'ehk',c:'Policy',l:'Handbook Ack'},
-  {id:'sfa',c:'Policy',l:'Safety Ack'},{id:'hpa',c:'Policy',l:'Harassment Ack'},
-  {id:'cba',c:'Union',l:'CBA Copy Provided'},{id:'uc',c:'Union',l:'Union Card Signed'}
+  {id:'d_app',         c:'Hiring',     l:'Application / Resume'},
+  {id:'d_offer',       c:'Hiring',     l:'Offer Letter'},
+  {id:'d_i9_docs',     c:'Tax & Legal',l:'I-9 Supporting Documents'},
+  {id:'d_health',      c:'Benefits',   l:'Health Insurance Enrollment'},
+  {id:'d_dental',      c:'Benefits',   l:'Dental Enrollment'},
+  {id:'d_vision',      c:'Benefits',   l:'Vision Enrollment'},
+  {id:'d_sams',        c:'Benefits',   l:'Sam\'s Club Membership'},
+  {id:'d_legalshield', c:'Benefits',   l:'LegalShield Enrollment'},
 ]
 
 const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
@@ -305,8 +324,8 @@ export default function PeopleFlowModule({ orgId, C }) {
       setEmps(eR.data||[])
       setDisc(dR.data||[])
       setSeparations(sR.data||[])
-      const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]=r.completed}); setOnb(om)
-      const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]=r.received}); setDocs(dm)
+      const om={}; (oR.data||[]).forEach(r=>{if(!om[r.employee_id])om[r.employee_id]={};om[r.employee_id][r.step_id]={completed:r.completed,completed_date:r.completed_date||null,row_id:r.id}}); setOnb(om)
+      const dm={}; (dcR.data||[]).forEach(r=>{if(!dm[r.employee_id])dm[r.employee_id]={};dm[r.employee_id][r.doc_id]={received:r.received,received_date:r.received_date||null,file_url:r.file_url||null,row_id:r.id}}); setDocs(dm)
       setReports(rR.data||[])
     }
     load()
@@ -426,19 +445,57 @@ export default function PeopleFlowModule({ orgId, C }) {
     setEmps(p=>p.map(e=>e.id===reinstDisc.employee_id?{...e,status:'Active'}:e))
     sh('Probation confirmed -- ' + toReverse.length + ' discipline(s) reversed, employee restored to Active')
   }
-  const toggleOnb = async(empId,stepId,cur)=>{
-    const nv=!cur
-    const ex=await supabase.from('onboarding').select('id').eq('employee_id',empId).eq('step_id',stepId).single()
-    if(ex.data)await supabase.from('onboarding').update({completed:nv}).eq('id',ex.data.id)
-    else await supabase.from('onboarding').insert({employee_id:empId,step_id:stepId,completed:nv,org_id:orgId})
-    setOnb(p=>({...p,[empId]:{...(p[empId]||{}),[stepId]:nv}}))
+  const toggleOnb = async(empId,stepId,curObj,dateOverride)=>{
+    const cur = curObj?.completed || false
+    const nv = !cur
+    const today = new Date().toISOString().split('T')[0]
+    const completed_date = nv ? (dateOverride || today) : null
+    const existingId = curObj?.row_id
+    if(existingId){
+      await supabase.from('onboarding').update({completed:nv,completed_date}).eq('id',existingId)
+    } else {
+      const{data}=await supabase.from('onboarding').insert({employee_id:empId,step_id:stepId,completed:nv,completed_date,org_id:orgId}).select().single()
+      if(data) {
+        setOnb(p=>({...p,[empId]:{...(p[empId]||{}),[stepId]:{completed:nv,completed_date,row_id:data.id}}}))
+        return
+      }
+    }
+    setOnb(p=>({...p,[empId]:{...(p[empId]||{}),[stepId]:{...(p[empId]?.[stepId]||{}),completed:nv,completed_date}}}))
   }
-  const toggleDoc = async(empId,docId,cur)=>{
-    const nv=!cur
-    const ex=await supabase.from('documents').select('id').eq('employee_id',empId).eq('doc_id',docId).single()
-    if(ex.data)await supabase.from('documents').update({received:nv}).eq('id',ex.data.id)
-    else await supabase.from('documents').insert({employee_id:empId,doc_id:docId,received:nv,org_id:orgId})
-    setDocs(p=>({...p,[empId]:{...(p[empId]||{}),[docId]:nv}}))
+
+  const updateOnbDate = async(empId,stepId,curObj,newDate)=>{
+    const existingId = curObj?.row_id
+    if(existingId){
+      await supabase.from('onboarding').update({completed_date:newDate}).eq('id',existingId)
+      setOnb(p=>({...p,[empId]:{...(p[empId]||{}),[stepId]:{...(p[empId]?.[stepId]||{}),completed_date:newDate}}}))
+    }
+  }
+
+  const toggleDoc = async(empId,docId,curObj,opts={})=>{
+    const cur = curObj?.received || false
+    const nv = !cur
+    const today = new Date().toISOString().split('T')[0]
+    const received_date = nv ? (opts.received_date || today) : null
+    const file_url = nv ? (opts.file_url || curObj?.file_url || null) : null
+    const existingId = curObj?.row_id
+    if(existingId){
+      await supabase.from('documents').update({received:nv,received_date,file_url}).eq('id',existingId)
+    } else {
+      const{data}=await supabase.from('documents').insert({employee_id:empId,doc_id:docId,received:nv,received_date,file_url,org_id:orgId}).select().single()
+      if(data){
+        setDocs(p=>({...p,[empId]:{...(p[empId]||{}),[docId]:{received:nv,received_date,file_url,row_id:data.id}}}))
+        return
+      }
+    }
+    setDocs(p=>({...p,[empId]:{...(p[empId]||{}),[docId]:{...(p[empId]?.[docId]||{}),received:nv,received_date,file_url}}}))
+  }
+
+  const updateDocMeta = async(empId,docId,curObj,patch)=>{
+    const existingId = curObj?.row_id
+    if(existingId){
+      await supabase.from('documents').update(patch).eq('id',existingId)
+      setDocs(p=>({...p,[empId]:{...(p[empId]||{}),[docId]:{...(p[empId]?.[docId]||{}),...patch}}}))
+    }
   }
   // ── Dashboard Stats (role-filtered) ──
   const sts={
@@ -527,7 +584,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='dashboard'&&(()=>{
       const newHireList = ac.filter(e=>dbt(e.hire_date||td,td)<=90).sort((a,b)=>dbt(a.hire_date||td,td)-dbt(b.hire_date||td,td))
       const avgOnbPct = newHireList.length > 0 ? Math.round(newHireList.reduce((sum,e)=>{
-        const ed = onb[e.id]||{}; return sum + Math.round(OBS.filter(s=>ed[s.id]).length/OBS.length*100)
+        const ed = onb[e.id]||{}; return sum + Math.round(OBS.filter(s=>ed[s.id]?.completed).length/OBS.length*100)
       },0)/newHireList.length) : null
 
       const StatCard = ({label,value,sub,color,warn}) => (
@@ -589,7 +646,7 @@ export default function PeopleFlowModule({ orgId, C }) {
               const day = dbt(e.hire_date||td,td)
               const pct = Math.min(100,Math.round(day/90*100))
               const barColor = pct>=100?C.gr:pct>=60?C.am:C.bl
-              const onbDone = OBS.filter(s=>(onb[e.id]||{})[s.id]).length
+              const onbDone = OBS.filter(s=>(onb[e.id]||{})[s.id]?.completed).length
               const onbPct = Math.round(onbDone/OBS.length*100)
               const onbColor = onbPct===100?C.gr:onbPct>=50?C.am:C.rd
               return <div key={e.id} style={{background:C.nL,borderRadius:8,padding:'10px 12px',border:'1px solid '+C.bdr}}>
@@ -631,7 +688,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     />}
 
     {/* ONBOARDING */}
-    {view==='onboard'&&<OnbView ac={ac} onb={onb} docs={docs} toggleOnb={toggleOnb} toggleDoc={toggleDoc} C={C}/>}
+    {view==='onboard'&&<OnbView ac={ac} onb={onb} docs={docs} toggleOnb={toggleOnb} toggleDoc={toggleDoc} updateOnbDate={updateOnbDate} updateDocMeta={updateDocMeta} orgId={orgId} C={C}/>}
 
     {/* UNION */}
     {view==='union'&&<UnionView ac={emps.filter(e=>e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='Terminated'&&e.status!=='Inactive')} C={C}/>}
@@ -688,7 +745,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
   const getOnbPct = (empId) => {
     const ed = onb[empId] || {}
     if (!OBS.length) return null
-    const done = OBS.filter(s => ed[s.id]).length
+    const done = OBS.filter(s => ed[s.id]?.completed).length
     return Math.round(done / OBS.length * 100)
   }
 
@@ -2207,37 +2264,75 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
   </div>)
 }
 
-function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
+function OnbView({ac,onb,docs,toggleOnb,toggleDoc,updateOnbDate,updateDocMeta,orgId,C}){
   const [expanded, setExpanded] = useState(null)
-  const recent = ac.filter(e=>{ const ed=onb[e.id]||{}; const dd=docs[e.id]||{}; const onbDone=OBS.filter(s=>ed[s.id]).length; const docDone=DOC_ITEMS.filter(d=>dd[d.id]).length; return onbDone<OBS.length || docDone<DOC_ITEMS.length }).sort((a,b)=>(a.last_name||a.first_name||'').localeCompare(b.last_name||b.first_name||''))
+  const [editingDate, setEditingDate] = useState(null) // {empId, stepId, current}
+  const [uploadingDoc, setUploadingDoc] = useState(null) // docId being uploaded
+
+  const today = new Date().toISOString().split('T')[0]
+
+  // Show all active employees — fully onboarded ones show as complete
+  const sorted = [...ac].sort((a,b)=>(a.last_name||a.first_name||'').localeCompare(b.last_name||b.first_name||''))
+
   const phs = [...new Set(OBS.map(s=>s.p))]
   const docCats = [...new Set(DOC_ITEMS.map(d=>d.c))]
 
-  const dateGap = (d1, d2) => {
-    if (!d1 || !d2) return null
-    const diff = Math.round((new Date(d2) - new Date(d1)) / (1000*60*60*24))
-    return diff
+  const getOnbPct = (empId) => {
+    const ed = onb[empId]||{}
+    const done = OBS.filter(s=>ed[s.id]?.completed).length
+    return Math.round(done/OBS.length*100)
+  }
+  const getDocPct = (empId) => {
+    const dd = docs[empId]||{}
+    const done = DOC_ITEMS.filter(d=>dd[d.id]?.received).length
+    return Math.round(done/DOC_ITEMS.length*100)
   }
 
   const fmDate = (d) => {
-    if (!d) return '—'
+    if (!d) return null
     return new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
   }
+
+  const dateGap = (d1, d2) => {
+    if (!d1 || !d2) return null
+    return Math.round((new Date(d2) - new Date(d1)) / (1000*60*60*24))
+  }
+
+  const handleUpload = async(empId, docId, curObj, file) => {
+    if (!file) return
+    setUploadingDoc(docId)
+    try {
+      const ext = file.name.split('.').pop()
+      const path = `onboarding/${orgId}/${empId}/${docId}_${Date.now()}.${ext}`
+      const {error:upErr} = await supabase.storage.from('flowsuite-files').upload(path, file, {upsert:true})
+      if (upErr) { console.error('Upload error:', upErr); setUploadingDoc(null); return }
+      const {data:urlData} = supabase.storage.from('flowsuite-files').getPublicUrl(path)
+      const file_url = urlData?.publicUrl || null
+      const received_date = curObj?.received_date || today
+      if (curObj?.received) {
+        await updateDocMeta(empId, docId, curObj, {file_url, received_date})
+      } else {
+        await toggleDoc(empId, docId, curObj, {file_url, received_date})
+      }
+    } catch(e){ console.error(e) }
+    setUploadingDoc(null)
+  }
+
+  const inp = {padding:'4px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:5,color:C.w,fontSize:11,fontFamily:'inherit'}
 
   return(<div>
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
       <h2 style={{margin:0,fontSize:18}}>{'Onboarding'}</h2>
-      <div style={{fontSize:11,color:C.g}}>{recent.length+' employees'}</div>
+      <div style={{fontSize:11,color:C.g}}>{sorted.length+' employees'}</div>
     </div>
-    {recent.length===0
-      ? <Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>{'All employees are fully onboarded. Nothing to do here.'}</Card>
-      : recent.map(e=>{
+
+    {sorted.length===0
+      ? <Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>{'No active employees found.'}</Card>
+      : sorted.map(e=>{
           const ed = onb[e.id]||{}
           const dd = docs[e.id]||{}
-          const onbDone = OBS.filter(s=>ed[s.id]).length
-          const onbPct = Math.round(onbDone/OBS.length*100)
-          const docDone = DOC_ITEMS.filter(d=>dd[d.id]).length
-          const docPct = Math.round(docDone/DOC_ITEMS.length*100)
+          const onbPct = getOnbPct(e.id)
+          const docPct = getDocPct(e.id)
           const isOpen = expanded===e.id
           const probDay = dbt(e.hire_date||td,td)
           const offerToHire = dateGap(e.offer_date, e.hire_date)
@@ -2245,13 +2340,18 @@ function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
           const startToSeniority = dateGap(e.start_date, e.seniority_date)
           const onbColor = onbPct===100?C.gr:onbPct>=50?C.am:C.rd
           const docColor = docPct===100?C.gr:docPct>=50?C.am:C.rd
+          const isComplete = onbPct===100 && docPct===100
 
-          return <Card key={e.id} C={C} style={{marginBottom:10,padding:0,overflow:'hidden'}}>
+          return <Card key={e.id} C={C} style={{marginBottom:10,padding:0,overflow:'hidden',opacity:isComplete?0.75:1}}>
+
             {/* ── Header ── */}
             <div onClick={()=>setExpanded(isOpen?null:e.id)} style={{padding:'12px 16px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:700,fontSize:14,marginBottom:2}}>{gn(e)}</div>
-                <div style={{fontSize:10,color:C.g}}>{e.role||'—'}{' · '}{e.dept||'—'}{e.hire_date ? ' · Day '+probDay+' of 90' : ''}</div>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
+                  <span style={{fontWeight:700,fontSize:14}}>{gn(e)}</span>
+                  {isComplete && <span style={{fontSize:9,padding:'1px 6px',borderRadius:99,background:'rgba(34,197,94,0.15)',color:C.gr,border:'1px solid rgba(34,197,94,0.3)',fontWeight:700}}>COMPLETE</span>}
+                </div>
+                <div style={{fontSize:10,color:C.g}}>{e.role||'—'}{' · '}{e.dept||'—'}{e.hire_date?' · Day '+probDay+' of 90':''}</div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:12,flexShrink:0,marginLeft:12}}>
                 <div style={{textAlign:'center'}}>
@@ -2269,15 +2369,15 @@ function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
             {/* ── Progress bars ── */}
             <div style={{padding:'0 16px 10px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               <div>
-                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Onboarding Steps'}</div>
+                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Steps ('+OBS.filter(s=>ed[s.id]?.completed).length+'/'+OBS.length+')'}</div>
                 <div style={{height:3,borderRadius:99,background:C.bdr}}>
-                  <div style={{height:'100%',borderRadius:99,background:onbColor,width:onbPct+'%'}}/>
+                  <div style={{height:'100%',borderRadius:99,background:onbColor,width:onbPct+'%',transition:'width 0.3s'}}/>
                 </div>
               </div>
               <div>
-                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Documents'}</div>
+                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Documents ('+DOC_ITEMS.filter(d=>dd[d.id]?.received).length+'/'+DOC_ITEMS.length+')'}</div>
                 <div style={{height:3,borderRadius:99,background:C.bdr}}>
-                  <div style={{height:'100%',borderRadius:99,background:docColor,width:docPct+'%'}}/>
+                  <div style={{height:'100%',borderRadius:99,background:docColor,width:docPct+'%',transition:'width 0.3s'}}/>
                 </div>
               </div>
             </div>
@@ -2286,18 +2386,18 @@ function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
             <div style={{padding:'8px 16px',background:C.nL,borderTop:'1px solid '+C.bdr,borderBottom:'1px solid '+C.bdr}}>
               <div style={{display:'flex',gap:0,alignItems:'center',flexWrap:'wrap'}}>
                 {[
-                  {label:'Offer',date:e.offer_date},
-                  {label:'Hire',date:e.hire_date,gap:offerToHire},
-                  {label:'Start',date:e.start_date,gap:hireToStart},
+                  {label:'Offer',    date:e.offer_date},
+                  {label:'Hire',     date:e.hire_date,     gap:offerToHire},
+                  {label:'Start',    date:e.start_date,    gap:hireToStart},
                   {label:'Seniority',date:e.seniority_date,gap:startToSeniority}
                 ].map((item,i)=>(
                   <div key={item.label} style={{display:'flex',alignItems:'center'}}>
                     {i>0 && <div style={{fontSize:9,color:C.g,padding:'0 6px',whiteSpace:'nowrap'}}>
-                      {item.gap!==null ? item.gap+'d →' : '→'}
+                      {item.gap!==null?item.gap+'d →':'→'}
                     </div>}
                     <div style={{textAlign:'center'}}>
                       <div style={{fontSize:9,color:C.go,textTransform:'uppercase',fontWeight:700}}>{item.label}</div>
-                      <div style={{fontSize:10,color:item.date?C.w:C.g,fontWeight:item.date?500:400}}>{fmDate(item.date)}</div>
+                      <div style={{fontSize:10,color:item.date?C.w:C.g,fontWeight:item.date?500:400}}>{fmDate(item.date)||'—'}</div>
                     </div>
                   </div>
                 ))}
@@ -2305,37 +2405,128 @@ function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
             </div>
 
             {/* ── Expanded: Steps + Docs ── */}
-            {isOpen && <div style={{padding:'12px 16px'}}>
-              {/* Onboarding Steps */}
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{'Onboarding Steps'}</div>
-                {phs.map(ph=><div key={ph} style={{marginBottom:8}}>
-                  <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{ph}</div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:3}}>
-                    {OBS.filter(s=>s.p===ph).map(s=>(
-                      <div key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',border:'1px solid '+(ed[s.id]?C.gr:C.bdr)}}>
-                        <span style={{fontSize:11,color:ed[s.id]?C.gr:C.g,flexShrink:0}}>{ed[s.id]?'✓':'○'}</span>
-                        <span style={{fontSize:10,color:ed[s.id]?C.g:C.w,textDecoration:ed[s.id]?'line-through':'none'}}>{s.l}</span>
-                      </div>
-                    ))}
+            {isOpen && <div style={{padding:'14px 16px'}}>
+
+              {/* ── Onboarding Steps ── */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'Onboarding Steps'}</div>
+                {phs.map(ph=>(
+                  <div key={ph} style={{marginBottom:12}}>
+                    <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:5,paddingBottom:3,borderBottom:'1px solid '+C.bdr}}>{ph}</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      {OBS.filter(s=>s.p===ph).map(s=>{
+                        const stepObj = ed[s.id] || {completed:false,completed_date:null,row_id:null}
+                        const done = stepObj.completed
+                        const stepDate = stepObj.completed_date
+                        const isEditingThis = editingDate?.empId===e.id && editingDate?.stepId===s.id
+
+                        return (
+                          <div key={s.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',background:done?C.grD:C.nL,borderRadius:6,border:'1px solid '+(done?C.gr:C.bdr)}}>
+                            {/* Checkbox */}
+                            <button
+                              onClick={()=>{
+                                if(done){if(window.confirm('Uncheck "'+s.l+'"? This will clear the date.'))toggleOnb(e.id,s.id,stepObj)}
+                                else toggleOnb(e.id,s.id,stepObj)
+                              }}
+                              style={{background:'none',border:'none',cursor:'pointer',padding:0,fontSize:14,color:done?C.gr:C.g,flexShrink:0,lineHeight:1}}
+                            >{done?'✓':'○'}</button>
+
+                            {/* Label */}
+                            <span style={{flex:1,fontSize:11,color:done?C.g:C.w,textDecoration:done?'line-through':'none'}}>{s.l}</span>
+
+                            {/* Date area */}
+                            {done && !isEditingThis && (
+                              <button
+                                onClick={()=>setEditingDate({empId:e.id,stepId:s.id,current:stepDate})}
+                                style={{background:'none',border:'none',cursor:'pointer',padding:'1px 6px',borderRadius:4,fontSize:10,color:C.go,fontWeight:600,fontFamily:'inherit',borderBottom:'1px dashed '+C.go,flexShrink:0}}
+                                title={'Click to change date'}
+                              >{fmDate(stepDate)||'Set date'}</button>
+                            )}
+                            {done && isEditingThis && (
+                              <input
+                                type='date'
+                                defaultValue={stepDate||today}
+                                autoFocus
+                                onBlur={ev=>{
+                                  const nd=ev.target.value
+                                  if(nd && nd!==stepDate) updateOnbDate(e.id,s.id,stepObj,nd)
+                                  setEditingDate(null)
+                                }}
+                                onKeyDown={ev=>{if(ev.key==='Escape')setEditingDate(null)}}
+                                style={{...inp,width:130,flexShrink:0}}
+                              />
+                            )}
+                            {!done && (
+                              <span style={{fontSize:9,color:C.g,flexShrink:0}}>{'—'}</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>)}
+                ))}
               </div>
 
-              {/* Documents */}
-              <div style={{borderTop:'1px solid '+C.bdr,paddingTop:12}}>
-                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{'Documents'}</div>
-                {docCats.map(cat=><div key={cat} style={{marginBottom:8}}>
-                  <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{cat}</div>
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:3}}>
-                    {DOC_ITEMS.filter(d=>d.c===cat).map(d=>(
-                      <div key={d.id} onClick={()=>toggleDoc(e.id,d.id,dd[d.id])} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 8px',background:dd[d.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',border:'1px solid '+(dd[d.id]?C.gr:C.bdr)}}>
-                        <span style={{fontSize:11,color:dd[d.id]?C.gr:C.g,flexShrink:0}}>{dd[d.id]?'✓':'○'}</span>
-                        <span style={{fontSize:10,color:dd[d.id]?C.g:C.w,textDecoration:dd[d.id]?'line-through':'none'}}>{d.l}</span>
-                      </div>
-                    ))}
+              {/* ── Documents ── */}
+              <div style={{borderTop:'1px solid '+C.bdr,paddingTop:14}}>
+                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>{'Documents'}</div>
+                {docCats.map(cat=>(
+                  <div key={cat} style={{marginBottom:12}}>
+                    <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:5,paddingBottom:3,borderBottom:'1px solid '+C.bdr}}>{cat}</div>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {DOC_ITEMS.filter(d=>d.c===cat).map(d=>{
+                        const docObj = dd[d.id] || {received:false,received_date:null,file_url:null,row_id:null}
+                        const recv = docObj.received
+                        const isUploading = uploadingDoc===d.id
+
+                        return (
+                          <div key={d.id} style={{padding:'8px 10px',background:recv?C.grD:C.nL,borderRadius:6,border:'1px solid '+(recv?C.gr:C.bdr)}}>
+                            {/* Top row: checkbox + label + date */}
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:recv||!recv?4:0}}>
+                              <button
+                                onClick={()=>{
+                                  if(recv){if(window.confirm('Mark "'+d.l+'" as not received? This will clear the file and date.'))toggleDoc(e.id,d.id,docObj)}
+                                  else toggleDoc(e.id,d.id,docObj)
+                                }}
+                                style={{background:'none',border:'none',cursor:'pointer',padding:0,fontSize:14,color:recv?C.gr:C.g,flexShrink:0,lineHeight:1}}
+                              >{recv?'✓':'○'}</button>
+                              <span style={{flex:1,fontSize:11,color:recv?C.g:C.w,textDecoration:recv?'line-through':'none',fontWeight:recv?400:500}}>{d.l}</span>
+                              {recv && (
+                                <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                                  <input
+                                    type='date'
+                                    value={docObj.received_date||today}
+                                    onChange={ev=>updateDocMeta(e.id,d.id,docObj,{received_date:ev.target.value})}
+                                    style={{...inp,width:130}}
+                                  />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Upload row */}
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginLeft:22}}>
+                              {docObj.file_url ? (
+                                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                  <a href={docObj.file_url} target='_blank' rel='noopener noreferrer' style={{fontSize:10,color:C.go,fontWeight:600,textDecoration:'none'}}>{'📎 View File'}</a>
+                                  <span style={{fontSize:9,color:C.g}}>·</span>
+                                  <label style={{fontSize:10,color:C.g,cursor:'pointer',fontFamily:'inherit'}}>
+                                    {'Replace'}
+                                    <input type='file' accept='.pdf,.doc,.docx,.jpg,.jpeg,.png' onChange={ev=>{const f=ev.target.files[0];if(f)handleUpload(e.id,d.id,docObj,f);ev.target.value=''}} style={{display:'none'}}/>
+                                  </label>
+                                </div>
+                              ) : (
+                                <label style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:10,color:isUploading?C.g:C.go,fontWeight:600,cursor:isUploading?'default':'pointer',fontFamily:'inherit'}}>
+                                  {isUploading?'Uploading...':'+ Upload File'}
+                                  {!isUploading && <input type='file' accept='.pdf,.doc,.docx,.jpg,.jpeg,.png' onChange={ev=>{const f=ev.target.files[0];if(f)handleUpload(e.id,d.id,docObj,f);ev.target.value=''}} style={{display:'none'}}/>}
+                                </label>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>)}
+                ))}
               </div>
             </div>}
           </Card>
@@ -2346,12 +2537,12 @@ function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
 
 function DocsView({ac,docs,toggleDoc,C}){
   return(<div><h2 style={{fontSize:18,marginTop:0}}>Document Tracker</h2>
-    {ac.map(e=>{const ed=docs[e.id]||{};const dn=DOC_ITEMS.filter(d=>ed[d.id]).length;const pc=Math.round(dn/DOC_ITEMS.length*100);const cats=[...new Set(DOC_ITEMS.map(d=>d.c))]
+    {ac.map(e=>{const ed=docs[e.id]||{};const dn=DOC_ITEMS.filter(d=>ed[d.id]?.received).length;const pc=Math.round(dn/DOC_ITEMS.length*100);const cats=[...new Set(DOC_ITEMS.map(d=>d.c))]
       return<Card key={e.id} C={C} style={{marginBottom:8}}>
         <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontWeight:600,fontSize:13}}>{gn(e)}</div><div style={{fontSize:12,fontWeight:700,color:pc===100?C.gr:pc>50?C.am:C.rd}}>{pc}%</div></div>
         <div style={{height:2,background:C.nL,borderRadius:99,marginBottom:6,overflow:'hidden'}}><div style={{height:'100%',width:pc+'%',background:pc===100?C.gr:C.go}}/></div>
         {cats.map(cat=><div key={cat} style={{display:'flex',gap:2,flexWrap:'wrap',marginBottom:2}}>
-          {DOC_ITEMS.filter(d=>d.c===cat).map(d=><span key={d.id} onClick={()=>toggleDoc(e.id,d.id,ed[d.id])} style={{padding:'2px 6px',borderRadius:4,fontSize:9,cursor:'pointer',background:ed[d.id]?C.grD:C.nL,color:ed[d.id]?C.gr:C.g,textDecoration:ed[d.id]?'line-through':'none'}}>{d.l}</span>)}</div>)}
+          {DOC_ITEMS.filter(d=>d.c===cat).map(d=><span key={d.id} onClick={()=>toggleDoc(e.id,d.id,ed[d.id]||null)} style={{padding:'2px 6px',borderRadius:4,fontSize:9,cursor:'pointer',background:ed[d.id]?.received?C.grD:C.nL,color:ed[d.id]?.received?C.gr:C.g,textDecoration:ed[d.id]?.received?'line-through':'none'}}>{d.l}</span>)}</div>)}
       </Card>})}</div>)
 }
 

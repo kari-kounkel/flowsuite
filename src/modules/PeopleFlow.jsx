@@ -2373,160 +2373,274 @@ function RptView({emps,ac,disc,reports,C}){
 }
 
 function ResourcesView({C,isAdmin,isManager,emps,orgId}){
+  const canManage = isAdmin || isManager
+  const [tab, setTab] = useState('forms')
   const [activeForm, setActiveForm] = useState(null)
-  const [pushEmp, setPushEmp] = useState('')
-  const [pushForm, setPushForm] = useState('')
-  const [pushNote, setPushNote] = useState('')
-  const [pushing, setPushing] = useState(false)
-  const [pushToast, setPushToast] = useState('')
   const [customForms, setCustomForms] = useState([])
+  const [loadingForms, setLoadingForms] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
   const [newFormLabel, setNewFormLabel] = useState('')
   const [newFormUrl, setNewFormUrl] = useState('')
   const [newFormDesc, setNewFormDesc] = useState('')
-  const canManage = isAdmin || isManager
+  const [pushEmp, setPushEmp] = useState('')
+  const [pushForm, setPushForm] = useState('')
+  const [pushNote, setPushNote] = useState('')
+  const [pushing, setPushing] = useState(false)
+  const [toast, setToast] = useState('')
+  const [pushHistory, setPushHistory] = useState([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [acks, setAcks] = useState([])
+  const [editingForm, setEditingForm] = useState(null)
+  const [editLabel, setEditLabel] = useState('')
+  const [editUrl, setEditUrl] = useState('')
+  const [editDesc, setEditDesc] = useState('')
 
-  const shp = msg => { setPushToast(msg); setTimeout(()=>setPushToast(''),3000) }
+  const sh = msg => { setToast(msg); setTimeout(()=>setToast(''),3000) }
 
   const BUILT_IN_FORMS = [
-    {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',url:'https://form.jotform.com/260085486550056',access:'all'},
-    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance',url:'https://form.jotform.com/260495386436063',access:'all'},
-    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Employee signature after reimbursement is issued',url:'https://form.jotform.com/260085845634058',access:'manage'},
-    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions',url:'https://form.jotform.com/260084859075061',access:'manage'},
+    {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',url:'https://form.jotform.com/260085486550056',access:'all',builtin:true},
+    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance',url:'https://form.jotform.com/260495386436063',access:'all',builtin:true},
+    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Employee signature after reimbursement is issued',url:'https://form.jotform.com/260085845634058',access:'manage',builtin:true},
+    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions',url:'https://form.jotform.com/260084859075061',access:'manage',builtin:true},
   ]
 
   const allForms = [...BUILT_IN_FORMS, ...customForms]
-  const visibleForms = allForms.filter(f => f.access === 'all' || canManage)
+  const visibleForms = allForms.filter(f=>f.access==='all'||canManage)
   const activeEmps = emps.filter(e=>e.status!=='Terminated'&&e.status!=='terminated'&&e.status!=='Inactive'&&e.status!=='inactive').sort((a,b)=>(a.last_name||'').localeCompare(b.last_name||''))
 
-  const addCustomForm = () => {
-    if (!newFormLabel.trim() || !newFormUrl.trim()) { shp('Label and URL required.'); return }
-    const id = 'custom_' + Date.now()
-    setCustomForms(p=>[...p,{id,l:newFormLabel.trim(),desc:newFormDesc.trim(),url:newFormUrl.trim(),access:'all',custom:true}])
-    setNewFormLabel(''); setNewFormUrl(''); setNewFormDesc(''); setShowAddForm(false)
-    shp('Form added.')
+  useEffect(()=>{
+    const loadForms = async () => {
+      setLoadingForms(true)
+      const {data} = await supabase.from('settings').select('value').eq('org_id',orgId).eq('key','resource_forms').single()
+      if (data && Array.isArray(data.value)) setCustomForms(data.value)
+      setLoadingForms(false)
+    }
+    loadForms()
+  },[orgId])
+
+  const saveForms = async (updated) => {
+    await supabase.from('settings').upsert({org_id:orgId,key:'resource_forms',value:updated},{onConflict:'org_id,key'})
   }
 
-  const removeCustomForm = (id) => setCustomForms(p=>p.filter(f=>f.id!==id))
+  const addCustomForm = async () => {
+    if (!newFormLabel.trim()||!newFormUrl.trim()){sh('Label and URL required.');return}
+    const newForm = {id:'custom_'+Date.now(),l:newFormLabel.trim(),desc:newFormDesc.trim(),url:newFormUrl.trim(),access:'all',custom:true}
+    const updated = [...customForms, newForm]
+    setCustomForms(updated)
+    await saveForms(updated)
+    setNewFormLabel('');setNewFormUrl('');setNewFormDesc('');setShowAddForm(false)
+    sh('Form added.')
+  }
+
+  const removeCustomForm = async (id) => {
+    const updated = customForms.filter(f=>f.id!==id)
+    setCustomForms(updated)
+    await saveForms(updated)
+    sh('Form removed.')
+  }
+
+  const startEdit = (f) => {
+    setEditingForm(f.id)
+    setEditLabel(f.l)
+    setEditUrl(f.url)
+    setEditDesc(f.desc||'')
+  }
+
+  const saveEdit = async () => {
+    const updated = customForms.map(f=>f.id===editingForm?{...f,l:editLabel,url:editUrl,desc:editDesc}:f)
+    setCustomForms(updated)
+    await saveForms(updated)
+    setEditingForm(null)
+    sh('Form updated.')
+  }
+
+  const loadHistory = async () => {
+    setLoadingHistory(true)
+    const {data:pushes} = await supabase.from('policy_pushes').select('*').eq('org_id',orgId).order('created_at',{ascending:false}).limit(50)
+    const {data:ackData} = await supabase.from('push_acknowledgments').select('*').eq('org_id',orgId)
+    setPushHistory(pushes||[])
+    setAcks(ackData||[])
+    setLoadingHistory(false)
+  }
+
+  useEffect(()=>{
+    if(tab==='history') loadHistory()
+  },[tab])
 
   const handlePush = async () => {
-    if (!pushEmp || !pushForm) { shp('Select an employee and a form.'); return }
+    if (!pushEmp||!pushForm){sh('Select an employee and a form.');return}
     setPushing(true)
     const emp = activeEmps.find(e=>e.id===pushEmp)
     const form = allForms.find(f=>f.id===pushForm)
-    if (!emp || !form) { shp('Invalid selection.'); setPushing(false); return }
-    const msg = (pushNote || 'Please complete: ' + form.l) + ' — ' + form.url
-    const { error } = await supabase.from('policy_pushes').insert({
-      org_id: orgId,
-      pushed_by: 'admin',
-      pushed_to: [gn(emp)],
-      message: msg,
-      section_id: null
+    if (!emp||!form){sh('Invalid selection.');setPushing(false);return}
+    const msg = (pushNote||'Please complete: '+form.l)+' — '+form.url
+    const {error} = await supabase.from('policy_pushes').insert({
+      org_id:orgId,
+      pushed_by:'admin',
+      pushed_to:[gn(emp)],
+      message:msg,
+      title:form.l,
+      section_id:null
     })
     setPushing(false)
-    if (error) { shp('Error: ' + error.message); return }
-    shp('Form pushed to ' + gn(emp) + ' checkmark')
-    setPushEmp(''); setPushForm(''); setPushNote('')
+    if(error){sh('Error: '+error.message);return}
+    sh('Pushed to '+gn(emp)+' ✓')
+    setPushEmp('');setPushForm('');setPushNote('')
+    if(tab==='history') loadHistory()
+  }
+
+  const getAckForPush = (pushId, empName) => {
+    return acks.find(a=>a.push_id===pushId)
   }
 
   const inp = {width:'100%',padding:'7px 10px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const tabBtn = (k,l) => (
+    React.createElement('button',{
+      key:k,
+      onClick:()=>setTab(k),
+      style:{padding:'5px 14px',borderRadius:6,fontSize:11,fontWeight:600,fontFamily:'inherit',cursor:'pointer',
+        background:tab===k?C.gD:'transparent',
+        border:'1px solid '+(tab===k?C.go:C.bdrF),
+        color:tab===k?C.go:C.g}
+    },l)
+  )
 
-  return(<div>
-    <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>{'Employee Resources'}</h2>
-    <div style={{fontSize:11,color:C.g,marginBottom:16}}>{'Forms and self-service submissions.'}</div>
+  return React.createElement('div',null,
+    React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}},
+      React.createElement('h2',{style:{margin:0,fontSize:18}},'Employee Resources'),
+      React.createElement('div',{style:{display:'flex',gap:4}},
+        tabBtn('forms','Forms'),
+        tabBtn('push','Push to Employee'),
+        tabBtn('history','Push History')
+      )
+    ),
 
-    {/* Self-Service Forms */}
-    <div style={{marginBottom:20}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>
-        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>{'Self-Service Forms'}</div>
-        {canManage && <button onClick={()=>setShowAddForm(p=>!p)} style={{fontSize:10,padding:'3px 10px',borderRadius:5,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}}>{showAddForm ? 'Cancel' : '+ Add Form'}</button>}
-      </div>
+    tab==='forms' && React.createElement('div',null,
+      React.createElement('div',{style:{fontSize:11,color:C.g,marginBottom:12}},'Click any form to open it in a new tab. Admins can add and edit forms.'),
+      canManage && React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',marginBottom:8}},
+        React.createElement('button',{onClick:()=>setShowAddForm(p=>!p),style:{fontSize:10,padding:'4px 12px',borderRadius:5,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}},showAddForm?'Cancel':'+ Add Form')
+      ),
 
-      {/* Add custom form */}
-      {canManage && showAddForm && <Card C={C} style={{padding:'12px 14px',marginBottom:10}}>
-        <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:8}}>{'New Form'}</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-          <div>
-            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'Label'}</div>
-            <input value={newFormLabel} onChange={e=>setNewFormLabel(e.target.value)} placeholder="e.g. Equipment Request" style={inp}/>
-          </div>
-          <div>
-            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'URL (JotForm or PDF link)'}</div>
-            <input value={newFormUrl} onChange={e=>setNewFormUrl(e.target.value)} placeholder="https://form.jotform.com/..." style={inp}/>
-          </div>
-        </div>
-        <div style={{marginBottom:8}}>
-          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}}>{'Description (optional)'}</div>
-          <input value={newFormDesc} onChange={e=>setNewFormDesc(e.target.value)} placeholder="What is this form for?" style={inp}/>
-        </div>
-        <div style={{display:'flex',justifyContent:'flex-end'}}>
-          <Btn gold small onClick={addCustomForm} C={C}>{'Add'}</Btn>
-        </div>
-      </Card>}
+      canManage && showAddForm && React.createElement(Card,{C,style:{padding:'12px 14px',marginBottom:12}},
+        React.createElement('div',{style:{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',marginBottom:8}},'New Form'),
+        React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}},
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}},'Label'),
+            React.createElement('input',{value:newFormLabel,onChange:e=>setNewFormLabel(e.target.value),placeholder:'e.g. Equipment Request',style:inp})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}},'URL'),
+            React.createElement('input',{value:newFormUrl,onChange:e=>setNewFormUrl(e.target.value),placeholder:'https://form.jotform.com/...',style:inp})
+          )
+        ),
+        React.createElement('div',{style:{marginBottom:8}},
+          React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:3}},'Description (optional)'),
+          React.createElement('input',{value:newFormDesc,onChange:e=>setNewFormDesc(e.target.value),placeholder:'What is this form for?',style:inp})
+        ),
+        React.createElement('div',{style:{display:'flex',justifyContent:'flex-end'}},
+          React.createElement(Btn,{gold:true,small:true,onClick:addCustomForm,C},'Add')
+        )
+      ),
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8,marginBottom:8}}>
-        {visibleForms.map(f=>(
-          <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.go:'1px solid '+C.bdr,position:'relative'}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
-            {f.custom && canManage && <button onClick={ev=>{ev.stopPropagation();removeCustomForm(f.id)}} style={{position:'absolute',top:6,right:8,background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:12,fontFamily:'inherit'}}>{'x'}</button>}
-            <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.go:C.w,marginBottom:3}}>{f.l}</div>
-            {f.desc && <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>}
-          </Card>
-        ))}
-      </div>
+      loadingForms
+        ? React.createElement('div',{style:{color:C.g,padding:20,textAlign:'center'}},'Loading forms...')
+        : React.createElement('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}},
+            visibleForms.map(f=>
+              editingForm===f.id
+                ? React.createElement(Card,{key:f.id,C,style:{padding:'12px 14px'}},
+                    React.createElement('div',{style:{display:'grid',gap:6,marginBottom:8}},
+                      React.createElement('input',{value:editLabel,onChange:e=>setEditLabel(e.target.value),placeholder:'Label',style:inp}),
+                      React.createElement('input',{value:editUrl,onChange:e=>setEditUrl(e.target.value),placeholder:'URL',style:inp}),
+                      React.createElement('input',{value:editDesc,onChange:e=>setEditDesc(e.target.value),placeholder:'Description',style:inp})
+                    ),
+                    React.createElement('div',{style:{display:'flex',gap:6,justifyContent:'flex-end'}},
+                      React.createElement('button',{onClick:()=>setEditingForm(null),style:{fontSize:10,padding:'3px 10px',borderRadius:5,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}},'Cancel'),
+                      React.createElement(Btn,{gold:true,small:true,onClick:saveEdit,C},'Save')
+                    )
+                  )
+                : React.createElement(Card,{key:f.id,C,style:{padding:'14px 16px',position:'relative'}},
+                    f.custom && canManage && React.createElement('div',{style:{position:'absolute',top:8,right:10,display:'flex',gap:6}},
+                      React.createElement('button',{onClick:()=>startEdit(f),style:{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:10,fontFamily:'inherit'}},'Edit'),
+                      React.createElement('button',{onClick:()=>removeCustomForm(f.id),style:{background:'none',border:'none',color:C.rd,cursor:'pointer',fontSize:10,fontFamily:'inherit'}},'Remove')
+                    ),
+                    React.createElement('div',{style:{fontWeight:700,fontSize:13,color:C.w,marginBottom:4,paddingRight:f.custom?60:0}},f.l),
+                    f.desc && React.createElement('div',{style:{fontSize:11,color:C.g,marginBottom:10,lineHeight:1.4}},f.desc),
+                    React.createElement('a',{
+                      href:f.url,target:'_blank',rel:'noopener noreferrer',
+                      style:{display:'inline-block',padding:'5px 14px',borderRadius:6,background:C.go,color:C.bg,fontSize:11,fontWeight:700,textDecoration:'none',fontFamily:'inherit'}
+                    },'Open Form ↗')
+                  )
+            )
+          ),
+      toast && React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.go,fontWeight:600}},toast)
+    ),
 
-      {/* Embedded Form or PDF link */}
-      {activeForm && (()=>{
-        const form = allForms.find(f=>f.id===activeForm)
-        if (!form) return null
-        const isPDF = form.url && form.url.toLowerCase().endsWith('.pdf')
-        return <Card C={C} style={{marginTop:8,padding:0,overflow:'hidden'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid '+C.bdr}}>
-            <div style={{fontWeight:600,fontSize:13,color:C.go}}>{form.l}</div>
-            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-              <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>{'Open in new tab'}</a>
-              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16,fontFamily:'inherit'}}>{'x'}</button>
-            </div>
-          </div>
-          {isPDF
-            ? <div style={{padding:'20px 14px',textAlign:'center'}}>
-                <a href={form.url} target="_blank" rel="noopener noreferrer" style={{color:C.go,fontWeight:600,fontSize:13}}>{'Open PDF: '+form.l+' (new tab)'}</a>
-              </div>
-            : <iframe src={form.url} style={{width:'100%',height:600,border:'none',background:C.bg2}} title={form.l} allow="camera;microphone"/>
-          }
-        </Card>
-      })()}
-    </div>
+    tab==='push' && canManage && React.createElement('div',null,
+      React.createElement('div',{style:{fontSize:11,color:C.g,marginBottom:14}},'Select an employee and a form. They will receive a notification in PaperFlow to complete it.'),
+      React.createElement(Card,{C,style:{padding:'16px'}},
+        React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}},
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}},'Employee'),
+            React.createElement('select',{value:pushEmp,onChange:e=>setPushEmp(e.target.value),style:inp},
+              React.createElement('option',{value:''},'-- Select employee --'),
+              activeEmps.map(e=>React.createElement('option',{key:e.id,value:e.id},gn(e)))
+            )
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}},'Form'),
+            React.createElement('select',{value:pushForm,onChange:e=>setPushForm(e.target.value),style:inp},
+              React.createElement('option',{value:''},'-- Select form --'),
+              allForms.map(f=>React.createElement('option',{key:f.id,value:f.id},f.l))
+            )
+          )
+        ),
+        React.createElement('div',{style:{marginBottom:12}},
+          React.createElement('div',{style:{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}},'Note to Employee (optional)'),
+          React.createElement('input',{value:pushNote,onChange:e=>setPushNote(e.target.value),placeholder:'e.g. Please complete by Friday',style:inp})
+        ),
+        React.createElement('div',{style:{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:10}},
+          toast && React.createElement('span',{style:{fontSize:11,color:C.go,fontWeight:600}},toast),
+          React.createElement(Btn,{gold:true,small:true,onClick:handlePush,C},pushing?'Sending...':'Push Form')
+        )
+      )
+    ),
 
-    {/* Push a Form to an Employee */}
-    {canManage && <div style={{marginBottom:20}}>
-      <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'Push a Form to an Employee'}</div>
-      <Card C={C} style={{padding:'14px 16px'}}>
-        <div style={{fontSize:11,color:C.g,marginBottom:12}}>{'Employee receives a notification in PaperFlow to complete the selected form.'}</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-          <div>
-            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Employee'}</div>
-            <select value={pushEmp} onChange={e=>setPushEmp(e.target.value)} style={inp}>
-              <option value="">{'-- Select employee --'}</option>
-              {activeEmps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
-            </select>
-          </div>
-          <div>
-            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Form'}</div>
-            <select value={pushForm} onChange={e=>setPushForm(e.target.value)} style={inp}>
-              <option value="">{'-- Select form --'}</option>
-              {allForms.map(f=><option key={f.id} value={f.id}>{f.l}</option>)}
-            </select>
-          </div>
-        </div>
-        <div style={{marginBottom:10}}>
-          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Note (optional)'}</div>
-          <input value={pushNote} onChange={e=>setPushNote(e.target.value)} placeholder="e.g. Please complete by Friday" style={inp}/>
-        </div>
-        <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:10}}>
-          {pushToast && <span style={{fontSize:11,color:C.go,fontWeight:600}}>{pushToast}</span>}
-          <Btn gold small onClick={handlePush} C={C}>{pushing?'Sending...':'Push Form'}</Btn>
-        </div>
-      </Card>
-    </div>}
-  </div>)
+    tab==='push' && !canManage && React.createElement('div',{style:{color:C.g,padding:20,textAlign:'center'}},'Admin or manager access required.'),
+
+    tab==='history' && React.createElement('div',null,
+      React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}},
+        React.createElement('div',{style:{fontSize:11,color:C.g}},'All form pushes — most recent first.'),
+        React.createElement('button',{onClick:loadHistory,style:{fontSize:10,padding:'3px 10px',borderRadius:5,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}},'Refresh')
+      ),
+      loadingHistory
+        ? React.createElement('div',{style:{color:C.g,padding:20,textAlign:'center'}},'Loading history...')
+        : pushHistory.length===0
+          ? React.createElement(Card,{C,style:{padding:24,textAlign:'center',color:C.g}},'No form pushes yet.')
+          : pushHistory.map(p=>{
+              const ack = getAckForPush(p.id)
+              const isAcked = ack && ack.status==='acknowledged'
+              const sentTo = Array.isArray(p.pushed_to) ? p.pushed_to.join(', ') : (p.pushed_to||'—')
+              const sentDate = p.created_at ? new Date(p.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '—'
+              const ackDate = ack && ack.acknowledged_at ? new Date(ack.acknowledged_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null
+              return React.createElement(Card,{key:p.id,C,style:{marginBottom:8,padding:'12px 16px'}},
+                React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}},
+                  React.createElement('div',{style:{flex:1,minWidth:0}},
+                    React.createElement('div',{style:{fontWeight:700,fontSize:13,color:C.w,marginBottom:2}},p.title||'Form Push'),
+                    React.createElement('div',{style:{fontSize:11,color:C.g,marginBottom:4}},'To: '+sentTo+' · '+sentDate),
+                    p.message && React.createElement('div',{style:{fontSize:10,color:C.g,fontStyle:'italic',wordBreak:'break-word'}},p.message)
+                  ),
+                  React.createElement('div',{style:{flexShrink:0,textAlign:'right'}},
+                    React.createElement('div',{style:{
+                      fontSize:10,fontWeight:700,padding:'2px 10px',borderRadius:99,
+                      background:isAcked?'rgba(34,197,94,0.15)':'rgba(245,158,11,0.15)',
+                      color:isAcked?C.gr:C.am,
+                      border:'1px solid '+(isAcked?C.gr:C.am)
+                    }},isAcked?'Acknowledged':'Pending'),
+                    ackDate && React.createElement('div',{style:{fontSize:9,color:C.g,marginTop:2}},ackDate)
+                  )
+                )
+              )
+            })
+    )
+  )
 }

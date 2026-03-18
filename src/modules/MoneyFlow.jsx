@@ -4249,8 +4249,346 @@ function JEHistoryTab({ orgId, C }) {
 }
 
 
+
+// ═══════════════════════════════════════════════════════
+// CASH DASHBOARD — upload QBO CSVs, view entity panels
+// ═══════════════════════════════════════════════════════
+function CashDashboard({ orgId, C }) {
+  const [entity, setEntity] = useState('iaz')
+  const [data, setData] = useState({
+    iaz: { balance: null, ar: null, payroll: null, pl: null, uploaded: {} },
+    omega: { balance: null, ar: null, payroll: null, pl: null, uploaded: {} }
+  })
+  const [toast, setToast] = useState('')
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const ENTITIES = [
+    { id: 'iaz', label: 'IAZ Corporation' },
+    { id: 'omega', label: 'Omega LLC' }
+  ]
+
+  const parseBalanceSheet = (text) => {
+    const lines = text.split('
+').map(l => l.trim()).filter(Boolean)
+    const accounts = []
+    let totalCash = 0
+    let totalAR = 0
+    lines.forEach(line => {
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const label = parts[0] || ''
+      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
+      const low = label.toLowerCase()
+      if (low.includes('checking') || low.includes('savings') || low.includes('cash')) {
+        accounts.push({ label, val, type: 'cash' })
+        totalCash += val
+      }
+      if (low.includes('accounts receivable') || low === 'a/r' || low.includes('total accounts receivable')) {
+        totalAR = val
+      }
+    })
+    return { accounts, totalCash, totalAR, raw: lines.length }
+  }
+
+  const parseARaging = (text) => {
+    const lines = text.split('
+').map(l => l.trim()).filter(Boolean)
+    const buckets = { current: 0, d30: 0, d60: 0, d90: 0, over90: 0, total: 0 }
+    lines.forEach(line => {
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const label = (parts[0]||'').toLowerCase()
+      if (label.includes('total') || label === 'totals') {
+        buckets.current = parseFloat((parts[1]||'').replace(/[$,]/g,'')) || buckets.current
+        buckets.d30 = parseFloat((parts[2]||'').replace(/[$,]/g,'')) || buckets.d30
+        buckets.d60 = parseFloat((parts[3]||'').replace(/[$,]/g,'')) || buckets.d60
+        buckets.d90 = parseFloat((parts[4]||'').replace(/[$,]/g,'')) || buckets.d90
+        buckets.over90 = parseFloat((parts[5]||'').replace(/[$,]/g,'')) || buckets.over90
+        buckets.total = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || buckets.total
+      }
+    })
+    return buckets
+  }
+
+  const parsePayroll = (text) => {
+    const lines = text.split('
+').map(l => l.trim()).filter(Boolean)
+    let grossPay = 0, netPay = 0, taxes = 0, period = ''
+    lines.forEach(line => {
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const label = (parts[0]||'').toLowerCase()
+      if (label.includes('gross') || label.includes('total wages')) grossPay = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || grossPay
+      if (label.includes('net pay') || label.includes('total net')) netPay = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || netPay
+      if (label.includes('total tax') || label.includes('taxes')) taxes = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || taxes
+      if (label.includes('period') || label.includes('pay date')) period = parts[1] || period
+    })
+    return { grossPay, netPay, taxes, period }
+  }
+
+  const handleUpload = (ent, type, file) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const text = e.target.result
+      let parsed = null
+      if (type === 'balance') parsed = parseBalanceSheet(text)
+      else if (type === 'ar') parsed = parseARaging(text)
+      else if (type === 'payroll') parsed = parsePayroll(text)
+      else parsed = { raw: text.split('
+').length }
+      setData(p => ({
+        ...p,
+        [ent]: {
+          ...p[ent],
+          [type]: parsed,
+          uploaded: { ...p[ent].uploaded, [type]: file.name + ' — ' + new Date().toLocaleTimeString() }
+        }
+      }))
+      sh(file.name + ' loaded')
+    }
+    reader.readAsText(file)
+  }
+
+  const fmt = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const ent = data[entity]
+
+  const UploadBtn = ({ type, label, eid }) => (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 10, color: ent.uploaded[type] ? C.gr : C.g, background: 'transparent', fontFamily: 'inherit' }}>
+      {ent.uploaded[type] ? '✓ ' + label : '↑ ' + label}
+      <input type="file" accept=".csv" style={{ display: 'none' }} onChange={ev => handleUpload(eid, type, ev.target.files[0])} />
+    </label>
+  )
+
+  const StatBox = ({ label, value, sub, color, warn }) => (
+    <div style={{ background: C.nL, borderRadius: 8, padding: '14px 16px', border: '1px solid ' + (warn ? C.rd : C.bdr), borderLeft: '3px solid ' + (color || C.go) }}>
+      <div style={{ fontSize: 9, color: C.g, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: color || C.go, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>{sub}</div>}
+    </div>
+  )
+
+  return (
+    <div>
+      {/* Entity toggle */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {ENTITIES.map(e => (
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid ' + (entity === e.id ? C.go : C.bdrF), background: entity === e.id ? C.gD : 'transparent', color: entity === e.id ? C.go : C.g, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{e.label}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 10, color: C.g }}>
+          {ent.uploaded.balance || 'No balance sheet uploaded'}
+        </div>
+      </div>
+
+      {/* Upload bar */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20, padding: '10px 14px', background: C.nL, borderRadius: 8, border: '1px solid ' + C.bdr }}>
+        <span style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: 1, alignSelf: 'center', marginRight: 4 }}>Upload:</span>
+        <UploadBtn type="balance" label="Balance Sheet" eid={entity} />
+        <UploadBtn type="ar" label="AR Aging" eid={entity} />
+        <UploadBtn type="payroll" label="Payroll Summary" eid={entity} />
+        <UploadBtn type="pl" label="P&L" eid={entity} />
+      </div>
+
+      {/* Cash panel */}
+      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Cash Position</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10, marginBottom: 20 }}>
+        {ent.balance
+          ? <>
+              <StatBox label="Total Cash" value={fmt(ent.balance.totalCash)} color={ent.balance.totalCash >= 0 ? C.gr : C.rd} warn={ent.balance.totalCash < 0} />
+              {ent.balance.accounts.map((a, i) => (
+                <StatBox key={i} label={a.label} value={fmt(a.val)} color={a.val >= 0 ? C.bl : C.rd} />
+              ))}
+            </>
+          : <div style={{ gridColumn: '1/-1', fontSize: 12, color: C.g, padding: '20px 0' }}>Upload a Balance Sheet CSV to see cash position.</div>
+        }
+      </div>
+
+      {/* AR panel */}
+      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Accounts Receivable</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10, marginBottom: 20 }}>
+        {ent.balance && ent.balance.totalAR > 0
+          ? <StatBox label="Total AR" value={fmt(ent.balance.totalAR)} color={C.am} />
+          : null
+        }
+        {ent.ar
+          ? <>
+              <StatBox label="Current" value={fmt(ent.ar.current)} color={C.gr} />
+              <StatBox label="1-30 Days" value={fmt(ent.ar.d30)} color={C.am} warn={ent.ar.d30 > 0} />
+              <StatBox label="31-60 Days" value={fmt(ent.ar.d60)} color={C.am} warn={ent.ar.d60 > 0} />
+              <StatBox label="61-90 Days" value={fmt(ent.ar.d90)} color={C.rd} warn={ent.ar.d90 > 0} />
+              <StatBox label="Over 90" value={fmt(ent.ar.over90)} color={C.rd} warn={ent.ar.over90 > 0} />
+            </>
+          : <div style={{ fontSize: 12, color: C.g, padding: '10px 0' }}>Upload AR Aging CSV for aging detail.</div>
+        }
+      </div>
+
+      {/* Payroll panel */}
+      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Last Payroll</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10, marginBottom: 20 }}>
+        {ent.payroll
+          ? <>
+              <StatBox label="Gross Pay" value={fmt(ent.payroll.grossPay)} color={C.bl} />
+              <StatBox label="Net Pay" value={fmt(ent.payroll.netPay)} color={C.gr} />
+              <StatBox label="Taxes & Deductions" value={fmt(ent.payroll.taxes)} color={C.am} />
+              {ent.payroll.period && <StatBox label="Pay Period" value={ent.payroll.period} color={C.g} />}
+            </>
+          : <div style={{ fontSize: 12, color: C.g, padding: '10px 0' }}>Upload a Payroll Summary CSV to see last payroll.</div>
+        }
+      </div>
+
+      {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1000 }}>{toast}</div>}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════
+// CASH FLOW FORECASTER — AP aging drag to prioritize
+// ═══════════════════════════════════════════════════════
+function CashFlowForecaster({ orgId, C }) {
+  const [entity, setEntity] = useState('iaz')
+  const [bills, setBills] = useState({ iaz: [], omega: [] })
+  const [toast, setToast] = useState('')
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const ENTITIES = [{ id: 'iaz', label: 'IAZ' }, { id: 'omega', label: 'Omega' }]
+
+  const parseAPAging = (text, eid) => {
+    const lines = text.split('
+').map(l => l.trim()).filter(Boolean)
+    const parsed = []
+    lines.forEach((line, idx) => {
+      if (idx === 0) return // skip header
+      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
+      const vendor = parts[0]
+      if (!vendor || vendor.toLowerCase().includes('total')) return
+      const total = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
+      if (total === 0) return
+      parsed.push({
+        id: eid + '_' + idx,
+        vendor,
+        current: parseFloat((parts[1]||'').replace(/[$,]/g,'')) || 0,
+        d30: parseFloat((parts[2]||'').replace(/[$,]/g,'')) || 0,
+        d60: parseFloat((parts[3]||'').replace(/[$,]/g,'')) || 0,
+        d90: parseFloat((parts[4]||'').replace(/[$,]/g,'')) || 0,
+        over90: parseFloat((parts[5]||'').replace(/[$,]/g,'')) || 0,
+        total,
+        payAmt: '',
+        marked: false,
+        priority: parsed.length
+      })
+    })
+    return parsed
+  }
+
+  const handleUpload = (eid, file) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = e => {
+      const parsed = parseAPAging(e.target.result, eid)
+      setBills(p => ({ ...p, [eid]: parsed }))
+      sh(parsed.length + ' vendors loaded from ' + file.name)
+    }
+    reader.readAsText(file)
+  }
+
+  const toggleMark = (eid, id) => setBills(p => ({ ...p, [eid]: p[eid].map(b => b.id === id ? { ...b, marked: !b.marked } : b) }))
+  const setPayAmt = (eid, id, val) => setBills(p => ({ ...p, [eid]: p[eid].map(b => b.id === id ? { ...b, payAmt: val } : b) }))
+
+  const moveUp = (eid, idx) => {
+    if (idx === 0) return
+    setBills(p => {
+      const arr = [...p[eid]]
+      const tmp = arr[idx-1]; arr[idx-1] = arr[idx]; arr[idx] = tmp
+      return { ...p, [eid]: arr }
+    })
+  }
+  const moveDown = (eid, idx) => {
+    const arr = bills[eid]
+    if (idx === arr.length-1) return
+    setBills(p => {
+      const a = [...p[eid]]
+      const tmp = a[idx+1]; a[idx+1] = a[idx]; a[idx] = tmp
+      return { ...p, [eid]: a }
+    })
+  }
+
+  const fmt = n => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  const currentBills = bills[entity]
+  const markedTotal = currentBills.filter(b => b.marked).reduce((s, b) => s + (parseFloat(b.payAmt) || b.total), 0)
+  const totalOwed = currentBills.reduce((s, b) => s + b.total, 0)
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {ENTITIES.map(e => (
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid ' + (entity === e.id ? C.go : C.bdrF), background: entity === e.id ? C.gD : 'transparent', color: entity === e.id ? C.go : C.g, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{e.label}</button>
+          ))}
+        </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 11, color: C.g, fontFamily: 'inherit' }}>
+          Upload AP Aging CSV
+          <input type="file" accept=".csv" style={{ display: 'none' }} onChange={ev => handleUpload(entity, ev.target.files[0])} />
+        </label>
+      </div>
+
+      {currentBills.length === 0
+        ? <div style={{ padding: '40px 0', textAlign: 'center', color: C.g, fontSize: 13 }}>Upload an Unpaid Bills (AP Aging) CSV to get started.</div>
+        : <>
+            <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 12, color: C.g }}>Total owed: <span style={{ fontWeight: 700, color: C.rd }}>{fmt(totalOwed)}</span></div>
+              <div style={{ fontSize: 12, color: C.g }}>Marked to pay: <span style={{ fontWeight: 700, color: C.gr }}>{fmt(markedTotal)}</span></div>
+              <div style={{ fontSize: 12, color: C.g }}>Remaining: <span style={{ fontWeight: 700, color: C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
+            </div>
+
+            <div style={{ fontSize: 10, color: C.g, marginBottom: 8 }}>Drag to prioritize — use arrows. Check to mark for payment. Enter partial amount to pay less than full balance.</div>
+
+            {currentBills.map((b, idx) => (
+              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', marginBottom: 6, borderRadius: 8, background: b.marked ? C.grD : C.nL, border: '1px solid ' + (b.marked ? C.gr : C.bdr) }}>
+                {/* Priority arrows */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, flexShrink: 0 }}>
+                  <button onClick={() => moveUp(entity, idx)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 10, padding: '0 2px', fontFamily: 'inherit', lineHeight: 1 }}>▲</button>
+                  <button onClick={() => moveDown(entity, idx)} style={{ background: 'none', border: 'none', color: C.g, cursor: 'pointer', fontSize: 10, padding: '0 2px', fontFamily: 'inherit', lineHeight: 1 }}>▼</button>
+                </div>
+                <span style={{ fontSize: 11, color: C.g, minWidth: 20, textAlign: 'right', flexShrink: 0 }}>{idx+1}</span>
+                {/* Mark checkbox */}
+                <input type="checkbox" checked={b.marked} onChange={() => toggleMark(entity, b.id)} style={{ flexShrink: 0, cursor: 'pointer', width: 14, height: 14 }} />
+                {/* Vendor */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{b.vendor}</div>
+                  <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>
+                    {b.current > 0 ? 'Current: ' + fmt(b.current) + '  ' : ''}
+                    {b.d30 > 0 ? '1-30d: ' + fmt(b.d30) + '  ' : ''}
+                    {b.d60 > 0 ? '31-60d: ' + fmt(b.d60) + '  ' : ''}
+                    {b.d90 > 0 ? '61-90d: ' + fmt(b.d90) + '  ' : ''}
+                    {b.over90 > 0 ? '90+: ' + fmt(b.over90) : ''}
+                  </div>
+                </div>
+                {/* Total */}
+                <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 80 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: b.marked ? C.gr : C.w }}>{fmt(b.total)}</div>
+                  <div style={{ fontSize: 9, color: C.g }}>total owed</div>
+                </div>
+                {/* Pay amount */}
+                {b.marked && (
+                  <input
+                    value={b.payAmt}
+                    onChange={ev => setPayAmt(entity, b.id, ev.target.value)}
+                    placeholder={b.total.toFixed(2)}
+                    style={{ width: 90, padding: '4px 8px', background: C.ch, border: '1px solid ' + C.bdr, borderRadius: 5, color: C.w, fontSize: 12, fontFamily: 'inherit', flexShrink: 0 }}
+                  />
+                )}
+              </div>
+            ))}
+          </>
+      }
+
+      {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1000 }}>{toast}</div>}
+    </div>
+  )
+}
+
 export default function MoneyFlowModule({ orgId, C }) {
-  const [tab, setTab] = useState('tasks')
+  const [tab, setTab] = useState('dashboard')
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -4457,12 +4795,12 @@ export default function MoneyFlowModule({ orgId, C }) {
           </p>
         </div>
         {/* Tab switcher */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          {pill('Task Cards', tab === 'tasks', () => setTab('tasks'))}
-          {pill('Monthly Close', tab === 'je', () => setTab('je'))}
-          {pill('📋 JE History', tab === 'history', () => setTab('history'))}
-          {pill('🔗 Resources', tab === 'resources', () => setTab('resources'))}
-          {pill('💸 Payroll Payments', tab === 'payroll', () => setTab('payroll'))}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {pill('◆ Dashboard', tab === 'dashboard', () => setTab('dashboard'))}
+          {pill('Cash Flow', tab === 'cashflow', () => setTab('cashflow'))}
+          {pill('Pay Plan', tab === 'payroll', () => setTab('payroll'))}
+          {pill('Tasks', tab === 'tasks', () => setTab('tasks'))}
+          {pill('Accounting', tab === 'accounting', () => setTab('accounting'))}
         </div>
       </div>
 
@@ -4516,17 +4854,23 @@ export default function MoneyFlowModule({ orgId, C }) {
         </div>
       )}
 
-      {/* ── JE GENERATOR TAB ── */}
-      {tab === 'je' && (
+      {/* ── DASHBOARD TAB ── */}
+      {tab === 'dashboard' && <CashDashboard orgId={orgId} C={C} />}
+
+      {/* ── CASH FLOW TAB ── */}
+      {tab === 'cashflow' && <CashFlowForecaster orgId={orgId} C={C} />}
+
+      {/* ── ACCOUNTING TAB ── */}
+      {tab === 'accounting' && (
         <div>
-          {/* Sub-tab bar */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
             {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
+            {subPill('JE History', jeSubTab === 'history', () => setJeSubTab('history'))}
+            {subPill('Resources', jeSubTab === 'resources', () => setJeSubTab('resources'))}
           </div>
-
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory
@@ -4538,14 +4882,10 @@ export default function MoneyFlowModule({ orgId, C }) {
           )}
           {jeSubTab === 'recurring' && <RecurringJETab orgId={orgId} C={C} />}
           {jeSubTab === 'amort' && <AmortizationTab orgId={orgId} C={C} />}
+          {jeSubTab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
+          {jeSubTab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
         </div>
       )}
-
-      {/* ── RESOURCES TAB ── */}
-      {tab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
-
-      {/* ── JE HISTORY TAB ── */}
-      {tab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
 
       {/* ── PAYROLL PAYMENTS TAB ── */}
       {tab === 'payroll' && (

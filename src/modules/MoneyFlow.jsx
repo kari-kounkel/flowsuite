@@ -4268,8 +4268,7 @@ function CashDashboard({ orgId, C }) {
   ]
 
   const parseBalanceSheet = (text) => {
-    const lines = text.split('
-').map(l => l.trim()).filter(Boolean)
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     const accounts = []
     let totalCash = 0
     let totalAR = 0
@@ -4290,8 +4289,7 @@ function CashDashboard({ orgId, C }) {
   }
 
   const parseARaging = (text) => {
-    const lines = text.split('
-').map(l => l.trim()).filter(Boolean)
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     const buckets = { current: 0, d30: 0, d60: 0, d90: 0, over90: 0, total: 0 }
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
@@ -4309,8 +4307,7 @@ function CashDashboard({ orgId, C }) {
   }
 
   const parsePayroll = (text) => {
-    const lines = text.split('
-').map(l => l.trim()).filter(Boolean)
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     let grossPay = 0, netPay = 0, taxes = 0, period = ''
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
@@ -4332,8 +4329,7 @@ function CashDashboard({ orgId, C }) {
       if (type === 'balance') parsed = parseBalanceSheet(text)
       else if (type === 'ar') parsed = parseARaging(text)
       else if (type === 'payroll') parsed = parsePayroll(text)
-      else parsed = { raw: text.split('
-').length }
+      else parsed = { raw: text.split('\n').length }
       setData(p => ({
         ...p,
         [ent]: {
@@ -4452,8 +4448,7 @@ function CashFlowForecaster({ orgId, C }) {
   const ENTITIES = [{ id: 'iaz', label: 'IAZ' }, { id: 'omega', label: 'Omega' }]
 
   const parseAPAging = (text, eid) => {
-    const lines = text.split('
-').map(l => l.trim()).filter(Boolean)
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
     const parsed = []
     lines.forEach((line, idx) => {
       if (idx === 0) return // skip header

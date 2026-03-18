@@ -4706,6 +4706,11 @@ function CashFlowForecaster({ orgId, C }) {
 
   useEffect(() => {
     if (!orgId) return
+    loadScheduled()
+  }, [orgId, entity])
+
+  useEffect(() => {
+    if (!orgId) return
     setLoading(true)
     // Get most recent AP snapshot
     supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).order('snapshot_date', { ascending: false }).limit(1)
@@ -4724,6 +4729,30 @@ function CashFlowForecaster({ orgId, C }) {
   const [dragIdx, setDragIdx] = useState(null)
   const [dragOver, setDragOver] = useState(null)
   const [pushing, setPushing] = useState(false)
+  const [scheduled, setScheduled] = useState({}) // keyed by vendor name
+
+  const loadScheduled = async () => {
+    const { data } = await supabase.from('cashflow_ap_notes')
+      .select('*').eq('org_id', orgId).eq('entity', entity)
+    if (data) {
+      const map = {}
+      data.forEach(r => { map[r.vendor] = r })
+      setScheduled(map)
+    }
+  }
+
+  const saveScheduled = async (vendor, field, val) => {
+    setScheduled(p => ({ ...p, [vendor]: { ...(p[vendor]||{vendor,org_id:orgId,entity}), [field]: val } }))
+    const existing = scheduled[vendor]
+    if (existing && existing.id) {
+      await supabase.from('cashflow_ap_notes').update({ [field]: val, updated_at: new Date().toISOString() }).eq('id', existing.id)
+    } else {
+      const row = { org_id: orgId, entity, vendor, [field]: val }
+      const { data } = await supabase.from('cashflow_ap_notes').insert([row]).select().single()
+      if (data) setScheduled(p => ({ ...p, [vendor]: data }))
+    }
+  }
+
   const toggleMark = (id) => setBills(p => p.map(b => b.id === id ? { ...b, marked: !b.marked } : b))
   const setPayAmt = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payAmt: val } : b))
   const setPayDate = (id, val) => setBills(p => p.map(b => b.id === id ? { ...b, payDate: val } : b))
@@ -4837,8 +4866,9 @@ function CashFlowForecaster({ orgId, C }) {
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
           <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
             <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Scheduled in bill pay: '}<span style={{ fontWeight:700, color:WARN }}>{fmt(Object.values(scheduled).reduce((s,r)=>s+(parseFloat(r.scheduled_amt)||0),0))}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
-            <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:WARN }}>{fmt(totalOwed - markedTotal)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Net outstanding: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed - Object.values(scheduled).reduce((s,r)=>s+(parseFloat(r.scheduled_amt)||0),0) - markedTotal)}</span></div>
             {bills.filter(b=>b.queued).length > 0 && <div style={{ fontSize:12, color:C.g }}>{'Queued to tasks: '}<span style={{ fontWeight:700, color:C.go }}>{bills.filter(b=>b.queued).length+' vendors'}</span></div>}
           </div>
           {bills.filter(b=>b.marked&&!b.queued).length > 0 && (
@@ -4881,6 +4911,28 @@ function CashFlowForecaster({ orgId, C }) {
               <input type="date" value={b.payDate||''} onChange={ev => setPayDate(b.id||idx, ev.target.value)} style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
+          </div>
+          {/* Scheduled + notes row */}
+          <div style={{ display:'flex', gap:6, marginTop:4, marginLeft:44, flexWrap:'wrap' }}>
+            <input
+              value={(scheduled[b.vendor]||{}).scheduled_amt||''}
+              onChange={ev=>saveScheduled(b.vendor,'scheduled_amt',ev.target.value)}
+              placeholder="Scheduled $"
+              style={{ width:100, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
+            />
+            <input
+              value={(scheduled[b.vendor]||{}).scheduled_date||''}
+              onChange={ev=>saveScheduled(b.vendor,'scheduled_date',ev.target.value)}
+              type="date"
+              style={{ width:130, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
+            />
+            <input
+              value={(scheduled[b.vendor]||{}).notes||''}
+              onChange={ev=>saveScheduled(b.vendor,'notes',ev.target.value)}
+              placeholder="Notes..."
+              style={{ flex:1, minWidth:150, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
+            />
+            {(scheduled[b.vendor]||{}).scheduled_amt && <span style={{ fontSize:10, color:WARN, alignSelf:'center' }}>{'Scheduled: '+fmt(parseFloat((scheduled[b.vendor]||{}).scheduled_amt)||0)+((scheduled[b.vendor]||{}).scheduled_date?' by '+(scheduled[b.vendor]||{}).scheduled_date:'')}</span>}
           </div>
         ))}
       </>}
@@ -5328,6 +5380,7 @@ export default function MoneyFlowModule({ orgId, C }) {
         .from('moneyflow_tasks')
         .select('*')
         .eq('org_id', orgId)
+        .neq('status', 'done')
         .order('due_date', { ascending: true })
       if (err) throw err
       setTasks(data || [])

@@ -4637,7 +4637,9 @@ function CashFlowForecaster({ orgId, C }) {
     // Build one description listing all vendors
     const lines = toQueue.map(b => {
       const amt = '$' + (parseFloat(b.payAmt) || Math.abs(b.total)).toFixed(2)
-      return b.vendor + ' — ' + amt + (b.payDate ? ' (by ' + b.payDate + ')' : '')
+      const sched = b.scheduledAmt ? ' [sched: $'+parseFloat(b.scheduledAmt).toFixed(2)+']' : ''
+      const note = b.notes ? ' — '+b.notes : ''
+      return b.vendor + ' — ' + amt + (b.payDate ? ' by ' + b.payDate : '') + sched + note
     })
     const total = toQueue.reduce((s,b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
     const description = 'AP Payment Run — ' + entity.toUpperCase() + ' | Total: $' + total.toFixed(2) + ' | ' + lines.join(' | ')
@@ -4785,6 +4787,8 @@ function CashFlowForecaster({ orgId, C }) {
               <input type="date" value={b.payDate||''} onChange={ev => setPayDate(b.id||idx, ev.target.value)} style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit', flexShrink:0 }} />
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
+            {b.marked && !b.queued && <input value={b.notes||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,notes:ev.target.value}:x))} placeholder="Notes..." style={{ flex:1, minWidth:120, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }} />}
+            {b.marked && !b.queued && <input value={b.scheduledAmt||''} onChange={ev=>setBills(p=>p.map(x=>(x.id||x.vendor)===(b.id||b.vendor)?{...x,scheduledAmt:ev.target.value}:x))} placeholder="Sched. in bill pay $" style={{ width:130, padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', flexShrink:0 }} />}
           </div>
         ))}
       </>}
@@ -5186,7 +5190,7 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [editingTask, setEditingTask] = useState(null)
 
   // JE Generator sub-tab
-  const [jeSubTab, setJeSubTab] = useState('checklist')
+  const [jeSubTab, setJeSubTab] = useState('tasks')
   const [budgetEntity, setBudgetEntity] = useState('iaz')
 
   // ── LIFTED IIF STATE (persists across tab switches) ──

@@ -4533,8 +4533,8 @@ function CashDashboard({ orgId, C }) {
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'balance', label:'Balance Sheet' }, { type:'ap', label:'AP Aging' }, { type:'payroll', label:'Payroll' }, { type:'pl', label:'P&L' }]
-      : [{ type:'balance', label:'Balance Sheet' }, { type:'ar', label:'AR Aging' }, { type:'pl', label:'P&L' }]
+      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }]
+      : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
 
     return (
       <div style={{ flex:1, minWidth:0 }}>
@@ -4789,6 +4789,7 @@ function BudgetView({ orgId, C }) {
   const [plData, setPlData] = useState([])
   const [loading, setLoading] = useState(true)
   const [periods, setPeriods] = useState(8)
+  const [projectedPeriods, setProjectedPeriods] = useState(12)
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
@@ -4821,7 +4822,7 @@ function BudgetView({ orgId, C }) {
     const projected = []
     const lastDate = new Date(recent[recent.length-1].period_end)
     const isWeekly = entity === 'iaz'
-    for (let i = 1; i <= 6; i++) {
+    for (let i = 1; i <= projectedPeriods; i++) {
       const d = new Date(lastDate)
       if (isWeekly) d.setDate(d.getDate() + (7 * i))
       else d.setMonth(d.getMonth() + (3 * i))
@@ -4857,6 +4858,10 @@ function BudgetView({ orgId, C }) {
           <span style={{ fontSize:11, color:C.g }}>{'Base on last'}</span>
           <select value={periods} onChange={e=>setPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit' }}>
             {[4,8,12,16,20,24].map(n => <option key={n} value={n}>{n} periods</option>)}
+          </select>
+          <span style={{ fontSize:11, color:C.g }}>{'Project forward'}</span>
+          <select value={projectedPeriods} onChange={e=>setProjectedPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:12, fontFamily:'inherit' }}>
+            {[6,12,18,24,36,52,104].map(n => <option key={n} value={n}>{n} periods</option>)}
           </select>
         </div>
       </div>
@@ -5128,9 +5133,8 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {pill('◆ Dashboard', tab === 'dashboard', () => setTab('dashboard'))}
           {pill('Cash Flow', tab === 'cashflow', () => setTab('cashflow'))}
-          {pill('Pay Plan', tab === 'payroll', () => setTab('payroll'))}
-          {pill('Tasks', tab === 'tasks', () => setTab('tasks'))}
           {pill('Budget', tab === 'budget', () => setTab('budget'))}
+          {pill('Tasks', tab === 'tasks', () => setTab('tasks'))}
           {pill('Accounting', tab === 'accounting', () => setTab('accounting'))}
         </div>
       </div>
@@ -5201,6 +5205,7 @@ export default function MoneyFlowModule({ orgId, C }) {
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
             {subPill('JE History', jeSubTab === 'history', () => setJeSubTab('history'))}
+            {subPill('Payroll Orders', jeSubTab === 'payroll', () => setJeSubTab('payroll'))}
             {subPill('Resources', jeSubTab === 'resources', () => setJeSubTab('resources'))}
           </div>
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
@@ -5216,25 +5221,16 @@ export default function MoneyFlowModule({ orgId, C }) {
           {jeSubTab === 'amort' && <AmortizationTab orgId={orgId} C={C} />}
           {jeSubTab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
           {jeSubTab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
-        </div>
-      )}
-
-      {/* ── PAYROLL PAYMENTS TAB ── */}
-      {tab === 'payroll' && (
-        <div style={{ position: 'relative' }}>
-          <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} allResources={allResources} onOrdersChanged={async () => { await syncPayrollTasks(); loadTasks() }} />
-          {!isAdmin && userEmail && (
-            <div style={{
-              position: 'absolute', inset: 0, zIndex: 10,
-              background: 'rgba(10,14,22,0.82)',
-              backdropFilter: 'blur(4px)',
-              borderRadius: 10,
-              display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center', gap: 10,
-            }}>
-              <div style={{ fontSize: 28 }}>🔒</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.w }}>Admin Access Required</div>
-              <div style={{ fontSize: 11, color: C.g }}>Payroll payment orders are restricted to administrators.</div>
+          {jeSubTab === 'payroll' && (
+            <div style={{ position: 'relative' }}>
+              <PayrollPaymentsTab orgId={orgId} C={C} employees={employees} allResources={allResources} onOrdersChanged={async () => { await syncPayrollTasks(); loadTasks() }} />
+              {!isAdmin && userEmail && (
+                <div style={{ position:'absolute', inset:0, zIndex:10, background:'rgba(10,14,22,0.82)', backdropFilter:'blur(4px)', borderRadius:10, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10 }}>
+                  <div style={{ fontSize:28 }}>{'🔒'}</div>
+                  <div style={{ fontSize:14, fontWeight:700, color:C.w }}>{'Admin Access Required'}</div>
+                  <div style={{ fontSize:11, color:C.g }}>{'Payroll payment orders are restricted to administrators.'}</div>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -4706,10 +4706,22 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
       if (!parsed.length) { sh('No vendors found in file'); return }
       // Save to Supabase — use today as snapshot date
       const snapDate = new Date().toISOString().split('T')[0]
-      // Archive existing before replacing
+      // Archive existing AP + recon notes before replacing
       const { data: existing } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
       if (existing && existing.length) {
         await supabase.from('cashflow_ap_history').insert(existing.map(r => ({ ...r, archived_at: new Date().toISOString() })))
+        // Archive recon notes linked to these vendors
+        const { data: reconData } = await supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
+        if (reconData && reconData.length) {
+          const reconRows = reconData.map(r => ({
+            org_id: r.org_id, entity: r.entity, vendor: r.vendor,
+            total: (existing.find(b => b.vendor === r.vendor)||{}).total || 0,
+            recon_status: r.recon_status, recon_note: r.recon_note,
+            snapshot_date: snapDate, archived_at: new Date().toISOString(),
+            updated_by: r.updated_by
+          }))
+          await supabase.from('cashflow_ap_recon_history').insert(reconRows)
+        }
       }
       await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
       await supabase.from('cashflow_ap').insert(parsed.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
@@ -5164,6 +5176,170 @@ function TaskLogView({ orgId, C }) {
 }
 
 
+function APReconView({ orgId, C, userEmail }) {
+  const [entity, setEntity] = useState('iaz')
+  const [bills, setBills] = useState([])
+  const [history, setHistory] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showHistory, setShowHistory] = useState(false)
+  const [toast, setToast] = useState('')
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const POS = C.go
+  const NEG = '#B45055'
+  const WARN = C.am
+
+  const RECON_STATUSES = [
+    { v: '', l: '— Unreviewed' },
+    { v: 'confirmed', l: 'Confirmed' },
+    { v: 'disputed', l: 'Disputed' },
+    { v: 'paid', l: 'Paid / Clear' },
+    { v: 'scheduled', l: 'Scheduled' },
+    { v: 'hold', l: 'On Hold' },
+  ]
+
+  const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
+
+  useEffect(() => {
+    if (!orgId) return
+    setLoading(true)
+    Promise.all([
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity)
+        .order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return { data: [] }
+          const latestDate = r.data[0].snapshot_date
+          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('over90', { ascending: false })
+        }),
+      supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
+    ]).then(([apR, reconR]) => {
+      const ap = apR.data || []
+      const recon = reconR.data || []
+      const merged = ap.map(b => {
+        const r = recon.find(x => x.vendor === b.vendor) || {}
+        return { ...b, recon_status: r.recon_status || '', recon_note: r.recon_note || '', recon_id: r.id || null }
+      })
+      setBills(merged)
+      setLoading(false)
+    })
+  }, [orgId, entity])
+
+  useEffect(() => {
+    if (!orgId || !showHistory) return
+    supabase.from('cashflow_ap_recon_history').select('*').eq('org_id', orgId).eq('entity', entity)
+      .order('archived_at', { ascending: false }).limit(100)
+      .then(({ data }) => setHistory(data || []))
+  }, [orgId, entity, showHistory])
+
+  const saveRecon = async (vendor, field, val) => {
+    setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val } : b))
+    const existing = bills.find(b => b.vendor === vendor)
+    const payload = {
+      org_id: orgId, entity, vendor,
+      recon_status: field === 'recon_status' ? val : (existing?.recon_status || ''),
+      recon_note: field === 'recon_note' ? val : (existing?.recon_note || ''),
+      updated_at: new Date().toISOString(),
+      updated_by: userEmail || 'unknown'
+    }
+    if (existing?.recon_id) {
+      await supabase.from('cashflow_ap_recon').update(payload).eq('id', existing.recon_id)
+    } else {
+      const { data } = await supabase.from('cashflow_ap_recon').insert([payload]).select().single()
+      if (data) setBills(p => p.map(b => b.vendor === vendor ? { ...b, recon_id: data.id } : b))
+    }
+  }
+
+  const fmt = n => {
+    if (!n) return '—'
+    const abs = Math.abs(Number(n))
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    return Number(n) < 0 ? '(' + str + ')' : str
+  }
+
+  const STATUS_COLORS = {
+    confirmed: C.go,
+    disputed: NEG,
+    paid: '#22C55E',
+    scheduled: WARN,
+    hold: C.g,
+    '': C.g
+  }
+
+  const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
+
+  const unreviewed = bills.filter(b => !b.recon_status).length
+  const totalOwed = bills.reduce((s,b) => s + Math.abs(b.total||0), 0)
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+        <div style={{ display:'flex', gap:4 }}>
+          {ENTITIES.map(e => (
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
+        </div>
+      </div>
+
+      {!showHistory && <>
+        <div style={{ display:'flex', gap:20, marginBottom:12, flexWrap:'wrap', fontSize:12 }}>
+          <span style={{ color:C.g }}>{'Total owed: '}<strong style={{ color:NEG }}>{fmt(totalOwed)}</strong></span>
+          <span style={{ color:C.g }}>{'Unreviewed: '}<strong style={{ color:unreviewed>0?WARN:POS }}>{unreviewed}</strong></span>
+          {['confirmed','disputed','paid','scheduled','hold'].map(s => {
+            const count = bills.filter(b => b.recon_status === s).length
+            if (!count) return null
+            return <span key={s} style={{ color:C.g }}>{s+': '}<strong style={{ color:STATUS_COLORS[s] }}>{count}</strong></span>
+          })}
+        </div>
+
+        {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
+
+        {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded. Upload an AP Aging CSV in the Cash Flow tab first.'}</div>}
+
+        {!loading && bills.map((b, i) => (
+          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 120px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
+            <div>
+              <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
+              <div style={{ fontSize:9, color:C.g, marginTop:1 }}>
+                {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
+                {b.d30?'1-30: '+fmt(b.d30)+'  ':''}
+                {b.d60?'31-60: '+fmt(b.d60)+'  ':''}
+                {b.d90?'61-90: '+fmt(b.d90)+'  ':''}
+                {b.over90?'90+: '+fmt(b.over90):''}
+              </div>
+            </div>
+            <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right' }}>{fmt(b.total)}</div>
+            <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor,'recon_status',ev.target.value)} style={{ ...inp, width:'100%' }}>
+              {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+            </select>
+            <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
+            {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, textAlign:'center' }}>{b.recon_status}</span>}
+          </div>
+        ))}
+      </>}
+
+      {showHistory && <>
+        <div style={{ fontSize:11, color:C.g, marginBottom:12 }}>{'Reconciliation notes saved from previous AP uploads.'}</div>
+        {history.length === 0 && <div style={{ color:C.g, fontSize:13 }}>{'No history yet. History saves automatically when you upload a new AP aging file.'}</div>}
+        {history.map((h, i) => (
+          <div key={i} style={{ padding:'8px 12px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+C.bdr, display:'grid', gridTemplateColumns:'1fr 100px 120px 1fr 140px', gap:8, alignItems:'center', fontSize:11 }}>
+            <span style={{ fontWeight:600 }}>{h.vendor}</span>
+            <span style={{ color:h.total<0?POS:C.w, fontWeight:700 }}>{fmt(h.total)}</span>
+            <span style={{ color:STATUS_COLORS[h.recon_status]||C.g, fontWeight:600 }}>{h.recon_status||'unreviewed'}</span>
+            <span style={{ color:C.g }}>{h.recon_note||'—'}</span>
+            <span style={{ color:C.g, fontSize:10 }}>{h.archived_at ? new Date(h.archived_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+          </div>
+        ))}
+      </>}
+
+      {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
+    </div>
+  )
+}
+
+
 export default function MoneyFlowModule({ orgId, C }) {
   const [tab, setTab] = useState('dashboard')
   const [tasks, setTasks] = useState([])
@@ -5399,6 +5575,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
             {subPill('Tasks', jeSubTab === 'tasks', () => setJeSubTab('tasks'))}
             {subPill('Task History', jeSubTab === 'tasklog', () => setJeSubTab('tasklog'))}
+            {subPill('AP Recon', jeSubTab === 'aprecon', () => setJeSubTab('aprecon'))}
             {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
@@ -5437,6 +5614,7 @@ export default function MoneyFlowModule({ orgId, C }) {
             </div>
           )}
           {jeSubTab === 'tasklog' && <TaskLogView orgId={orgId} C={C} />}
+          {jeSubTab === 'aprecon' && <APReconView orgId={orgId} C={C} userEmail={userEmail} />}
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory

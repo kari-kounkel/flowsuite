@@ -4306,19 +4306,25 @@ function CashDashboard({ orgId, C }) {
   }
 
   // Parse date from QBO file header
+  const snapToSaturday = (d) => {
+    const day = d.getDay()
+    const diff = day === 6 ? 0 : day === 0 ? 1 : day + 1
+    const sat = new Date(d)
+    sat.setDate(d.getDate() - diff)
+    return sat.toISOString().split('T')[0]
+  }
+
   const parseDateFromHeader = (text) => {
     const lines = text.split('\n').slice(0, 5).join(' ')
-    // "As of March 17, 2026" pattern
     const asOfRe = new RegExp('As of ([A-Za-z]+ \\d{1,2},? \\d{4})', 'i'); const asOf = lines.match(asOfRe)
     if (asOf) {
       const d = new Date(asOf[1])
-      if (!isNaN(d)) return d.toISOString().split('T')[0]
+      if (!isNaN(d)) return snapToSaturday(d)
     }
-    // "January 1, 2025-March 17, 2026" — use end date
     const rangeRe = new RegExp('[A-Za-z]+ \\d{1,2},? \\d{4}[-]([A-Za-z]+ \\d{1,2},? \\d{4})'); const range = lines.match(rangeRe)
     if (range) {
       const d = new Date(range[1])
-      if (!isNaN(d)) return d.toISOString().split('T')[0]
+      if (!isNaN(d)) return snapToSaturday(d)
     }
     return null
   }

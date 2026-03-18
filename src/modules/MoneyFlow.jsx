@@ -4339,27 +4339,52 @@ function CashDashboard({ orgId, C }) {
   const any = (arr, fn) => arr.some(fn)
   const parseBalanceSheet = (text) => {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    // Parse into sections — show everything, let user decide what matters
     const cashAccounts = []
     const ccAccounts = []
+    const loanAccounts = []
     let loc_balance = null
     let ar_total = 0
+    let section = ''
+
     lines.forEach(row => {
       const parts = row.split(',').map(s => s.replace(/"/g,'').trim())
       const label = parts[0] || ''
       const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
       const low = label.toLowerCase()
-      if (!label || low.startsWith('total') || low === 'bank accounts' || low === 'assets' || low === 'current assets') return
-      if (any(['checking','savings','cash on hand','postage','operating account','2805','2813'], x => low.includes(x)) && !low.includes('closed')) {
+      if (!label) return
+
+      // Track section
+      if (low === 'bank accounts') { section = 'cash'; return }
+      if (low === 'credit cards') { section = 'cc'; return }
+      if (low === 'long-term liabilities' || low === 'other long term liabilities') { section = 'loans'; return }
+      if (low === 'current liabilities' || low === 'other current liabilities') { section = 'current_liab'; return }
+      if (low === 'assets' || low === 'current assets' || low === 'liabilities and equity' || low === 'liabilities' || low === 'equity') { section = ''; return }
+      if (low.startsWith('total')) return
+
+      if (val === 0) return
+
+      if (section === 'cash') {
         cashAccounts.push({ label, value: val })
-      } else if (any(['amex','visa','mastercard','discover'], x => low.includes(x))) {
+      } else if (section === 'cc') {
         ccAccounts.push({ label, value: val })
-      } else if (label.includes('LOC') && !label.includes('MEDA')) {
-        loc_balance = val
-      } else if (label.includes('11000') || (low.includes('accounts receivable') && !low.includes('total'))) {
-        ar_total = val
+      } else if (section === 'loans') {
+        loanAccounts.push({ label, value: val })
+      } else if (section === 'current_liab') {
+        // LOC goes here
+        if (low.includes('loc') || low.includes('cash flow manager') || low.includes('line of credit')) {
+          loc_balance = val
+        } else if (low.includes('loan') || low.includes('payable') || low.includes('meda') || low.includes('mortgage')) {
+          loanAccounts.push({ label, value: val })
+        }
+      } else {
+        // Non-section items — pick up AR
+        if (label.includes('11000') || (low.includes('accounts receivable') && !low.includes('total'))) {
+          ar_total = val
+        }
       }
     })
-    return { cashAccounts, ccAccounts, loc_balance, ar_total }
+    return { cashAccounts, ccAccounts, loanAccounts, loc_balance, ar_total }
   }
 
   const parseARaging = (text) => {
@@ -4426,6 +4451,7 @@ function CashDashboard({ orgId, C }) {
             await supabase.from('cashflow_snapshots').update({
               cash_accounts: parsed.cashAccounts,
               cc_accounts: parsed.ccAccounts,
+              loan_accounts: parsed.loanAccounts,
               loc_balance: parsed.loc_balance,
               ar_total: parsed.ar_total,
               uploaded_at: new Date().toISOString()
@@ -4434,6 +4460,7 @@ function CashDashboard({ orgId, C }) {
             await supabase.from('cashflow_snapshots').insert({
               org_id: orgId, entity, snapshot_date: snapDate,
               cash_accounts: parsed.cashAccounts, cc_accounts: parsed.ccAccounts,
+              loan_accounts: parsed.loanAccounts,
               loc_balance: parsed.loc_balance, ar_total: parsed.ar_total
             })
           }
@@ -4530,6 +4557,7 @@ function CashDashboard({ orgId, C }) {
     const arTotal = snap ? snap.ar_total : null
     const arFlex = snap ? snap.ar_flex : null
     const arDueOmega = snap ? snap.ar_due_omega : null
+    const loans = snap ? (snap.loan_accounts || []) : []
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
@@ -4564,11 +4592,20 @@ function CashDashboard({ orgId, C }) {
             </div>
           </>}
 
-          {/* LOC — only show if drawn (positive = amount owed) */}
+          {/* LOC */}
           {loc !== null && loc > 0 && <>
-            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
+            <div style={{ fontSize:9, color:WARN, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
               <SBox label="LOC Balance" value={fmt(loc)} color={WARN} warn sub="amount drawn" small />
+            </div>
+          </>}
+
+          {/* Loans & Long-term Liabilities */}
+          {loans.length > 0 && <>
+            <div style={{ fontSize:9, color:NEG, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Loans & Long-term Liabilities'}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+              {loans.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={NEG} sub="owed" small />)}
+              {loans.length > 1 && <SBox label="Total Loans" value={fmt(loans.reduce((s,a)=>s+Math.abs(a.value),0))} color={NEG} small />}
             </div>
           </>}
 

@@ -4699,8 +4699,7 @@ function CashFlowForecaster({ orgId, C }) {
     const reader = new FileReader()
     reader.onload = async (e) => {
       const text = e.target.result
-      const lines = text.split('
-').map(l => l.trim()).filter(Boolean)
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
       const parsed = []
       const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
       lines.forEach((line, idx) => {

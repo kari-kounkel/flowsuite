@@ -4529,6 +4529,13 @@ function CashDashboard({ orgId, C }) {
     </div>
   )
 
+  // Muted financial colors — not the loud status colors
+  const POS = C.go           // warm gold for positive cash
+  const NEG = '#B45055'      // muted rust — readable not alarming
+  const WARN = C.am          // amber for CC/LOC owed
+  const NEUT = C.g           // grey for neutral labels
+  const mColor = (n) => Number(n) >= 0 ? POS : NEG
+
   const AgedTable = ({ rows, keyField, labelField }) => (
     <div style={{ marginBottom:14, maxHeight:280, overflowY:'auto' }}>
       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>

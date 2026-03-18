@@ -370,8 +370,6 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
             style={inputStyle}
           />
         </div>
-
-        {/* Recurring toggle */}
         <div style={{
           marginBottom: 16, padding: '12px 14px',
           background: C.bg, borderRadius: 8, border: `1px solid ${C.bdr}`,
@@ -409,8 +407,6 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
             </div>
           )}
         </div>
-
-        {/* Linked Resources */}
         {allResources.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <label style={labelStyle}>Linked Resources</label>
@@ -440,8 +436,6 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
             </div>
           </div>
         )}
-
-        {/* Buttons */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             {isEdit && (
@@ -506,7 +500,6 @@ function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
           transition: 'transform 0.45s cubic-bezier(.4,0,.2,1)',
         }}
       >
-        {/* FRONT */}
         <div style={{
           position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
           borderRadius: 12, overflow: 'hidden',
@@ -530,7 +523,6 @@ function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
                   padding: '2px 6px', borderRadius: 4, letterSpacing: '0.5px',
                 }}>{task.type}</span>
               </div>
-              {/* Edit button — stops propagation so card doesn't flip */}
               <button
                 onClick={e => { e.stopPropagation(); onEdit(task) }}
                 style={{
@@ -551,8 +543,6 @@ function TaskCard({ task, C, onToggleDone, onEdit, allResources }) {
             <div style={{ fontSize: 9, color: C.g, opacity: 0.6 }}>tap to flip →</div>
           </div>
         </div>
-
-        {/* BACK */}
         <div style={{
           position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
           transform: 'rotateY(180deg)',
@@ -954,8 +944,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
 
   return (
     <div>
-      {/* Controls row */}
-      {/* ── Mode Toggle ── */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         {[['weekly','📅 Weekly Upload'],['periodend','📊 Period-End True-Up']].map(([mode, label]) => (
           <button key={mode} onClick={() => { setUploadMode(mode); setParsedData(null); setFileName(''); setPostMsg(null); setWeeklyEndDate('') }} style={{
@@ -970,11 +958,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           {uploadMode === 'weekly' ? 'Straight post — full amounts, no delta. Tag each file to its accounting period.' : 'True-up — posts the variance between this period summary and all weekly posts already recorded.'}
         </span>
       </div>
-
-      {/* ── Controls Row ── */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
-
-        {/* Weekly: pick the accounting period this file belongs to */}
         {uploadMode === 'weekly' && (
           <div>
             <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Accounting Period</label>
@@ -982,8 +966,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
             <div style={{ fontSize: 9, color: C.g, marginTop: 3 }}>Tag this file to its month (e.g. Oct 26–Nov 1 → October)</div>
           </div>
         )}
-
-        {/* Period-end: select type + period */}
         {uploadMode === 'periodend' && (
           <>
             <div>
@@ -1082,8 +1064,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           </div>
         )}
       </div>
-
-      {/* ── JE Number Preview ── */}
       {period && (
         <div style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", marginBottom: 12, padding: '7px 12px', background: C.bg2, borderRadius: 6, border: `1px solid ${C.bdr}`, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           <span>JE: <b>{getJENumber()}</b></span>
@@ -1092,8 +1072,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       )}
 
       {loadingMap && <p style={{ fontSize: 12, color: C.g }}>Loading account map…</p>}
-
-      {/* Unmapped account inline resolver */}
       {unmappedAccounts.length > 0 && (
         <div style={{
           background: '#3a1a1a', border: '1px solid #c04040', borderRadius: 8,
@@ -1171,8 +1149,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           </div>
         </div>
       )}
-
-      {/* JE Preview */}
       {jeLines.length > 0 && (
         <>
           <JETable
@@ -1222,8 +1198,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           ✓ All accounts fully posted for period {period}. Nothing new to post.
         </div>
       )}
-
-      {/* Account map viewer toggle */}
       {accountMap.length > 0 && (
         <div style={{ marginTop: 20 }}>
           <button
@@ -1259,8 +1233,6 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           )}
         </div>
       )}
-
-      {/* COA Import */}
       <div style={{ marginTop: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <span style={{ fontSize: 11, color: C.g }}>
@@ -1381,7 +1353,6 @@ function RecurringJETab({ orgId, C }) {
 
   return (
     <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-      {/* Left panel */}
       <div style={{
         background: C.bg2, border: `1px solid ${C.bdr}`,
         borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
@@ -1419,8 +1390,6 @@ function RecurringJETab({ orgId, C }) {
             </select>
           </div>
         </div>
-
-        {/* UTIL session inputs */}
         {activeLines.some(l => l.is_editable) && (
           <div style={{ marginBottom: 14 }}>
             <label style={labelStyle}>This Month's Allocation</label>
@@ -1443,8 +1412,6 @@ function RecurringJETab({ orgId, C }) {
           No CSV. No import.<br />Key directly into QBO.
         </div>
       </div>
-
-      {/* Right panel */}
       <div style={{ flex: 1, minWidth: 320 }}>
         {activeTemplate && (
           <JETable
@@ -1453,8 +1420,6 @@ function RecurringJETab({ orgId, C }) {
             memo={`${activeTemplate.label} — ${monthName} ${jeYear} — Enter manually in QBO`}
           />
         )}
-
-        {/* ── Fixed-amount line editor ── */}
         {activeLines.filter(l => !l.is_editable && !l.is_total).length > 0 && (
           <div style={{
             marginTop: 14, background: C.bg2, border: `1px solid ${C.bdr}`,
@@ -1718,7 +1683,6 @@ function CloseChecklistTab({ orgId, C }) {
 
   return (
     <div>
-      {/* Period picker + progress */}
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
           <label style={labelStyle}>Period</label>
@@ -1740,8 +1704,6 @@ function CloseChecklistTab({ orgId, C }) {
           )}
         </div>
       </div>
-
-      {/* Progress bar */}
       {totalItems > 0 && (
         <div style={{ background: C.bdr, borderRadius: 4, height: 6, marginBottom: 16, overflow: 'hidden' }}>
           <div style={{
@@ -1750,8 +1712,6 @@ function CloseChecklistTab({ orgId, C }) {
           }} />
         </div>
       )}
-
-      {/* IIF Period Totals — pulls from log for this period */}
       {iifEntries.length > 0 && (() => {
         const periodDr = iifEntries.reduce((s, e) => s + (e.amount || 0), 0)
         const weekCount = iifEntries.filter(e => e.source === 'iif').length
@@ -1774,8 +1734,6 @@ function CloseChecklistTab({ orgId, C }) {
           </div>
         )
       })()}
-
-      {/* ── STALE PERIOD WARNINGS ── */}
       {stalePeriods.length > 0 && (
         <div style={{
           background: '#3a2a10', border: '1px solid #c4956a', borderRadius: 8,
@@ -1794,8 +1752,6 @@ function CloseChecklistTab({ orgId, C }) {
           </div>
         </div>
       )}
-
-      {/* ── RECURRING ENTRIES ── */}
       <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10, letterSpacing: '0.5px' }}>RECURRING ENTRIES</div>
       {activeTemplates.length === 0 && (
         <div style={{ fontSize: 11, color: C.g, marginBottom: 12 }}>
@@ -1852,7 +1808,6 @@ function CloseChecklistTab({ orgId, C }) {
                 onUnpost={() => unpost(posted.id)}
               />
             </div>
-            {/* UTIL inline amount entry */}
             {isUtil && !posted && (
               <div style={{ marginTop: 10 }}>
                 <button onClick={() => setUtilOpen(prev => ({ ...prev, [t.id]: !prev[t.id] }))} style={{
@@ -1879,8 +1834,6 @@ function CloseChecklistTab({ orgId, C }) {
           </div>
         )
       })}
-
-      {/* ── IIF ENTRIES (auto-populated from IIF Factory) ── */}
       {iifEntries.length > 0 && (
         <>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.go, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
@@ -1913,8 +1866,6 @@ function CloseChecklistTab({ orgId, C }) {
           ))}
         </>
       )}
-
-      {/* ── ONE-OFF ENTRIES ── */}
       <div style={{ fontSize: 11, fontWeight: 700, color: C.go, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
         ONE-OFF ENTRIES
         <span style={{ fontSize: 10, color: C.g, fontWeight: 400, marginLeft: 8 }}>CPA adjustments, FLEX surprises, anything extra</span>
@@ -2234,13 +2185,10 @@ function AmortizationTab({ orgId, C }) {
 
   return (
     <div>
-      {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ fontSize: 12, color: C.g }}>Loan and lease amortization schedules — generates combined monthly JE</div>
         <button onClick={openNew} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>+ Add Schedule</button>
       </div>
-
-      {/* ── Schedule Form Modal ── */}
       {showForm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowForm(false)}>
           <div onClick={e => e.stopPropagation()} style={{ background: C.bg2, borderRadius: 14, padding: 24, width: 520, maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${C.bdr}` }}>
@@ -2248,8 +2196,6 @@ function AmortizationTab({ orgId, C }) {
               <h3 style={{ margin: 0, color: C.go, fontSize: 15 }}>{editingSched ? '✏️ Edit Schedule' : '+ New Schedule'}</h3>
               <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', color: C.g, fontSize: 18, cursor: 'pointer' }}>✕</button>
             </div>
-
-            {/* Type toggle */}
             <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
               {['loan','lease'].map(t => (
                 <button key={t} onClick={() => set('type', t)} style={{
@@ -2287,8 +2233,6 @@ function AmortizationTab({ orgId, C }) {
                 <input type="number" value={form.payment_amt} onChange={e => set('payment_amt', e.target.value)} placeholder="auto-calculated" style={inp} />
               </div>
             </div>
-
-            {/* Account overrides */}
             <div style={{ marginBottom: 12, padding: '10px 12px', background: C.bg, borderRadius: 8, border: `1px solid ${C.bdrF}` }}>
               <div style={{ fontSize: 10, color: C.go, fontWeight: 700, marginBottom: 8, textTransform: 'uppercase' }}>Account Names (defaults shown)</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
@@ -2309,8 +2253,6 @@ function AmortizationTab({ orgId, C }) {
               <label style={lbl}>Notes</label>
               <input value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Lender, account #, etc." style={inp} />
             </div>
-
-            {/* Preview button */}
             <div style={{ display: 'flex', gap: 8, marginBottom: preview ? 16 : 0 }}>
               <button onClick={generatePreview} style={{ background: 'transparent', border: `1px solid ${C.go}`, color: C.go, borderRadius: 6, padding: '6px 14px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit' }}>
                 👁 Preview Schedule
@@ -2320,8 +2262,6 @@ function AmortizationTab({ orgId, C }) {
                 opacity: (!form.name.trim() || !form.principal) ? 0.5 : 1,
               }}>{saving ? 'Saving…' : 'Save Schedule'}</button>
             </div>
-
-            {/* Preview table */}
             {preview && (
               <div style={{ marginTop: 12, maxHeight: 260, overflowY: 'auto', borderRadius: 8, border: `1px solid ${C.bdr}` }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, fontFamily: "'DM Mono', monospace" }}>
@@ -2350,8 +2290,6 @@ function AmortizationTab({ orgId, C }) {
           </div>
         </div>
       )}
-
-      {/* ── Saved Schedules ── */}
       {loading && <p style={{ color: C.g, fontSize: 12 }}>Loading…</p>}
       {!loading && schedules.length === 0 && (
         <div style={{ color: C.g, fontSize: 12, padding: 20, textAlign: 'center' }}>No schedules yet. Add your loans and leases above.</div>
@@ -2421,8 +2359,6 @@ function AmortizationTab({ orgId, C }) {
           )
         })}
       </div>
-
-      {/* ── Combined JE Generator ── */}
       {schedules.length > 0 && (
         <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 12, padding: '16px 20px' }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: C.go, marginBottom: 12 }}>📋 Generate Combined Monthly JE</div>
@@ -2526,7 +2462,6 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
       background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
       padding: '14px 16px', display: 'flex', flexDirection: 'column',
     }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.go }}>{res.label}</div>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -2543,8 +2478,6 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
           }}>{confirmDel ? '✓ sure?' : '🗑'}</button>
         </div>
       </div>
-
-      {/* URL button */}
       {res.url && (
         <a href={res.url} target="_blank" rel="noreferrer" style={{
           display: 'inline-block', background: C.go, color: '#fff',
@@ -2552,8 +2485,6 @@ function ResourceCard({ res, C, onEdit, onDelete }) {
           textDecoration: 'none', marginBottom: 10,
         }}>{res.label} ↗</a>
       )}
-
-      {/* Creds toggle + copy buttons */}
       {(res.username || res.password || res.pin) && (
         <div>
           <button onClick={() => setShowCreds(v => !v)} style={{
@@ -3002,7 +2933,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
 
   return (
     <div>
-      {/* Upload */}
       <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, padding: '16px 18px', marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 8 }}>Upload QBO Payroll Export</div>
         <div style={{ fontSize: 11, color: C.g, marginBottom: 12 }}>
@@ -3015,8 +2945,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
       </div>
 
       {rows.length > 0 && (<>
-
-        {/* Summary banner */}
         <div style={{
           display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20,
           background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, padding: '14px 18px',
@@ -3038,8 +2966,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
             <div style={{ fontSize: 15, fontWeight: 700, color: C.w }}>{orders.length} active</div>
           </div>
         </div>
-
-        {/* ── PAYMENTS TO SEND ── */}
         {paymentRows.length > 0 && (<>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#e07070', marginBottom: 10, letterSpacing: '0.5px' }}>
             SEND PAYMENTS
@@ -3153,8 +3079,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
             <span style={{ fontSize: 16, fontWeight: 700, color: C.go, fontFamily: "'DM Mono', monospace" }}>${fmt(totalPayments)}</span>
           </div>
         </>)}
-
-        {/* ── INTERNAL / BENEFIT DEDUCTIONS ── */}
         {internalRows.length > 0 && (<>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.g, margin: '20px 0 10px', letterSpacing: '0.5px' }}>
             INTERNAL DEDUCTIONS <span style={{ fontSize: 10, fontWeight: 400 }}>(benefits, union, insurance — no external payment needed)</span>
@@ -3176,8 +3100,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
             </div>
           ))}
         </>)}
-
-        {/* ── ZERO AMOUNT ROWS ── */}
         {zeroRows.length > 0 && (
           <div style={{ fontSize: 10, color: C.g, marginTop: 16 }}>
             {zeroRows.length} deduction line{zeroRows.length > 1 ? 's' : ''} with $0 this period: {zeroRows.map(r => r.desc).join(', ')}
@@ -3192,8 +3114,6 @@ function WithholdingProcessorTab({ orgId, C, orders: propOrders = null, allResou
         </div>
 
       </>)}
-
-      {/* No orders warning */}
       {orders.length === 0 && (
         <div style={{ fontSize: 11, color: '#c4956a', marginTop: 8 }}>
           ⚠ No active payment orders on file. Add them in the Payment Orders tab so destinations and case numbers show here.
@@ -3314,8 +3234,6 @@ function NewHireChecklistTab({ orgId, C }) {
           onClose={() => setTemplateModal(null)}
         />
       )}
-
-      {/* Checklist template manager */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.go }}>
@@ -3361,8 +3279,6 @@ function NewHireChecklistTab({ orgId, C }) {
           </div>
         )}
       </div>
-
-      {/* Employee filter + status filter */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
         <select value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)} style={{
           background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
@@ -3378,8 +3294,6 @@ function NewHireChecklistTab({ orgId, C }) {
           () => setFilterStatus(s)
         ))}
       </div>
-
-      {/* Per-employee checklist rows */}
       {activeTemplates.length === 0 && (
         <div style={{ fontSize: 12, color: C.g, padding: '20px 0', textAlign: 'center' }}>
           No active checklist items. Add items to the template above.
@@ -3421,7 +3335,6 @@ function NewHireChecklistTab({ orgId, C }) {
 
         return (
           <div key={emp.id} style={{ background: C.bg2, border: `1px solid ${overdueCount > 0 ? '#c04040' : C.bdr}`, borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
-            {/* Employee header */}
             <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.bdrF}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: C.w }}>{empName(emp)}</span>
@@ -3437,8 +3350,6 @@ function NewHireChecklistTab({ orgId, C }) {
                 )}
               </div>
             </div>
-
-            {/* Checklist items */}
             {hasItems && visibleTemplates.map((t, i) => {
               const item = empItems.find(ci => ci.template_id === t.id)
               const status = item?.status || 'pending'
@@ -3452,7 +3363,6 @@ function NewHireChecklistTab({ orgId, C }) {
                   borderBottom: i < visibleTemplates.length - 1 ? `1px solid ${C.bdrF}` : 'none',
                   background: isOverdue ? 'rgba(192,64,64,0.07)' : 'transparent',
                 }}>
-                  {/* Status toggle button */}
                   <button
                     onClick={() => item ? cycleStatus(item) : null}
                     disabled={!item}
@@ -3710,8 +3620,6 @@ function PayrollOrderModal({ order, orgId, C, employees = [], allResources = [],
             </select>
           </div>
         </div>
-
-        {/* ── Garnishment Calculator (Wage Garnishment only) ── */}
         {form.payment_type === 'Wage Garnishment' && (
           <div style={{ background: `rgba(201,168,76,0.08)`, border: `1px solid ${C.go}`, borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>Garnishment Calculator</div>
@@ -3881,8 +3789,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
   return (
     <div>
       {modalOpen && <PayrollOrderModal order={editing} orgId={orgId} C={C} employees={employees} allResources={allResources} onSave={handleSaved} onClose={() => { setModalOpen(false); setEditing(null) }} />}
-
-      {/* Sub-tab bar */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
         {subPill2('Payment Orders', payrollSubTab === 'orders', () => setPayrollSubTab('orders'))}
         {subPill2('Withholding Processor', payrollSubTab === 'withholding', () => setPayrollSubTab('withholding'))}
@@ -3893,8 +3799,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
       {payrollSubTab === 'checklist' && <NewHireChecklistTab orgId={orgId} C={C} />}
 
       {payrollSubTab === 'orders' && <div>
-
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <div>
           <div style={{ fontSize: 12, color: C.g }}>Garnishments, child support, levies — one place to track what goes where and when.</div>
@@ -3906,8 +3810,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
         </div>
         <button onClick={handleNew} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>+ Add Order</button>
       </div>
-
-      {/* Filters */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16, alignItems: 'center' }}>
         {['active', 'suspended', 'closed', 'all'].map(s => pill(s === 'all' ? 'All Statuses' : s.charAt(0).toUpperCase() + s.slice(1), filterStatus === s, () => setFilterStatus(s)))}
         {allTypes.length > 1 && <>
@@ -3918,8 +3820,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
       </div>
 
       {loading && <p style={{ fontSize: 12, color: C.g }}>Loading…</p>}
-
-      {/* Order rows */}
       {!loading && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {filtered.length === 0 && <p style={{ fontSize: 12, color: C.g }}>No orders match this filter.</p>}
@@ -3937,10 +3837,7 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
                 onMouseOver={e => e.currentTarget.style.borderColor = C.go}
                 onMouseOut={e => e.currentTarget.style.borderColor = C.bdr}
               >
-                {/* Left accent */}
                 <div style={{ width: 4, alignSelf: 'stretch', background: typeColor, borderRadius: 2, flexShrink: 0 }} />
-
-                {/* Main info */}
                 <div style={{ flex: 1, minWidth: 180 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.w }}>{o.employee_name}</span>
@@ -3950,7 +3847,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
                   {o.case_number && <div style={{ fontSize: 11, color: C.g, marginTop: 3 }}>Case: {o.case_number}</div>}
                   {o.destination && <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>→ {o.destination}</div>}
                   {o.notes && <div style={{ fontSize: 10, color: C.g, marginTop: 4, fontStyle: 'italic' }}>{o.notes}</div>}
-                  {/* Garnishment progress */}
                   {o.payment_type === 'Wage Garnishment' && o.withhold_limit_type && o.withhold_limit_type !== 'none' && (() => {
                     const paid = parseInt(o.times_paid) || 0
                     if (o.withhold_limit_type === 'times' && o.withhold_max_times) {
@@ -3976,8 +3872,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
                     return null
                   })()}
                 </div>
-
-                {/* Right: amount + portal */}
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   {o.amount_per_period > 0 && (
                     <div style={{ fontSize: 14, fontWeight: 700, color: C.go }}>${fmt(o.amount_per_period)}</div>
@@ -4011,8 +3905,6 @@ function PayrollPaymentsTab({ orgId, C, employees = [], allResources = [], onOrd
           })}
         </div>
       )}
-
-      {/* Reference links */}
       <div style={{ marginTop: 24, padding: '12px 16px', background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>Quick Reference Links</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -4131,7 +4023,6 @@ function JEHistoryTab({ orgId, C }) {
 
   return (
     <div>
-      {/* Header */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
           <label style={{ fontSize: 10, color: C.g, display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.8px' }}>Filter Year</label>
@@ -4144,8 +4035,6 @@ function JEHistoryTab({ orgId, C }) {
           {filteredJEs.length} entr{filteredJEs.length !== 1 ? 'ies' : 'y'} · {filteredRows.length} lines
         </div>
       </div>
-
-      {/* YTD Banner */}
       <div style={{
         background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10,
         padding: '14px 18px', marginBottom: 20,
@@ -4170,8 +4059,6 @@ function JEHistoryTab({ orgId, C }) {
           <div style={{ fontSize: 18, fontWeight: 700, color: C.go, fontFamily: "'DM Mono', monospace" }}>{filteredJEs.length}</div>
         </div>
       </div>
-
-      {/* JE List — grouped by JE number */}
       <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 10, letterSpacing: '0.5px' }}>POSTED ENTRIES</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {filteredJEs.map(([key, je]) => {
@@ -4187,7 +4074,6 @@ function JEHistoryTab({ orgId, C }) {
             <div key={key} style={{
               background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, overflow: 'hidden',
             }}>
-              {/* Clickable header */}
               <div onClick={() => toggle(key)} style={{
                 display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                 padding: '10px 14px', cursor: 'pointer',
@@ -4206,8 +4092,6 @@ function JEHistoryTab({ orgId, C }) {
                 </span>
                 <span style={{ fontSize: 9, color: C.g }}>{je.period}</span>
               </div>
-
-              {/* Expanded line detail */}
               {isOpen && (
                 <div style={{ padding: '12px 16px' }}>
                   {je.memo && <div style={{ fontSize: 10, color: C.g, marginBottom: 8, fontFamily: "'DM Mono', monospace" }}>Note: {je.memo}</div>}
@@ -4583,14 +4467,11 @@ function CashDashboard({ orgId, C }) {
         {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>{'No data for this date.'}</div>}
 
         {snap && <>
-          {/* Cash */}
           <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
             {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} small />)}
             {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} small />}
           </div>
-
-          {/* CC */}
           {cc.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
@@ -4598,16 +4479,12 @@ function CashDashboard({ orgId, C }) {
               {cc.length > 1 && <SBox label="Total CC" value={fmt(Math.abs(cc.reduce((s,a)=>s+(a.value||0),0)))} color={WARN} warn sub="total owed" small />}
             </div>
           </>}
-
-          {/* LOC */}
           {loc !== null && loc > 0 && <>
             <div style={{ fontSize:9, color:WARN, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
               <SBox label="LOC Balance" value={fmt(loc)} color={WARN} warn sub="amount drawn" small />
             </div>
           </>}
-
-          {/* Loans & Long-term Liabilities */}
           {loans.length > 0 && <>
             <div style={{ fontSize:9, color:NEG, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Loans & Long-term Liabilities'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
@@ -4615,8 +4492,6 @@ function CashDashboard({ orgId, C }) {
               {loans.length > 1 && <SBox label="Total Loans" value={fmt(loans.reduce((s,a)=>s+Math.abs(a.value),0))} color={NEG} small />}
             </div>
           </>}
-
-          {/* AR — Omega uses ar_total, IAZ uses ar_flex + ar_due_omega */}
           {entity === 'omega' && arTotal !== null && arTotal !== 0 && <>
             <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
@@ -4632,16 +4507,12 @@ function CashDashboard({ orgId, C }) {
               {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={POS} small />}
             </div>
           </>}
-
-          {/* AP */}
           {ap.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
               {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}
             </div>
             <AgedTable rows={ap} keyField="vendor" labelField="Vendor" />
           </>}
-
-          {/* Payroll */}
           {snap.payroll_gross > 0 && <>
             <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Last Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 }}>
@@ -4657,7 +4528,6 @@ function CashDashboard({ orgId, C }) {
 
   return (
     <div>
-      {/* Controls row */}
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
         <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
@@ -4665,7 +4535,6 @@ function CashDashboard({ orgId, C }) {
           {snapshots.slice(0,6).map(d => <button key={d} onClick={()=>setSelectedDate(d)} style={{ padding:'3px 8px', borderRadius:4, border:'1px solid '+(selectedDate===d?C.go:C.bdrF), background:selectedDate===d?C.gD:'transparent', color:selectedDate===d?C.go:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{d}</button>)}
         </div>}
         <div style={{ flex:1 }} />
-        {/* Entity toggle */}
         {['both','iaz','omega'].map(e => (
           <button key={e} onClick={()=>setEntityView(e)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(entityView===e?C.go:C.bdrF), background:entityView===e?C.gD:'transparent', color:entityView===e?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
             {e==='both'?'Both':e==='iaz'?'IAZ Only':'Omega Only'}
@@ -4917,7 +4786,6 @@ function CashFlowForecaster({ orgId, C }) {
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
           </div>
-          {/* Scheduled + notes row */}
           <div style={{ display:'flex', gap:6, marginTop:4, marginLeft:44, flexWrap:'wrap' }}>
             <input
               value={(scheduled[b.vendor]||{}).scheduled_amt||''}
@@ -5084,7 +4952,6 @@ function BudgetView({ orgId, C }) {
 
   return (
     <div>
-      {/* Controls */}
       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ display:'flex', gap:4 }}>
           {ENTITIES.map(e => (
@@ -5106,7 +4973,6 @@ function BudgetView({ orgId, C }) {
       {!loading && !plData.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No P&L data. Run cashflow_pl_seed.sql in Supabase first.'}</div>}
 
       {!loading && plData.length > 0 && <>
-        {/* Saved versions */}
         <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12, alignItems:'center' }}>
           <span style={{ fontSize:10, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{'Versions:'}</span>
           {budgets.map(b => (
@@ -5119,8 +4985,6 @@ function BudgetView({ orgId, C }) {
             <button onClick={saveBudget} disabled={saving} style={{ padding:'3px 12px', borderRadius:5, border:'none', background:C.go, color:C.bg, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{saving?'Saving...':'Save'}</button>
           </div>}
         </div>
-
-        {/* Summary table */}
         {!showDetail && <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
             <thead><tr>
@@ -5168,8 +5032,6 @@ function BudgetView({ orgId, C }) {
             </tbody>
           </table>
         </div>}
-
-        {/* Line item detail */}
         {showDetail && <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
             <thead><tr>
@@ -5177,7 +5039,6 @@ function BudgetView({ orgId, C }) {
               {allPeriods.map((p,i) => <th key={i} style={{...thStyle, minWidth:80, color:p.projected?C.am:C.g}}>{p.period_end.slice(5)}{p.projected?' *':''}</th>)}
             </tr></thead>
             <tbody>
-              {/* Income section */}
               <tr><td colSpan={allPeriods.length+1} style={{ padding:'6px 8px', fontSize:9, fontWeight:700, color:C.go, textTransform:'uppercase', letterSpacing:1, background:C.nL }}>{'Income'}</td></tr>
               {incomeLines.map(label => (
                 <tr key={label} style={{ borderBottom:'1px solid '+C.bdr }}>
@@ -5197,12 +5058,10 @@ function BudgetView({ orgId, C }) {
                   })}
                 </tr>
               ))}
-              {/* Total income row */}
               <tr style={{ borderTop:'2px solid '+C.bdr, background:C.nL }}>
                 <td style={{ padding:'5px 8px', fontWeight:700, fontSize:11 }}>{'Total Income'}</td>
                 {allPeriods.map((p,i) => <td key={i} style={{ padding:'5px 8px', fontWeight:700, color:POS, fontSize:11 }}>{fmt(p.income)}</td>)}
               </tr>
-              {/* Expenses section */}
               <tr><td colSpan={allPeriods.length+1} style={{ padding:'6px 8px', fontSize:9, fontWeight:700, color:NEG, textTransform:'uppercase', letterSpacing:1, background:C.nL }}>{'Expenses'}</td></tr>
               {expenseLines.slice(0,40).map(label => (
                 <tr key={label} style={{ borderBottom:'1px solid '+C.bdr }}>
@@ -5222,7 +5081,6 @@ function BudgetView({ orgId, C }) {
                   })}
                 </tr>
               ))}
-              {/* Total expenses + net */}
               <tr style={{ borderTop:'2px solid '+C.bdr, background:C.nL }}>
                 <td style={{ padding:'5px 8px', fontWeight:700, fontSize:11 }}>{'Total Expenses'}</td>
                 {allPeriods.map((p,i) => <td key={i} style={{ padding:'5px 8px', fontWeight:700, color:WARN, fontSize:11 }}>{fmt(p.expenses)}</td>)}
@@ -5517,7 +5375,6 @@ export default function MoneyFlowModule({ orgId, C }) {
 
   return (
     <div style={{ fontFamily: "'Outfit', sans-serif" }}>
-      {/* Modal */}
       {modalOpen && (
         <TaskFormModal
           task={editingTask}
@@ -5529,8 +5386,6 @@ export default function MoneyFlowModule({ orgId, C }) {
           onDelete={handleDeleted}
         />
       )}
-
-      {/* Module header */}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: C.go }}>
@@ -5540,7 +5395,6 @@ export default function MoneyFlowModule({ orgId, C }) {
             Accounting tasks &amp; journal entry generator
           </p>
         </div>
-        {/* Tab switcher */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {pill('◆ Dashboard', tab === 'dashboard', () => setTab('dashboard'))}
           {pill('Cash Flow', tab === 'cashflow', () => setTab('cashflow'))}
@@ -5548,17 +5402,9 @@ export default function MoneyFlowModule({ orgId, C }) {
           {pill('Accounting', tab === 'accounting', () => setTab('accounting'))}
         </div>
       </div>
-
-
-
-      {/* ── DASHBOARD TAB ── */}
       {tab === 'dashboard' && <CashDashboard orgId={orgId} C={C} />}
-
-      {/* ── CASH FLOW TAB ── */}
       {tab === 'cashflow' && <CashFlowForecaster orgId={orgId} C={C} />}
       {tab === 'budget' && <BudgetView orgId={orgId} C={C} />}
-
-      {/* ── ACCOUNTING TAB ── */}
       {tab === 'accounting' && (
         <div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>

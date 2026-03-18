@@ -5004,6 +5004,8 @@ function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSa
     </div>
   )
 }
+
+function BudgetView({ orgId, C }) {
   const POS = C.go
   const NEG = '#B45055'
   const WARN = C.am
@@ -5838,14 +5840,48 @@ function APReconView({ orgId, C, userEmail }) {
                 <button onClick={openNewTask} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>{'+ Add Task'}</button>
               </div>
               {loading && <p style={{ color: C.g, fontSize: 13 }}>{'Loading tasks...'}</p>}
-              {!loading && (
-                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              {!loading && (()=>{
+                const now = new Date()
+                const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - now.getDay()); startOfWeek.setHours(0,0,0,0)
+                const endOfWeek = new Date(startOfWeek); endOfWeek.setDate(startOfWeek.getDate() + 6); endOfWeek.setHours(23,59,59,999)
+
+                const overdue  = filtered.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date+'T12:00:00') < startOfWeek)
+                const thisWeek = filtered.filter(t => { if (t.status === 'done' && !showDone) return false; const d = t.due_date ? new Date(t.due_date+'T12:00:00') : null; return !d || (d >= startOfWeek && d <= endOfWeek) })
+                const later    = filtered.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date+'T12:00:00') > endOfWeek)
+
+                const SectionHead = ({label, count, color}) => (
+                  <div style={{ display:'flex', alignItems:'center', gap:10, margin:'18px 0 10px' }}>
+                    <span style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:color||C.g }}>{label}</span>
+                    <span style={{ fontSize:10, color:color||C.g, fontWeight:600 }}>({count})</span>
+                    <div style={{ flex:1, height:1, background:C.bdr }}/>
+                  </div>
+                )
+
+                return <div>
                   {filtered.length === 0 && <p style={{ color: C.g, fontSize: 13 }}>{'No tasks match this filter.'}</p>}
-                  {filtered.map(task => (
-                    <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} allResources={allResources} />
-                  ))}
+
+                  {overdue.length > 0 && <>
+                    <SectionHead label="Overdue" count={overdue.length} color={C.rd||'#B45055'} />
+                    <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+                      {overdue.map(task => <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} allResources={allResources} />)}
+                    </div>
+                  </>}
+
+                  {thisWeek.length > 0 && <>
+                    <SectionHead label="This Week" count={thisWeek.length} color={C.go} />
+                    <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+                      {thisWeek.map(task => <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} allResources={allResources} />)}
+                    </div>
+                  </>}
+
+                  {later.length > 0 && <>
+                    <SectionHead label="Coming Up" count={later.length} color={C.g} />
+                    <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+                      {later.map(task => <TaskCard key={task.id} task={task} C={C} onToggleDone={toggleDone} onEdit={openEditTask} allResources={allResources} />)}
+                    </div>
+                  </>}
                 </div>
-              )}
+              })()}
             </div>
           )}
           {jeSubTab === 'tasklog' && <TaskLogView orgId={orgId} C={C} />}

@@ -4835,6 +4835,11 @@ function CashFlowForecaster({ orgId, C }) {
       if (!parsed.length) { sh('No vendors found in file'); return }
       // Save to Supabase — use today as snapshot date
       const snapDate = new Date().toISOString().split('T')[0]
+      // Archive existing before replacing
+      const { data: existing } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
+      if (existing && existing.length) {
+        await supabase.from('cashflow_ap_history').insert(existing.map(r => ({ ...r, archived_at: new Date().toISOString() })))
+      }
       await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
       await supabase.from('cashflow_ap').insert(parsed.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
       const rows = parsed.map((r, i) => ({ ...r, payAmt: '', marked: false, priority: i }))
@@ -5319,6 +5324,7 @@ export default function MoneyFlowModule({ orgId, C }) {
   const [error, setError] = useState(null)
   const [filterEntity, setFilterEntity] = useState('all')
   const [filterType, setFilterType] = useState('all')
+  const [showDone, setShowDone] = useState(false)
   const [allResources, setAllResources] = useState([])
   const [userEmail, setUserEmail] = useState('')
   const [employees, setEmployees] = useState([])
@@ -5483,6 +5489,7 @@ export default function MoneyFlowModule({ orgId, C }) {
   }
 
   const filtered = tasks.filter(t => {
+    if (!showDone && t.status === 'done') return false
     if (filterEntity !== 'all' && t.entity !== filterEntity) return false
     if (filterType !== 'all' && t.type !== filterType) return false
     return true
@@ -5580,6 +5587,7 @@ export default function MoneyFlowModule({ orgId, C }) {
                   () => setFilterType(t)
                 ))}
                 <span style={{ flex: 1 }} />
+                <button onClick={()=>setShowDone(p=>!p)} style={{ padding:'4px 10px', borderRadius:5, border:'1px solid '+(showDone?C.go:C.bdrF), background:showDone?C.gD:'transparent', color:showDone?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showDone?'Hide Done':'Show Done'}</button>
                 <button onClick={openNewTask} style={{ background: C.go, border: 'none', color: '#fff', padding: '6px 16px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>{'+ Add Task'}</button>
               </div>
               {loading && <p style={{ color: C.g, fontSize: 13 }}>{'Loading tasks...'}</p>}

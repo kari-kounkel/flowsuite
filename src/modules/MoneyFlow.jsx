@@ -4309,13 +4309,13 @@ function CashDashboard({ orgId, C }) {
   const parseDateFromHeader = (text) => {
     const lines = text.split('\n').slice(0, 5).join(' ')
     // "As of March 17, 2026" pattern
-    const asOf = lines.match(/As of ([A-Za-z]+ \d{1,2},? \d{4})/i)
+    const asOfRe = new RegExp('As of ([A-Za-z]+ \\d{1,2},? \\d{4})', 'i'); const asOf = lines.match(asOfRe)
     if (asOf) {
       const d = new Date(asOf[1])
       if (!isNaN(d)) return d.toISOString().split('T')[0]
     }
     // "January 1, 2025-March 17, 2026" — use end date
-    const range = lines.match(/[A-Za-z]+ \d{1,2},? \d{4}[-–]([A-Za-z]+ \d{1,2},? \d{4})/)
+    const rangeRe = new RegExp('[A-Za-z]+ \\d{1,2},? \\d{4}[-]([A-Za-z]+ \\d{1,2},? \\d{4})'); const range = lines.match(rangeRe)
     if (range) {
       const d = new Date(range[1])
       if (!isNaN(d)) return d.toISOString().split('T')[0]
@@ -4386,7 +4386,7 @@ function CashDashboard({ orgId, C }) {
     // Find last period row — date range pattern
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      if (/d{4}-d{2}-d{2}/.test(parts[0]) || /d{1,2}/d{1,2}/d{4}/.test(parts[0])) {
+      const dateRe1 = new RegExp('\\d{4}-\\d{2}-\\d{2}'); const dateRe2 = new RegExp('\\d{1,2}/\\d{1,2}/\\d{4}'); if (dateRe1.test(parts[0]) || dateRe2.test(parts[0])) {
         const g = pv(parts[3]) || pv(parts[2])
         if (g > gross) { gross = g; taxes = Math.abs(pv(parts[7]||parts[6]||'0')); period = parts[0] }
       }

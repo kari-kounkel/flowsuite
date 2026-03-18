@@ -631,7 +631,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     />}
 
     {/* ONBOARDING */}
-    {view==='onboard'&&<OnbView ac={ac} onb={onb} toggleOnb={toggleOnb} C={C}/>}
+    {view==='onboard'&&<OnbView ac={ac} onb={onb} docs={docs} toggleOnb={toggleOnb} toggleDoc={toggleDoc} C={C}/>}
 
     {/* UNION */}
     {view==='union'&&<UnionView ac={emps.filter(e=>e.status!=='terminated'&&e.status!=='inactive'&&e.status!=='Terminated'&&e.status!=='Inactive')} C={C}/>}
@@ -676,7 +676,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
     }
   }
 
-  const filtered=visibleEmps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase()))
+  const filtered=visibleEmps.filter(e=>gn(e).toLowerCase().includes(filter.toLowerCase())).sort((a,b)=>(a.last_name||'').localeCompare(b.last_name||''))
   const activeVisible = filtered.filter(e=>e.status!=='Terminated'&&e.status!=='Inactive'&&e.status!=='terminated'&&e.status!=='inactive')
 
   const readOnlyFields = [
@@ -2207,16 +2207,141 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
   </div>)
 }
 
-function OnbView({ac,onb,toggleOnb,C}){
-  const recent=ac.filter(e=>dbt(e.hire_date||td,td)<=180&&e.union_status!=='Non-Union'&&e.union_status!=='1099').sort((a,b)=>new Date(b.hire_date)-new Date(a.hire_date))
-  const phs=[...new Set(OBS.map(s=>s.p))]
-  return(<div><h2 style={{fontSize:18,marginTop:0}}>Onboarding</h2>
-    {recent.length===0?<Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>No recent hires.</Card>:
-      recent.map(e=>{const ed=onb[e.id]||{};const dn=OBS.filter(s=>ed[s.id]).length;const pc=Math.round(dn/OBS.length*100);return<Card key={e.id} C={C} style={{marginBottom:10}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div><h3 style={{margin:0,fontSize:14}}>{gn(e)}</h3><div style={{fontSize:11,color:C.g}}>{fm(e.hire_date)} • Day {dbt(e.hire_date||td,td)}</div></div><div style={{fontSize:18,fontWeight:700,color:pc===100?C.gr:C.go}}>{pc}%</div></div>
-        <div style={{height:3,background:C.nL,borderRadius:99,marginBottom:8,overflow:'hidden'}}><div style={{height:'100%',width:pc+'%',background:pc===100?C.gr:C.go,borderRadius:99}}/></div>
-        {phs.map(ph=><div key={ph} style={{marginBottom:6}}><div style={{fontSize:9,color:C.go,textTransform:'uppercase',marginBottom:2}}>{ph}</div>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:2}}>{OBS.filter(s=>s.p===ph).map(s=><label key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',fontSize:10,textDecoration:ed[s.id]?'line-through':'none',color:ed[s.id]?C.g:C.w}}>{ed[s.id]?'✓':'○'} {s.l}</label>)}</div></div>)}</Card>})}</div>)
+function OnbView({ac,onb,docs,toggleOnb,toggleDoc,C}){
+  const [expanded, setExpanded] = useState(null)
+  const recent = ac.filter(e=>{ const ed=onb[e.id]||{}; const dd=docs[e.id]||{}; const onbDone=OBS.filter(s=>ed[s.id]).length; const docDone=DOC_ITEMS.filter(d=>dd[d.id]).length; return onbDone<OBS.length || docDone<DOC_ITEMS.length }).sort((a,b)=>(a.last_name||a.first_name||'').localeCompare(b.last_name||b.first_name||''))
+  const phs = [...new Set(OBS.map(s=>s.p))]
+  const docCats = [...new Set(DOC_ITEMS.map(d=>d.c))]
+
+  const dateGap = (d1, d2) => {
+    if (!d1 || !d2) return null
+    const diff = Math.round((new Date(d2) - new Date(d1)) / (1000*60*60*24))
+    return diff
+  }
+
+  const fmDate = (d) => {
+    if (!d) return '—'
+    return new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+  }
+
+  return(<div>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+      <h2 style={{margin:0,fontSize:18}}>{'Onboarding'}</h2>
+      <div style={{fontSize:11,color:C.g}}>{recent.length+' employees'}</div>
+    </div>
+    {recent.length===0
+      ? <Card C={C} style={{padding:30,textAlign:'center',color:C.g}}>{'All employees are fully onboarded. Nothing to do here.'}</Card>
+      : recent.map(e=>{
+          const ed = onb[e.id]||{}
+          const dd = docs[e.id]||{}
+          const onbDone = OBS.filter(s=>ed[s.id]).length
+          const onbPct = Math.round(onbDone/OBS.length*100)
+          const docDone = DOC_ITEMS.filter(d=>dd[d.id]).length
+          const docPct = Math.round(docDone/DOC_ITEMS.length*100)
+          const isOpen = expanded===e.id
+          const probDay = dbt(e.hire_date||td,td)
+          const offerToHire = dateGap(e.offer_date, e.hire_date)
+          const hireToStart = dateGap(e.hire_date, e.start_date)
+          const startToSeniority = dateGap(e.start_date, e.seniority_date)
+          const onbColor = onbPct===100?C.gr:onbPct>=50?C.am:C.rd
+          const docColor = docPct===100?C.gr:docPct>=50?C.am:C.rd
+
+          return <Card key={e.id} C={C} style={{marginBottom:10,padding:0,overflow:'hidden'}}>
+            {/* ── Header ── */}
+            <div onClick={()=>setExpanded(isOpen?null:e.id)} style={{padding:'12px 16px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:2}}>{gn(e)}</div>
+                <div style={{fontSize:10,color:C.g}}>{e.role||'—'}{' · '}{e.dept||'—'}{e.hire_date ? ' · Day '+probDay+' of 90' : ''}</div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:12,flexShrink:0,marginLeft:12}}>
+                <div style={{textAlign:'center'}}>
+                  <div style={{fontSize:13,fontWeight:700,color:onbColor}}>{onbPct+'%'}</div>
+                  <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{'Steps'}</div>
+                </div>
+                <div style={{textAlign:'center'}}>
+                  <div style={{fontSize:13,fontWeight:700,color:docColor}}>{docPct+'%'}</div>
+                  <div style={{fontSize:8,color:C.g,textTransform:'uppercase'}}>{'Docs'}</div>
+                </div>
+                <span style={{fontSize:10,color:C.g}}>{isOpen?'▲':'▼'}</span>
+              </div>
+            </div>
+
+            {/* ── Progress bars ── */}
+            <div style={{padding:'0 16px 10px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div>
+                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Onboarding Steps'}</div>
+                <div style={{height:3,borderRadius:99,background:C.bdr}}>
+                  <div style={{height:'100%',borderRadius:99,background:onbColor,width:onbPct+'%'}}/>
+                </div>
+              </div>
+              <div>
+                <div style={{fontSize:9,color:C.g,marginBottom:2}}>{'Documents'}</div>
+                <div style={{height:3,borderRadius:99,background:C.bdr}}>
+                  <div style={{height:'100%',borderRadius:99,background:docColor,width:docPct+'%'}}/>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Date Timeline ── */}
+            <div style={{padding:'8px 16px',background:C.nL,borderTop:'1px solid '+C.bdr,borderBottom:'1px solid '+C.bdr}}>
+              <div style={{display:'flex',gap:0,alignItems:'center',flexWrap:'wrap'}}>
+                {[
+                  {label:'Offer',date:e.offer_date},
+                  {label:'Hire',date:e.hire_date,gap:offerToHire},
+                  {label:'Start',date:e.start_date,gap:hireToStart},
+                  {label:'Seniority',date:e.seniority_date,gap:startToSeniority}
+                ].map((item,i)=>(
+                  <div key={item.label} style={{display:'flex',alignItems:'center'}}>
+                    {i>0 && <div style={{fontSize:9,color:C.g,padding:'0 6px',whiteSpace:'nowrap'}}>
+                      {item.gap!==null ? item.gap+'d →' : '→'}
+                    </div>}
+                    <div style={{textAlign:'center'}}>
+                      <div style={{fontSize:9,color:C.go,textTransform:'uppercase',fontWeight:700}}>{item.label}</div>
+                      <div style={{fontSize:10,color:item.date?C.w:C.g,fontWeight:item.date?500:400}}>{fmDate(item.date)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Expanded: Steps + Docs ── */}
+            {isOpen && <div style={{padding:'12px 16px'}}>
+              {/* Onboarding Steps */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{'Onboarding Steps'}</div>
+                {phs.map(ph=><div key={ph} style={{marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{ph}</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:3}}>
+                    {OBS.filter(s=>s.p===ph).map(s=>(
+                      <div key={s.id} onClick={()=>toggleOnb(e.id,s.id,ed[s.id])} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 8px',background:ed[s.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',border:'1px solid '+(ed[s.id]?C.gr:C.bdr)}}>
+                        <span style={{fontSize:11,color:ed[s.id]?C.gr:C.g,flexShrink:0}}>{ed[s.id]?'✓':'○'}</span>
+                        <span style={{fontSize:10,color:ed[s.id]?C.g:C.w,textDecoration:ed[s.id]?'line-through':'none'}}>{s.l}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>)}
+              </div>
+
+              {/* Documents */}
+              <div style={{borderTop:'1px solid '+C.bdr,paddingTop:12}}>
+                <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>{'Documents'}</div>
+                {docCats.map(cat=><div key={cat} style={{marginBottom:8}}>
+                  <div style={{fontSize:9,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:4}}>{cat}</div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:3}}>
+                    {DOC_ITEMS.filter(d=>d.c===cat).map(d=>(
+                      <div key={d.id} onClick={()=>toggleDoc(e.id,d.id,dd[d.id])} style={{display:'flex',alignItems:'center',gap:6,padding:'5px 8px',background:dd[d.id]?C.grD:C.nL,borderRadius:5,cursor:'pointer',border:'1px solid '+(dd[d.id]?C.gr:C.bdr)}}>
+                        <span style={{fontSize:11,color:dd[d.id]?C.gr:C.g,flexShrink:0}}>{dd[d.id]?'✓':'○'}</span>
+                        <span style={{fontSize:10,color:dd[d.id]?C.g:C.w,textDecoration:dd[d.id]?'line-through':'none'}}>{d.l}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>)}
+              </div>
+            </div>}
+          </Card>
+        })
+    }
+  </div>)
 }
 
 function DocsView({ac,docs,toggleDoc,C}){

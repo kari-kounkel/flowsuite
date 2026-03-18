@@ -4260,6 +4260,7 @@ function CashDashboard({ orgId, C }) {
   const [omegaData, setOmegaData] = useState(null)
   const [iazAP, setIazAP] = useState([])
   const [omegaAR, setOmegaAR] = useState([])
+  const [entityView, setEntityView] = useState('both')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(null)
   const [toast, setToast] = useState('')
@@ -4501,107 +4502,104 @@ function CashDashboard({ orgId, C }) {
     </div>
   )
 
+  const AgedTable = ({ rows, keyField, labelField }) => (
+    <div style={{ marginBottom:14, maxHeight:280, overflowY:'auto' }}>
+      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+        <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
+          {[labelField,'Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2 }}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {rows.filter(r=>r.total!==0).map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
+            <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{r[keyField]}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.current_amt?C.gr:C.g }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?C.am:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?C.am:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?C.rd:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?C.rd:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:r.total<0?C.gr:C.w }}>{fmt(r.total)}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
+  )
+
   const EntityCol = ({ title, snap, ap, ar, entity }) => {
     const cash = snap ? (snap.cash_accounts || []) : []
     const cc = snap ? (snap.cc_accounts || []) : []
     const loc = snap ? snap.loc_balance : null
     const arTotal = snap ? snap.ar_total : null
+    const arFlex = snap ? snap.ar_flex : null
+    const arDueOmega = snap ? snap.ar_due_omega : null
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'balance', label:'Balance Sheet' }, { type:'ap', label:'AP Aging' }, { type:'payroll', label:'Payroll' }]
-      : [{ type:'balance', label:'Balance Sheet' }, { type:'ar', label:'AR Aging' }]
+      ? [{ type:'balance', label:'Balance Sheet' }, { type:'ap', label:'AP Aging' }, { type:'payroll', label:'Payroll' }, { type:'pl', label:'P&L' }]
+      : [{ type:'balance', label:'Balance Sheet' }, { type:'ar', label:'AR Aging' }, { type:'pl', label:'P&L' }]
 
     return (
       <div style={{ flex:1, minWidth:0 }}>
-        {/* Entity header */}
-        <div style={{ fontWeight:700, fontSize:15, color:C.go, marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div style={{ fontWeight:700, fontSize:15, color:C.go, marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:6 }}>
           <span>{title}</span>
           <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
             {uploadDefs.map(u => <UpBtn key={u.type} entity={entity} type={u.type} label={u.label} />)}
           </div>
         </div>
 
-        {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>No data for this date. Upload a Balance Sheet to get started.</div>}
+        {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>{'No data for this date.'}</div>}
 
         {snap && <>
           {/* Cash */}
-          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Cash</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
+          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
             {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={a.value>=0?C.gr:C.rd} warn={a.value<0} small />)}
             {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={totalCash>=0?C.go:C.rd} warn={totalCash<0} small />}
           </div>
 
           {/* CC */}
           {cc.length > 0 && <>
-            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Credit Cards</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
+            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
               {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={C.rd} warn sub="owed" small />)}
+              {cc.length > 1 && <SBox label="Total CC" value={fmt(Math.abs(cc.reduce((s,a)=>s+(a.value||0),0)))} color={C.rd} warn sub="total owed" small />}
             </div>
           </>}
 
-          {/* LOC */}
-          {loc !== null && loc !== 0 && <>
-            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Line of Credit</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom:14 }}>
-              <SBox label="US Bank LOC" value={fmt(Math.abs(loc))} color={loc>0?C.am:C.gr} sub={loc>0?'drawn':'credit balance'} small />
+          {/* LOC — only show if drawn (positive = amount owed) */}
+          {loc !== null && loc > 0 && <>
+            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+              <SBox label="LOC Balance" value={fmt(loc)} color={C.am} warn sub="amount drawn" small />
             </div>
           </>}
 
-          {/* AR */}
-          {(arTotal !== null && arTotal !== 0) && <>
-            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Accounts Receivable</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:8, marginBottom: ar.length?6:14 }}>
+          {/* AR — Omega uses ar_total, IAZ uses ar_flex + ar_due_omega */}
+          {entity === 'omega' && arTotal !== null && arTotal !== 0 && <>
+            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
               <SBox label="Total AR" value={fmt(arTotal)} color={C.am} small />
             </div>
-            {ar.length > 0 && <div style={{ marginBottom:14 }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-                <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
-                  {['Customer','Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
-                </tr></thead>
-                <tbody>
-                  {ar.map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
-                    <td style={{ padding:'4px 6px', fontWeight:600, fontSize:11 }}>{r.customer}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:C.gr }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?C.am:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?C.am:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?C.rd:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?C.rd:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700 }}>{fmt(r.total)}</td>
-                  </tr>)}
-                </tbody>
-              </table>
-            </div>}
+            {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
+          </>}
+
+          {entity === 'iaz' && <>
+            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Receivables'}</div>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+              {arFlex !== null && arFlex !== 0 && <SBox label="Receivables from FLEX" value={fmt(arFlex)} color={arFlex>=0?C.am:C.rd} warn={arFlex<0} sub={arFlex<0?'owes Omega':'due from FLEX'} small />}
+              {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={C.am} small />}
+            </div>
           </>}
 
           {/* AP */}
           {ap.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
-              {'Accounts Payable (' + ap.length + ' vendors)'}
+              {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}
             </div>
-            <div style={{ marginBottom:14, maxHeight:300, overflowY:'auto' }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-                <thead><tr style={{ borderBottom:'1px solid '+C.bdr, position:'sticky', top:0, background:C.bg2 }}>
-                  {['Vendor','Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
-                </tr></thead>
-                <tbody>
-                  {ap.filter(v=>v.total!==0).map((v,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
-                    <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{v.vendor}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:v.current_amt?C.gr:C.g }}>{v.current_amt?fmt(v.current_amt):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d30?C.am:C.g }}>{v.d30?fmt(v.d30):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d60?C.am:C.g }}>{v.d60?fmt(v.d60):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:v.d90?C.rd:C.g }}>{v.d90?fmt(v.d90):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:11, color:v.over90?C.rd:C.g }}>{v.over90?fmt(v.over90):'—'}</td>
-                    <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:v.total<0?C.gr:C.w }}>{fmt(v.total)}</td>
-                  </tr>)}
-                </tbody>
-              </table>
-            </div>
+            <AgedTable rows={ap} keyField="vendor" labelField="Vendor" />
           </>}
 
           {/* Payroll */}
           {snap.payroll_gross > 0 && <>
-            <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>Last Payroll{snap.payroll_period?' — '+snap.payroll_period:''}</div>
+            <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Last Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 }}>
               <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
               <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={C.am} small />
@@ -4615,23 +4613,29 @@ function CashDashboard({ orgId, C }) {
 
   return (
     <div>
-      {/* Date selector */}
-      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, flexWrap:'wrap' }}>
+      {/* Controls row */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
         <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
         {snapshots.length > 0 && <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
           {snapshots.slice(0,6).map(d => <button key={d} onClick={()=>setSelectedDate(d)} style={{ padding:'3px 8px', borderRadius:4, border:'1px solid '+(selectedDate===d?C.go:C.bdrF), background:selectedDate===d?C.gD:'transparent', color:selectedDate===d?C.go:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{d}</button>)}
         </div>}
-        <div style={{ fontSize:10, color:C.g }}>{'Shows most recent data on or before selected date.'}</div>
+        <div style={{ flex:1 }} />
+        {/* Entity toggle */}
+        {['both','iaz','omega'].map(e => (
+          <button key={e} onClick={()=>setEntityView(e)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(entityView===e?C.go:C.bdrF), background:entityView===e?C.gD:'transparent', color:entityView===e?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+            {e==='both'?'Both':e==='iaz'?'IAZ Only':'Omega Only'}
+          </button>
+        ))}
       </div>
 
-      {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>Loading...</div>}
+      {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'Loading...'}</div>}
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={[]} entity="iaz" />
-          <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />
-          <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={[]} entity="iaz" />}
+          {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
+          {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
         </div>
       )}
 

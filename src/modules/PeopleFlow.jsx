@@ -505,7 +505,7 @@ export default function PeopleFlowModule({ orgId, C }) {
         const allowed = canAccessTab(t.k)
         return <button key={t.k} onClick={()=>{if(allowed)go(t.k)}} style={{
           background:view===t.k&&allowed?C.gD:'transparent',
-          border:'1px solid '+view===t.k&&allowed?C.go:C.bdrF,
+          border:'1px solid '+(view===t.k&&allowed?C.go:C.bdrF),
           color:view===t.k&&allowed?C.go:allowed?C.g:'rgba(128,128,128,0.3)',
           padding:'4px 8px',borderRadius:6,
           cursor:allowed?'pointer':'not-allowed',
@@ -734,7 +734,7 @@ function OfferLetterModal({emp, onClose, C}) {
     pay_rate: emp.rate || '',
     offer_date: emp.offer_date || today,
     start_date: emp.start_date || '',
-    body: 'We are pleased to extend this offer of employment for the position of {role} in the {dept} department.\\n\\nYour starting pay rate will be '+'{pay_rate+''} per hour.\\n\\nYour anticipated start date is {start_date}.\\n\\nThis offer is contingent upon successful completion of a background check and any other pre-employment requirements.\\n\\nPlease sign and return this letter to confirm your acceptance. This is an at-will employment offer.'
+    body: 'We are pleased to extend this offer of employment for the position of {role} in the {dept} department.\n\nYour starting pay rate will be {pay_rate} per hour.\n\nYour anticipated start date is {start_date}.\n\nThis offer is contingent upon successful completion of a background check and any other pre-employment requirements.\n\nPlease sign and return this letter to confirm your acceptance. This is an at-will employment offer.'
   })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
@@ -1033,7 +1033,7 @@ function WorkplaceView({disc,setDisc,saveDisc,reports,saveReport,setReports,sepa
         if (!t.show) return null
         return <button key={t.k} onClick={()=>setSubTab(t.k)} style={{
           background:subTab===t.k?C.gD:'transparent',
-          border:'1px solid '+subTab===t.k?C.go:C.bdrF,
+          border:'1px solid '+(subTab===t.k?C.go:C.bdrF),
           color:subTab===t.k?C.go:C.g,
           padding:'6px 14px',borderRadius:6,cursor:'pointer',fontSize:11,fontWeight:500,fontFamily:'inherit'
         }}>{t.i} {t.l}</button>
@@ -1176,7 +1176,7 @@ function ReportModal({onSave,onClose,C,emps,userEmail,userEmpRecord,allEmps}){
           <button key={t.v} onClick={()=>setF(p=>({...p,report_type:t.v}))} style={{
             padding:'6px 12px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',
             background:f.report_type===t.v?t.c+'22':'transparent',
-            border:'1px solid '+f.report_type===t.v?t.c:C.bdr,
+            border:'1px solid '+(f.report_type===t.v?t.c:C.bdr),
             color:f.report_type===t.v?t.c:C.g
           }}>{t.i} {t.l}</button>
         )}
@@ -1258,7 +1258,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
             {isProgressive && <span style={{
               display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
               background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
-              color:active?'#22C55E':'#6B7280',border:'1px solid '+active?'#22C55E':'#6B7280'
+              color:active?'#22C55E':'#6B7280',border:'1px solid '+(active?'#22C55E':'#6B7280')
             }}>{active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
@@ -1378,7 +1378,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
         {INCIDENT_NATURES.map(n=>(<button key={n} onClick={()=>toggleNature(n)} style={{
           padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
-          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:'1px solid '+selNatures.includes(n)?'#DC2626':C.bdr,color:selNatures.includes(n)?'#DC2626':C.g
+          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:'1px solid '+(selNatures.includes(n)?'#DC2626':C.bdr),color:selNatures.includes(n)?'#DC2626':C.g
         }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>))}
       </div>
 
@@ -1432,7 +1432,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
           {key:'employer',label:'Employer Signature',name:f.employer_signature,ts:f.sup_sig_date,clear:()=>{up('employer_signature','');up('sup_sig_date','')}},
           {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,clear:()=>{up('witness_name','');up('witness_sig_date','')}}
         ].map((s,i)=>(
-          <div key={i} style={{border:'1px solid '+s.name?'#22C55E':C.bdr,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+          <div key={i} style={{border:'1px solid '+(s.name?'#22C55E':C.bdr),borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div>
                 <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
@@ -1664,7 +1664,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           <button key={n} onClick={()=>toggleNature(n)} style={{
             padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
             background:selNatures.includes(n)?'#FEE2E2':'transparent',
-            border:'1px solid '+selNatures.includes(n)?'#DC2626':C.bdr,
+            border:'1px solid '+(selNatures.includes(n)?'#DC2626':C.bdr),
             color:selNatures.includes(n)?'#DC2626':C.g
           }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>
         ))}
@@ -1791,7 +1791,7 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,
             clear:()=>{up('witness_name','');up('witness_sig_date','')}}
         ].map((s,i)=>(
-          <div key={i} style={{border:'1px solid '+s.name?'#22C55E':C.bdr,borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+          <div key={i} style={{border:'1px solid '+(s.name?'#22C55E':C.bdr),borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
               <div>
                 <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
@@ -1995,7 +1995,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
           <button key={t.v} onClick={()=>up('separation_type',t.v)} style={{
             padding:'6px 12px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',
             background:f.separation_type===t.v?t.c+'22':'transparent',
-            border:'1px solid '+f.separation_type===t.v?t.c:C.bdr,
+            border:'1px solid '+(f.separation_type===t.v?t.c:C.bdr),
             color:f.separation_type===t.v?t.c:C.g
           }}>{t.l}</button>
         )}
@@ -2077,7 +2077,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
           <button key={item.id} onClick={()=>toggleEquip(item.id)} style={{
             padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
             background:equipChecked.includes(item.id)?'rgba(34,197,94,0.1)':'transparent',
-            border:'1px solid '+equipChecked.includes(item.id)?'#22C55E':C.bdr,
+            border:'1px solid '+(equipChecked.includes(item.id)?'#22C55E':C.bdr),
             color:equipChecked.includes(item.id)?'#22C55E':C.g
           }}>{equipChecked.includes(item.id)?'✓':'○'} {item.l}</button>
         ))}

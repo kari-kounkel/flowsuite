@@ -707,7 +707,7 @@ function TeamView({emps,ac,sel,setSel,mod,setMod,saveEmp,C,isAdmin,isManager,isH
     </div>
 
     {visibleEmps.length === 0 && !isAdmin && <Card C={C} style={{padding:20,textAlign:'center',color:C.g}}>
-      <div style={{fontSize:13,marginBottom:4}}>{'Your account isn't linked to an employee record yet.'}</div>
+      <div style={{fontSize:13,marginBottom:4}}>{'Your account is not linked to an employee record yet.'}</div>
       <div style={{fontSize:11}}>{'Ask HR to make sure your login email matches your employee record.'}</div>
     </Card>}
 

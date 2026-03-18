@@ -4512,10 +4512,10 @@ function CashDashboard({ orgId, C }) {
           {rows.filter(r=>r.total!==0).map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
             <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{r[keyField]}</td>
             <td style={{ padding:'4px 6px', fontSize:11, color:r.current_amt?C.gr:C.g }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?C.am:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?C.am:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?C.rd:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?C.rd:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?WARN:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?WARN:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?NEG:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
+            <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?NEG:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
             <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:r.total<0?C.gr:C.w }}>{fmt(r.total)}</td>
           </tr>)}
         </tbody>
@@ -4551,16 +4551,16 @@ function CashDashboard({ orgId, C }) {
           {/* Cash */}
           <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={a.value>=0?C.gr:C.rd} warn={a.value<0} small />)}
-            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={totalCash>=0?C.go:C.rd} warn={totalCash<0} small />}
+            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} small />)}
+            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} small />}
           </div>
 
           {/* CC */}
           {cc.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={C.rd} warn sub="owed" small />)}
-              {cc.length > 1 && <SBox label="Total CC" value={fmt(Math.abs(cc.reduce((s,a)=>s+(a.value||0),0)))} color={C.rd} warn sub="total owed" small />}
+              {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
+              {cc.length > 1 && <SBox label="Total CC" value={fmt(Math.abs(cc.reduce((s,a)=>s+(a.value||0),0)))} color={WARN} warn sub="total owed" small />}
             </div>
           </>}
 
@@ -4568,7 +4568,7 @@ function CashDashboard({ orgId, C }) {
           {loc !== null && loc > 0 && <>
             <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              <SBox label="LOC Balance" value={fmt(loc)} color={C.am} warn sub="amount drawn" small />
+              <SBox label="LOC Balance" value={fmt(loc)} color={WARN} warn sub="amount drawn" small />
             </div>
           </>}
 
@@ -4576,7 +4576,7 @@ function CashDashboard({ orgId, C }) {
           {entity === 'omega' && arTotal !== null && arTotal !== 0 && <>
             <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
-              <SBox label="Total AR" value={fmt(arTotal)} color={C.am} small />
+              <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
             </div>
             {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
           </>}
@@ -4584,8 +4584,8 @@ function CashDashboard({ orgId, C }) {
           {entity === 'iaz' && <>
             <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Receivables'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              {arFlex !== null && arFlex !== 0 && <SBox label="Receivables from FLEX" value={fmt(arFlex)} color={arFlex>=0?C.am:C.rd} warn={arFlex<0} sub={arFlex<0?'owes Omega':'due from FLEX'} small />}
-              {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={C.am} small />}
+              {arFlex !== null && arFlex !== 0 && <SBox label="Receivables from FLEX" value={fmt(arFlex)} color={mColor(arFlex)} warn={arFlex<0} sub={arFlex<0?'owes Omega':'due from FLEX'} small />}
+              {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={POS} small />}
             </div>
           </>}
 
@@ -4602,8 +4602,8 @@ function CashDashboard({ orgId, C }) {
             <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Last Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 }}>
               <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
-              <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={C.am} small />
-              <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={C.gr} small />
+              <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
+              <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
             </div>
           </>}
         </>}
@@ -4745,7 +4745,7 @@ function CashFlowForecaster({ orgId, C }) {
       {!loading && bills.length > 0 && <>
         <div style={{ display:'flex', gap:24, marginBottom:12, flexWrap:'wrap' }}>
           <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:C.rd }}>{fmt(totalOwed)}</span></div>
-          <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:C.gr }}>{fmt(markedTotal)}</span></div>
+          <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
           <div style={{ fontSize:12, color:C.g }}>{'Remaining: '}<span style={{ fontWeight:700, color:C.am }}>{fmt(totalOwed - markedTotal)}</span></div>
         </div>
         <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Use arrows to prioritize. Check to mark for payment. Enter partial amount to pay less than full balance.'}</div>
@@ -4792,12 +4792,18 @@ function BudgetView({ orgId, C }) {
   const [loading, setLoading] = useState(true)
   const [basePeriods, setBasePeriods] = useState(8)
   const [projPeriods, setProjPeriods] = useState(12)
-  const [editingRow, setEditingRow] = useState(null)
+  const [editingCell, setEditingCell] = useState(null) // {date, field}
   const [editVals, setEditVals] = useState({})
   const [versionName, setVersionName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [showDetail, setShowDetail] = useState(false)
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+
+  const POS = C.go
+  const NEG = '#B45055'
+  const WARN = C.am
+  const mColor = (n) => Number(n) >= 0 ? POS : NEG
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
@@ -4816,27 +4822,43 @@ function BudgetView({ orgId, C }) {
     })
   }, [orgId, entity])
 
-  const fmt = n => {
-    if (n == null) return '—'
+  const fmt = (n, decimals) => {
+    if (n == null || n === 0) return '—'
     const abs = Math.abs(Number(n))
-    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+    const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: decimals||0, maximumFractionDigits: decimals||0 })
     return Number(n) < 0 ? '(' + str + ')' : str
   }
-
   const fmtVar = n => {
-    if (n == null) return '—'
+    if (!n) return '—'
     const abs = Math.abs(Number(n))
     const str = '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-    const sign = Number(n) >= 0 ? '+' : '-'
-    return sign + str
+    return (Number(n) >= 0 ? '+' : '-') + str
   }
 
-  // Build projection periods from P&L history
+  // Get all unique line item labels across all periods
+  const allLineItems = {}
+  plData.forEach(p => {
+    (p.line_items || []).forEach(li => {
+      if (!allLineItems[li.label]) allLineItems[li.label] = li.section
+    })
+  })
+
+  // Build averages per line item
+  const lineAvgs = {}
+  Object.keys(allLineItems).forEach(label => {
+    const vals = plData.slice(-basePeriods).map(p => {
+      const li = (p.line_items || []).find(l => l.label === label)
+      return li ? li.value : 0
+    }).filter(v => v !== 0)
+    lineAvgs[label] = vals.length ? vals.reduce((s,v) => s+v, 0) / vals.length : 0
+  })
+
+  // Build projection periods
   const buildProjection = () => {
     if (!plData.length) return []
     const recent = plData.slice(-basePeriods)
-    const avgIncome = recent.reduce((s,p) => s + (p.income||0), 0) / recent.length
-    const avgExpenses = recent.reduce((s,p) => s + (p.expenses||0), 0) / recent.length
+    const avgIncome = recent.reduce((s,p) => s+(p.income||0), 0) / recent.length
+    const avgExpenses = recent.reduce((s,p) => s+(p.expenses||0), 0) / recent.length
     const isWeekly = entity === 'iaz'
     const lastDate = new Date(recent[recent.length-1].period_end)
     const rows = []
@@ -4845,14 +4867,18 @@ function BudgetView({ orgId, C }) {
       if (isWeekly) d.setDate(d.getDate() + (7 * i))
       else d.setMonth(d.getMonth() + (3 * i))
       const pd = d.toISOString().split('T')[0]
-      // Check if there's an edit override for this row
-      const override = editVals[pd]
+      const ov = editVals[pd] || {}
+      const projLines = Object.keys(allLineItems).map(label => ({
+        label, section: allLineItems[label],
+        value: ov['line_'+label] != null ? parseFloat(ov['line_'+label]) : lineAvgs[label]
+      }))
       rows.push({
         period_end: pd,
-        income: override ? (parseFloat(override.income) || avgIncome) : avgIncome,
-        expenses: override ? (parseFloat(override.expenses) || avgExpenses) : avgExpenses,
+        income: ov.income != null ? parseFloat(ov.income) : avgIncome,
+        expenses: ov.expenses != null ? parseFloat(ov.expenses) : avgExpenses,
+        line_items: projLines,
         projected: true,
-        edited: !!override
+        edited: Object.keys(ov).length > 0
       })
     }
     return rows
@@ -4862,11 +4888,13 @@ function BudgetView({ orgId, C }) {
   const activeBudgetData = budgets.find(b => b.id === activeVersion)
   const activePeriods = activeBudgetData ? (activeBudgetData.periods || []) : null
 
-  // Save current projection as a named budget version
   const saveBudget = async () => {
     if (!versionName.trim()) { sh('Enter a version name first'); return }
     setSaving(true)
-    const periods = projection.map(p => ({ period_end: p.period_end, income: p.income, expenses: p.expenses }))
+    const periods = projection.map(p => ({
+      period_end: p.period_end, income: p.income, expenses: p.expenses,
+      line_items: p.line_items
+    }))
     const { data, error } = await supabase.from('cashflow_budget').insert({
       org_id: orgId, entity, version_name: versionName.trim(),
       base_periods: basePeriods, periods,
@@ -4877,20 +4905,20 @@ function BudgetView({ orgId, C }) {
     setActiveVersion(data.id)
     setVersionName('')
     setSaving(false)
-    sh('Budget saved as "' + versionName + '" checkmark')
+    sh('Saved as "' + data.version_name + '"')
   }
-
-  const StatBox = ({ label, value, color }) => (
-    <div style={{ background:C.nL, borderRadius:8, padding:'12px 14px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+(color||C.go) }}>
-      <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>{label}</div>
-      <div style={{ fontSize:18, fontWeight:700, color:color||C.go, lineHeight:1 }}>{value}</div>
-    </div>
-  )
 
   const recent = plData.slice(-basePeriods)
   const avgIncome = recent.length ? recent.reduce((s,p)=>s+(p.income||0),0)/recent.length : 0
   const avgExpenses = recent.length ? recent.reduce((s,p)=>s+(p.expenses||0),0)/recent.length : 0
-  const avgNet = avgIncome - avgExpenses
+
+  const inpStyle = { width:80, padding:'2px 6px', background:C.ch, border:'1px solid '+C.go, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
+  const thStyle = { textAlign:'left', padding:'4px 8px', fontSize:9, color:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2 }
+  const tdStyle = (color) => ({ padding:'5px 8px', fontSize:11, color: color||C.w })
+
+  const allPeriods = [...plData.slice(-basePeriods), ...projection]
+  const incomeLines = Object.keys(allLineItems).filter(l => allLineItems[l]==='Income' || allLineItems[l]==='Gross Profit')
+  const expenseLines = Object.keys(allLineItems).filter(l => allLineItems[l]==='Expenses' || !incomeLines.includes(l) && allLineItems[l]!=='Income')
 
   return (
     <div>
@@ -4901,128 +4929,153 @@ function BudgetView({ orgId, C }) {
             <button key={e.id} onClick={() => { setEntity(e.id); setEditVals({}) }} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-          <span style={{ fontSize:11, color:C.g }}>{'Base on'}</span>
-          <select value={basePeriods} onChange={e=>setBasePeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
-            {[4,8,12,16,20,24].map(n => <option key={n} value={n}>{n} periods</option>)}
-          </select>
-          <span style={{ fontSize:11, color:C.g }}>{'Project'}</span>
-          <select value={projPeriods} onChange={e=>setProjPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
-            {[6,12,18,24,36,52,78,104].map(n => <option key={n} value={n}>{n} periods</option>)}
-          </select>
-        </div>
+        <select value={basePeriods} onChange={e=>setBasePeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
+          {[4,8,12,16,20,24].map(n => <option key={n} value={n}>{'Base: '+n+' periods'}</option>)}
+        </select>
+        <select value={projPeriods} onChange={e=>setProjPeriods(Number(e.target.value))} style={{ padding:'4px 8px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }}>
+          {[6,12,18,24,36,52,78,104].map(n => <option key={n} value={n}>{'Project: '+n+' periods'}</option>)}
+        </select>
+        <button onClick={()=>setShowDetail(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showDetail?C.go:C.bdrF), background:showDetail?C.gD:'transparent', color:showDetail?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>
+          {showDetail ? 'Summary View' : 'Line Item Detail'}
+        </button>
       </div>
 
       {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
-
       {!loading && !plData.length && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No P&L data. Run cashflow_pl_seed.sql in Supabase first.'}</div>}
 
       {!loading && plData.length > 0 && <>
-        {/* Averages summary */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:20 }}>
-          <StatBox label={'Avg Income / Period (last '+basePeriods+')'} value={fmt(avgIncome)} color={C.gr} />
-          <StatBox label={'Avg Expenses / Period'} value={fmt(avgExpenses)} color={C.rd} />
-          <StatBox label={'Avg Net / Period'} value={fmt(avgNet)} color={avgNet>=0?C.gr:C.rd} />
+        {/* Saved versions */}
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12, alignItems:'center' }}>
+          <span style={{ fontSize:10, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{'Versions:'}</span>
+          {budgets.map(b => (
+            <button key={b.id} onClick={() => setActiveVersion(activeVersion===b.id?null:b.id)} style={{ padding:'3px 10px', borderRadius:5, border:'1px solid '+(activeVersion===b.id?C.go:C.bdrF), background:activeVersion===b.id?C.gD:'transparent', color:activeVersion===b.id?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>
+              {b.version_name}
+            </button>
+          ))}
+          {!activeVersion && <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+            <input value={versionName} onChange={e=>setVersionName(e.target.value)} placeholder="Name this budget..." style={{ padding:'3px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit', width:200 }} />
+            <button onClick={saveBudget} disabled={saving} style={{ padding:'3px 12px', borderRadius:5, border:'none', background:C.go, color:C.bg, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{saving?'Saving...':'Save'}</button>
+          </div>}
         </div>
 
-        {/* Saved budget versions */}
-        {budgets.length > 0 && <div style={{ marginBottom:16 }}>
-          <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Saved Budget Versions'}</div>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {budgets.map(b => (
-              <button key={b.id} onClick={() => setActiveVersion(activeVersion===b.id?null:b.id)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(activeVersion===b.id?C.go:C.bdrF), background:activeVersion===b.id?C.gD:'transparent', color:activeVersion===b.id?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>
-                {b.version_name}
-              </button>
-            ))}
-            <button onClick={() => setActiveVersion(null)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'+ New'}</button>
-          </div>
-        </div>}
-
-        {/* Save current as new version */}
-        {!activeVersion && <div style={{ display:'flex', gap:8, marginBottom:16, alignItems:'center' }}>
-          <input value={versionName} onChange={e=>setVersionName(e.target.value)} placeholder="Version name (e.g. Original 2026, Frank 5M Target)" style={{ flex:1, padding:'6px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
-          <button onClick={saveBudget} disabled={saving} style={{ padding:'6px 16px', borderRadius:6, border:'none', background:C.go, color:C.bg, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{saving?'Saving...':'Save Budget'}</button>
-        </div>}
-
-        {/* Projection table — editable */}
-        <div style={{ fontSize:10, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, paddingBottom:4, borderBottom:'1px solid '+C.bdr }}>
-          {activeVersion ? ('Comparing: ' + (activeBudgetData?.version_name||'') + ' vs Actuals') : 'Projection (click any row to edit)'}
-        </div>
-
-        <div style={{ overflowX:'auto' }}>
+        {/* Summary table */}
+        {!showDetail && <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-            <thead>
-              <tr style={{ borderBottom:'1px solid '+C.bdr }}>
-                {['Period', 'Income', 'Expenses', 'Net',
-                  activeVersion ? 'Budget Income' : '',
-                  activeVersion ? 'Budget Net' : '',
-                  activeVersion ? 'Variance' : '',
-                  ''
-                ].filter(Boolean).map(h => <th key={h} style={{ textAlign:'left', padding:'4px 8px', fontSize:9, color:C.g, textTransform:'uppercase' }}>{h}</th>)}
-              </tr>
-            </thead>
+            <thead><tr>
+              <th style={thStyle}>Period</th>
+              <th style={thStyle}>Income</th>
+              <th style={thStyle}>Expenses</th>
+              <th style={thStyle}>Net</th>
+              {activePeriods && <th style={thStyle}>Bud. Income</th>}
+              {activePeriods && <th style={thStyle}>Bud. Net</th>}
+              {activePeriods && <th style={thStyle}>Variance</th>}
+              <th style={thStyle}></th>
+            </tr></thead>
             <tbody>
-              {/* Actuals */}
-              {plData.slice(-basePeriods).map((p, i) => {
-                const budPeriod = activePeriods ? activePeriods.find(bp => bp.period_end === p.period_end) : null
-                const variance = budPeriod ? (p.income - budPeriod.income) : null
+              {allPeriods.map((p, i) => {
+                const net = p.projected ? p.income - p.expenses : (p.income - p.expenses)
+                const budP = activePeriods ? activePeriods.find(b => b.period_end === p.period_end) : null
+                const variance = budP ? (p.income - budP.income) : null
+                const isEditing = editingCell && editingCell.date === p.period_end && !editingCell.field
                 return (
-                  <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
-                    <td style={{ padding:'5px 8px', fontSize:11, fontWeight:500 }}>{p.period_end}</td>
-                    <td style={{ padding:'5px 8px', color:C.gr }}>{fmt(p.income)}</td>
-                    <td style={{ padding:'5px 8px', color:C.rd }}>{fmt(p.expenses)}</td>
-                    <td style={{ padding:'5px 8px', fontWeight:700, color:(p.income-p.expenses)>=0?C.gr:C.rd }}>{fmt(p.income-p.expenses)}</td>
-                    {activeVersion && <td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income):'—'}</td>}
-                    {activeVersion && <td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income-budPeriod.expenses):'—'}</td>}
-                    {activeVersion && <td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?(variance>=0?C.gr:C.rd):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
-                    <td style={{ padding:'5px 8px', fontSize:9, color:C.g }}>{'actual'}</td>
-                  </tr>
-                )
-              })}
-              {/* Projected — editable */}
-              {!activeVersion && projection.map((p, i) => {
-                const isEditing = editingRow === p.period_end
-                const net = p.income - p.expenses
-                return (
-                  <tr key={'proj'+i} style={{ borderBottom:'1px solid '+C.bdr, background:p.edited?'rgba(245,158,11,0.08)':'rgba(245,158,11,0.03)' }}>
-                    <td style={{ padding:'5px 8px', fontSize:11, color:p.edited?C.am:C.g }}>
+                  <tr key={i} style={{ borderBottom:'1px solid '+C.bdr, background:p.edited?'rgba(212,168,83,0.06)':p.projected?'rgba(212,168,83,0.03)':'transparent' }}>
+                    <td style={tdStyle(p.projected?C.am:C.w)}>
                       {p.period_end}
-                      <span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{p.edited?'edited':'projected'}</span>
+                      {p.projected && <span style={{ fontSize:9, color:p.edited?C.am:C.g, marginLeft:6 }}>{p.edited?'edited':'projected'}</span>}
                     </td>
-                    {isEditing ? <>
-                      <td style={{ padding:'3px 4px' }}><input autoFocus value={editVals[p.period_end]?.income ?? p.income.toFixed(0)} onChange={ev => setEditVals(prev => ({ ...prev, [p.period_end]: { ...(prev[p.period_end]||{}), income: ev.target.value, expenses: prev[p.period_end]?.expenses ?? p.expenses.toFixed(0) } }))} style={{ width:80, padding:'2px 6px', background:C.ch, border:'1px solid '+C.go, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }} /></td>
-                      <td style={{ padding:'3px 4px' }}><input value={editVals[p.period_end]?.expenses ?? p.expenses.toFixed(0)} onChange={ev => setEditVals(prev => ({ ...prev, [p.period_end]: { ...(prev[p.period_end]||{}), expenses: ev.target.value, income: prev[p.period_end]?.income ?? p.income.toFixed(0) } }))} style={{ width:80, padding:'2px 6px', background:C.ch, border:'1px solid '+C.go, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }} /></td>
-                      <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
-                      <td><button onClick={()=>setEditingRow(null)} style={{ padding:'2px 8px', borderRadius:4, border:'none', background:C.go, color:C.bg, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{'Done'}</button></td>
+                    {p.projected && isEditing ? <>
+                      <td style={{ padding:'3px 4px' }}><input autoFocus value={editVals[p.period_end]?.income ?? p.income.toFixed(0)} onChange={ev=>setEditVals(pv=>({...pv,[p.period_end]:{...(pv[p.period_end]||{}),income:ev.target.value}}))} style={inpStyle} /></td>
+                      <td style={{ padding:'3px 4px' }}><input value={editVals[p.period_end]?.expenses ?? p.expenses.toFixed(0)} onChange={ev=>setEditVals(pv=>({...pv,[p.period_end]:{...(pv[p.period_end]||{}),expenses:ev.target.value}}))} style={inpStyle} /></td>
+                      <td style={tdStyle(mColor(net))}>{fmt(net)}</td>
+                      {activePeriods && <td style={tdStyle(C.g)}>{budP?fmt(budP.income):'—'}</td>}
+                      {activePeriods && <td style={tdStyle(C.g)}>{budP?fmt(budP.income-budP.expenses):'—'}</td>}
+                      {activePeriods && <td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?mColor(variance):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
+                      <td><button onClick={()=>setEditingCell(null)} style={{ padding:'2px 8px', borderRadius:4, border:'none', background:C.go, color:C.bg, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>{'Done'}</button></td>
                     </> : <>
-                      <td style={{ padding:'5px 8px', color:C.gr, cursor:'pointer' }} onClick={()=>setEditingRow(p.period_end)}>{fmt(p.income)}</td>
-                      <td style={{ padding:'5px 8px', color:C.rd, cursor:'pointer' }} onClick={()=>setEditingRow(p.period_end)}>{fmt(p.expenses)}</td>
-                      <td style={{ padding:'5px 8px', fontWeight:700, color:net>=0?C.gr:C.rd }}>{fmt(net)}</td>
-                      <td><button onClick={()=>setEditingRow(p.period_end)} style={{ padding:'2px 8px', borderRadius:4, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>{'edit'}</button></td>
+                      <td style={tdStyle(POS)} onClick={p.projected?()=>setEditingCell({date:p.period_end}):undefined}>{fmt(p.income)}</td>
+                      <td style={tdStyle(WARN)} onClick={p.projected?()=>setEditingCell({date:p.period_end}):undefined}>{fmt(p.expenses)}</td>
+                      <td style={{ ...tdStyle(mColor(net)), fontWeight:700 }}>{fmt(net)}</td>
+                      {activePeriods && <td style={tdStyle(C.g)}>{budP?fmt(budP.income):'—'}</td>}
+                      {activePeriods && <td style={tdStyle(C.g)}>{budP?fmt(budP.income-budP.expenses):'—'}</td>}
+                      {activePeriods && <td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?mColor(variance):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
+                      <td>{p.projected && <button onClick={()=>setEditingCell({date:p.period_end})} style={{ padding:'2px 8px', borderRadius:4, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>{'edit'}</button>}</td>
                     </>}
-                  </tr>
-                )
-              })}
-              {/* Projected vs saved budget */}
-              {activeVersion && activePeriods && projection.map((p, i) => {
-                const budPeriod = activePeriods.find(bp => bp.period_end === p.period_end)
-                const variance = budPeriod ? (p.income - budPeriod.income) : null
-                return (
-                  <tr key={'proj'+i} style={{ borderBottom:'1px solid '+C.bdr, background:'rgba(245,158,11,0.03)' }}>
-                    <td style={{ padding:'5px 8px', fontSize:11, color:C.g }}>{p.period_end}<span style={{ fontSize:9, color:C.am, marginLeft:6 }}>{'projected'}</span></td>
-                    <td style={{ padding:'5px 8px', color:C.gr }}>{fmt(p.income)}</td>
-                    <td style={{ padding:'5px 8px', color:C.rd }}>{fmt(p.expenses)}</td>
-                    <td style={{ padding:'5px 8px', fontWeight:700, color:(p.income-p.expenses)>=0?C.gr:C.rd }}>{fmt(p.income-p.expenses)}</td>
-                    {<td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income):'—'}</td>}
-                    {<td style={{ padding:'5px 8px', color:C.g }}>{budPeriod?fmt(budPeriod.income-budPeriod.expenses):'—'}</td>}
-                    {<td style={{ padding:'5px 8px', fontWeight:700, color:variance!=null?(variance>=0?C.gr:C.rd):C.g }}>{variance!=null?fmtVar(variance):'—'}</td>}
-                    <td style={{ padding:'5px 8px', fontSize:9, color:C.am }}>{'projected'}</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
-        </div>
+        </div>}
+
+        {/* Line item detail */}
+        {showDetail && <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+            <thead><tr>
+              <th style={{...thStyle, minWidth:200}}>Account</th>
+              {allPeriods.map((p,i) => <th key={i} style={{...thStyle, minWidth:80, color:p.projected?C.am:C.g}}>{p.period_end.slice(5)}{p.projected?' *':''}</th>)}
+            </tr></thead>
+            <tbody>
+              {/* Income section */}
+              <tr><td colSpan={allPeriods.length+1} style={{ padding:'6px 8px', fontSize:9, fontWeight:700, color:C.go, textTransform:'uppercase', letterSpacing:1, background:C.nL }}>{'Income'}</td></tr>
+              {incomeLines.map(label => (
+                <tr key={label} style={{ borderBottom:'1px solid '+C.bdr }}>
+                  <td style={{ padding:'4px 8px', fontSize:11, color:C.w, fontWeight:500 }}>{label}</td>
+                  {allPeriods.map((p,i) => {
+                    const li = (p.line_items||[]).find(l=>l.label===label)
+                    const val = li ? li.value : 0
+                    const isEdit = editingCell && editingCell.date===p.period_end && editingCell.field===label
+                    return (
+                      <td key={i} style={{ padding:'3px 6px' }}>
+                        {p.projected && isEdit
+                          ? <input autoFocus value={editVals[p.period_end]?.['line_'+label] ?? (val||'').toString()} onChange={ev=>setEditVals(pv=>({...pv,[p.period_end]:{...(pv[p.period_end]||{}),['line_'+label]:ev.target.value}}))} onBlur={()=>setEditingCell(null)} style={{...inpStyle, width:70}} />
+                          : <span onClick={p.projected?()=>setEditingCell({date:p.period_end,field:label}):undefined} style={{ fontSize:11, color:val?POS:C.g, cursor:p.projected?'pointer':'default' }}>{val?fmt(val):'—'}</span>
+                        }
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+              {/* Total income row */}
+              <tr style={{ borderTop:'2px solid '+C.bdr, background:C.nL }}>
+                <td style={{ padding:'5px 8px', fontWeight:700, fontSize:11 }}>{'Total Income'}</td>
+                {allPeriods.map((p,i) => <td key={i} style={{ padding:'5px 8px', fontWeight:700, color:POS, fontSize:11 }}>{fmt(p.income)}</td>)}
+              </tr>
+              {/* Expenses section */}
+              <tr><td colSpan={allPeriods.length+1} style={{ padding:'6px 8px', fontSize:9, fontWeight:700, color:NEG, textTransform:'uppercase', letterSpacing:1, background:C.nL }}>{'Expenses'}</td></tr>
+              {expenseLines.slice(0,40).map(label => (
+                <tr key={label} style={{ borderBottom:'1px solid '+C.bdr }}>
+                  <td style={{ padding:'4px 8px', fontSize:11, color:C.w, fontWeight:500 }}>{label}</td>
+                  {allPeriods.map((p,i) => {
+                    const li = (p.line_items||[]).find(l=>l.label===label)
+                    const val = li ? li.value : 0
+                    const isEdit = editingCell && editingCell.date===p.period_end && editingCell.field===label
+                    return (
+                      <td key={i} style={{ padding:'3px 6px' }}>
+                        {p.projected && isEdit
+                          ? <input autoFocus value={editVals[p.period_end]?.['line_'+label] ?? (val||'').toString()} onChange={ev=>setEditVals(pv=>({...pv,[p.period_end]:{...(pv[p.period_end]||{}),['line_'+label]:ev.target.value}}))} onBlur={()=>setEditingCell(null)} style={{...inpStyle, width:70}} />
+                          : <span onClick={p.projected?()=>setEditingCell({date:p.period_end,field:label}):undefined} style={{ fontSize:11, color:val?WARN:C.g, cursor:p.projected?'pointer':'default' }}>{val?fmt(val):'—'}</span>
+                        }
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+              {/* Total expenses + net */}
+              <tr style={{ borderTop:'2px solid '+C.bdr, background:C.nL }}>
+                <td style={{ padding:'5px 8px', fontWeight:700, fontSize:11 }}>{'Total Expenses'}</td>
+                {allPeriods.map((p,i) => <td key={i} style={{ padding:'5px 8px', fontWeight:700, color:WARN, fontSize:11 }}>{fmt(p.expenses)}</td>)}
+              </tr>
+              <tr style={{ background:C.nL, borderTop:'1px solid '+C.bdr }}>
+                <td style={{ padding:'5px 8px', fontWeight:700, fontSize:12, color:C.go }}>{'Net Income'}</td>
+                {allPeriods.map((p,i) => {
+                  const net = p.income - p.expenses
+                  return <td key={i} style={{ padding:'5px 8px', fontWeight:700, fontSize:12, color:mColor(net) }}>{fmt(net)}</td>
+                })}
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ fontSize:10, color:C.g, marginTop:8 }}>{'* Projected periods — click any cell to edit. Changes apply to summary view too.'}</div>
+        </div>}
       </>}
 
       {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}

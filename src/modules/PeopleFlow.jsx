@@ -640,7 +640,7 @@ export default function PeopleFlowModule({ orgId, C }) {
     {view==='documents'&&<DocsView ac={ac} docs={docs} toggleDoc={toggleDoc} C={C}/>}
 
     {/* EMPLOYEE RESOURCES */}
-    {view==='resources'&&<ResourcesView C={C} isAdmin={isAdmin} isManager={isManager}/>}
+    {view==='resources'&&<ResourcesView C={C} isAdmin={isAdmin} isManager={isManager} emps={emps} orgId={orgId}/>}
 
     {/* REPORTS */}
     {view==='reports'&&<RptView emps={emps} ac={ac} disc={disc} reports={reports} C={C}/>}
@@ -2372,72 +2372,67 @@ function RptView({emps,ac,disc,reports,C}){
     </div></div>)
 }
 
-function ResourcesView({C,isAdmin,isManager}){
+function ResourcesView({C,isAdmin,isManager,emps,orgId}){
   const [activeForm, setActiveForm] = useState(null)
+  const [pushEmp, setPushEmp] = useState('')
+  const [pushForm, setPushForm] = useState('')
+  const [pushNote, setPushNote] = useState('')
+  const [pushing, setPushing] = useState(false)
+  const [pushToast, setPushToast] = useState('')
   const canManage = isAdmin || isManager
+
+  const shp = msg => { setPushToast(msg); setTimeout(()=>setPushToast(''),3000) }
 
   const FORMS = [
     {id:'reimburse',l:'Reimbursement Request',desc:'Submit a reimbursement with receipt upload',icon:'$',url:'https://form.jotform.com/260085486550056',access:'all',flow:'employee'},
-    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance — deducted from next check',icon:'↑',url:'https://form.jotform.com/260495386436063',access:'all',flow:'employee'},
-    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Send to employee to sign after reimbursement is issued',icon:'✓',url:'https://form.jotform.com/260085845634058',access:'manage',flow:'management'},
-    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions — send to employee for signature',icon:'§',url:'https://form.jotform.com/260084859075061',access:'manage',flow:'management'},
+    {id:'advance',l:'Payroll Advance Request',desc:'Request a payroll advance — deducted from next check',icon:'up',url:'https://form.jotform.com/260495386436063',access:'all',flow:'employee'},
+    {id:'cashack',l:'Cash Reimbursement Acknowledgment',desc:'Send to employee to sign after reimbursement is issued',icon:'v',url:'https://form.jotform.com/260085845634058',access:'manage',flow:'management'},
+    {id:'withhold',l:'Payroll Withholding Notification',desc:'Authorize payroll deductions — send to employee for signature',icon:'S',url:'https://form.jotform.com/260084859075061',access:'manage',flow:'management'},
   ]
 
   const visibleForms = FORMS.filter(f => f.access === 'all' || canManage)
   const empForms = visibleForms.filter(f => f.flow === 'employee')
   const mgtForms = visibleForms.filter(f => f.flow === 'management')
+  const activeEmps = emps.filter(e=>e.status!=='Terminated'&&e.status!=='terminated'&&e.status!=='Inactive'&&e.status!=='inactive').sort((a,b)=>(a.last_name||'').localeCompare(b.last_name||''))
 
-  const LINKS = [
-    {cat:'Payroll & Time',items:[
-      {l:'QuickBooks Online',url:'https://qbo.intuit.com',desc:'Clock in/out, view pay stubs, W-2s',icon:'$'},
-      {l:'QBO Workforce (Pay Stubs)',url:'https://workforce.intuit.com',desc:'View and print pay stubs and tax forms',icon:'◈'},
-      {l:'Direct Deposit Form',url:null,desc:'See HR for paper form or update in QBO',icon:'▤'}
-    ]},
-    {cat:'Tax Forms',items:[
-      {l:'W-4 Federal Withholding',url:'https://www.irs.gov/pub/irs-pdf/fw4.pdf',desc:'Federal tax withholding certificate',icon:'§'},
-      {l:'W-4MN State Withholding',url:'https://www.revenue.state.mn.us/sites/default/files/2023-12/w-4mn_0.pdf',desc:'Minnesota state withholding',icon:'§'},
-      {l:'I-9 Employment Verification',url:'https://www.uscis.gov/sites/default/files/document/forms/i-9-paper-version.pdf',desc:'Employment eligibility verification',icon:'§'},
-      {l:'W-2 (Year-End)',url:'https://workforce.intuit.com',desc:'Available in QBO Workforce after Jan 31',icon:'◈'}
-    ]},
-    {cat:'Benefits & Retirement',items:[
-      {l:'Health Insurance Info',url:null,desc:'Company pays 80% of medical premium. See HR for plan details and enrollment.',icon:'♥'},
-      {l:'Dental Insurance',url:null,desc:'Available to eligible employees. See HR for details.',icon:'♥'},
-      {l:'Vision Insurance',url:null,desc:'Available to eligible employees. See HR for details.',icon:'♥'},
-      {l:'401(k) Enrollment',url:null,desc:'Eligible employees may participate. See HR for plan documents.',icon:'◆'},
-      {l:'TMRP Pension (Union)',url:null,desc:'Local 1-B Pension Fund — 6% of earnings. See union rep or HR.',icon:'⊕'}
-    ]},
-    {cat:'Policies & Handbook',items:[
-      {l:'Employee Handbook',url:null,desc:'Minuteman Press Uptown — January 2024. Available in PaperFlow.',icon:'📋'},
-      {l:'Union Contract (CBA)',url:null,desc:'Local 1-B, Jan 2024–Dec 2026. Available in PaperFlow.',icon:'§'},
-      {l:'Attendance & Discipline Policy',url:null,desc:'Progressive discipline, points system, no-call/no-show. Available in PaperFlow.',icon:'⚡'},
-      {l:'Safety Policy',url:null,desc:'See HR or PaperFlow for current safety documentation.',icon:'▲'}
-    ]},
-    {cat:'Union Information',items:[
-      {l:'Local 1-B Contact',url:null,desc:'Packaging & Production Workers Union of North America, Twin Cities',icon:'⊕'},
-      {l:'Shop Steward',url:null,desc:'Contact your Shop Steward for grievances, questions, or representation.',icon:'◉'},
-      {l:'Union Reps: Ruth & Marty',url:null,desc:'Ruth (contact) and Marty Hallberg (President). For onboarding notifications and union card.',icon:'◉'}
-    ]},
-    {cat:'New Hire Essentials',items:[
-      {l:'Probation Period',url:null,desc:'First 90 calendar days. 30-day extension possible for just cause. No PTO accrual during probation.',icon:'★'},
-      {l:'Seniority Timeline',url:null,desc:'Placed on Seniority List after 30 successive shifts or 30 days worked in a 60-day window.',icon:'★'},
-      {l:'PTO Accrual (Year 1)',url:null,desc:'1 hour per 30 hours worked. Max 48 hrs/year. Cap 80 hrs. Starts after 90-day probation.',icon:'★'},
-      {l:'Sick & Safe Time (MN ESSL)',url:null,desc:'Accrues from hire date at 1hr/30hrs worked. Available after 80 hrs worked. Max 48 hrs/year.',icon:'♥'},
-      {l:'Union Enrollment',url:null,desc:'Union notified within 30 days of hire. No dues deducted during first 30 days worked.',icon:'⊕'}
-    ]}
-  ]
+  const handlePush = async () => {
+    if (!pushEmp || !pushForm) { shp('Select an employee and a form.'); return }
+    setPushing(true)
+    const emp = activeEmps.find(e=>e.id===pushEmp)
+    const form = FORMS.find(f=>f.id===pushForm)
+    if (!emp || !form) { shp('Invalid selection.'); setPushing(false); return }
+    const { error } = await supabase.from('policy_pushes').insert({
+      org_id: orgId,
+      title: form.l + ' — ' + gn(emp),
+      content: (pushNote || 'Please complete the following form: ' + form.l),
+      target_type: 'employee',
+      target_id: emp.id,
+      form_url: form.url,
+      pushed_by: isAdmin ? 'admin' : 'manager',
+      created_at: new Date().toISOString()
+    })
+    setPushing(false)
+    if (error) { shp('Error: ' + error.message); return }
+    shp('Form pushed to ' + gn(emp) + ' ✓')
+    setPushEmp('')
+    setPushForm('')
+    setPushNote('')
+  }
+
+  const inp = {width:'100%',padding:'7px 10px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
 
   return(<div>
-    <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>Employee Resources</h2>
-    <div style={{fontSize:11,color:C.g,marginBottom:16}}>Quick access to forms, links, policies, and benefits information.</div>
+    <h2 style={{fontSize:18,marginTop:0,marginBottom:4}}>{'Employee Resources'}</h2>
+    <div style={{fontSize:11,color:C.g,marginBottom:16}}>{'Forms and self-service submissions.'}</div>
 
-    {/* ── FORMS SECTION ── */}
+    {/* ── EMPLOYEE SELF-SERVICE FORMS ── */}
     <div style={{marginBottom:20}}>
-      <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>Forms & Requests</h3>
+      <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'Self-Service Forms'}</div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8,marginBottom:8}}>
         {empForms.map(f=>(
           <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.go:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
             <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-              <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.go:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.go,flexShrink:0,fontWeight:700}}>{f.icon}</div>
+              <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.go:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,color:activeForm===f.id?C.bg:C.go,flexShrink:0,fontWeight:700}}>{f.icon}</div>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.go:C.w,marginBottom:2}}>{f.l}</div>
                 <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
@@ -2447,23 +2442,6 @@ function ResourcesView({C,isAdmin,isManager}){
         ))}
       </div>
 
-      {canManage && mgtForms.length > 0 && <>
-        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:6,marginTop:12}}>Management Forms — Send to Employee</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
-          {mgtForms.map(f=>(
-            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.am:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
-              <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.am:C.aD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:activeForm===f.id?C.bg:C.am,flexShrink:0,fontWeight:700}}>{f.icon}</div>
-                <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.am:C.w,marginBottom:2}}>{f.l}</div>
-                  <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </>}
-
       {/* Embedded Form */}
       {activeForm && (()=>{
         const form = FORMS.find(f=>f.id===activeForm)
@@ -2472,8 +2450,8 @@ function ResourcesView({C,isAdmin,isManager}){
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',borderBottom:'1px solid '+C.bdr}}>
             <div style={{fontWeight:600,fontSize:13,color:C.go}}>{form.l}</div>
             <div style={{display:'flex',gap:6,alignItems:'center'}}>
-              <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>Open in new tab ↗</a>
-              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16}}>✕</button>
+              <a href={form.url} target="_blank" rel="noopener noreferrer" style={{fontSize:10,color:C.g,textDecoration:'none'}}>{'Open in new tab'}</a>
+              <button onClick={()=>setActiveForm(null)} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:16}}>{'x'}</button>
             </div>
           </div>
           <iframe src={form.url} style={{width:'100%',height:600,border:'none',background:C.bg2}} title={form.l} allow="camera;microphone"/>
@@ -2481,36 +2459,54 @@ function ResourcesView({C,isAdmin,isManager}){
       })()}
     </div>
 
-    {/* ── EXISTING RESOURCE LINKS ── */}
-    {LINKS.map(cat=>(
-      <div key={cat.cat} style={{marginBottom:16}}>
-        <h3 style={{fontSize:13,color:C.go,margin:'0 0 8px',textTransform:'uppercase',letterSpacing:1}}>{cat.cat}</h3>
+    {/* ── PUSH A FORM TO AN EMPLOYEE (admin/manager only) ── */}
+    {canManage && <div style={{marginBottom:20}}>
+      <div style={{fontSize:10,color:C.go,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8,paddingBottom:4,borderBottom:'1px solid '+C.bdr}}>{'Push a Form to an Employee'}</div>
+      <Card C={C} style={{padding:'14px 16px'}}>
+        <div style={{fontSize:11,color:C.g,marginBottom:12}}>{'Select an employee and a form. They will receive a notification to complete it.'}</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div>
+            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Employee'}</div>
+            <select value={pushEmp} onChange={e=>setPushEmp(e.target.value)} style={inp}>
+              <option value="">{'— Select employee —'}</option>
+              {activeEmps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Form'}</div>
+            <select value={pushForm} onChange={e=>setPushForm(e.target.value)} style={inp}>
+              <option value="">{'— Select form —'}</option>
+              {FORMS.map(f=><option key={f.id} value={f.id}>{f.l}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:9,color:C.g,textTransform:'uppercase',marginBottom:4}}>{'Note to employee (optional)'}</div>
+          <input value={pushNote} onChange={e=>setPushNote(e.target.value)} placeholder="e.g. Please complete by Friday" style={inp}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'flex-end',alignItems:'center',gap:10}}>
+          {pushToast && <span style={{fontSize:11,color:C.go,fontWeight:600}}>{pushToast}</span>}
+          <Btn gold small onClick={handlePush} C={C}>{pushing?'Sending...':'Push Form'}</Btn>
+        </div>
+      </Card>
+
+      {/* Management forms */}
+      {mgtForms.length > 0 && <div style={{marginTop:12}}>
+        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,marginBottom:6}}>{'Management Forms'}</div>
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:8}}>
-          {cat.items.map(item=>(
-            <Card key={item.l} C={C} style={{padding:'12px 14px'}}>
-              {item.url ? (
-                <a href={item.url} target="_blank" rel="noopener noreferrer" style={{textDecoration:'none',color:'inherit',display:'block'}}>
-                  <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                    <div style={{width:28,height:28,borderRadius:6,background:C.gD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:C.go,flexShrink:0}}>{item.icon}</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:600,fontSize:13,color:C.go,marginBottom:2}}>{item.l} ↗</div>
-                      <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{item.desc}</div>
-                    </div>
-                  </div>
-                </a>
-              ) : (
-                <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
-                  <div style={{width:28,height:28,borderRadius:6,background:C.ch,display:'flex',alignItems:'center',justifyContent:'center',fontSize:14,color:C.g,flexShrink:0}}>{item.icon}</div>
-                  <div style={{flex:1}}>
-                    <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{item.l}</div>
-                    <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{item.desc}</div>
-                  </div>
+          {mgtForms.map(f=>(
+            <Card key={f.id} C={C} style={{padding:'12px 14px',cursor:'pointer',border:activeForm===f.id?'2px solid '+C.am:'1px solid '+C.bdr}} onClick={()=>setActiveForm(activeForm===f.id?null:f.id)}>
+              <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                <div style={{width:28,height:28,borderRadius:6,background:activeForm===f.id?C.am:C.aD,display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,color:activeForm===f.id?C.bg:C.am,flexShrink:0,fontWeight:700}}>{f.icon}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:13,color:activeForm===f.id?C.am:C.w,marginBottom:2}}>{f.l}</div>
+                  <div style={{fontSize:11,color:C.g,lineHeight:1.4}}>{f.desc}</div>
                 </div>
-              )}
+              </div>
             </Card>
           ))}
         </div>
-      </div>
-    ))}
+      </div>}
+    </div>}
   </div>)
 }

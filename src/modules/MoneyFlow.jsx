@@ -5232,14 +5232,16 @@ function APReconView({ orgId, C, userEmail }) {
   }, [orgId, entity, showHistory])
 
   const saveRecon = async (vendor, field, val) => {
-    setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val } : b))
+    const now = new Date().toISOString()
+    setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
     const existing = bills.find(b => b.vendor === vendor)
     const payload = {
       org_id: orgId, entity, vendor,
       recon_status: field === 'recon_status' ? val : (existing?.recon_status || ''),
       recon_note: field === 'recon_note' ? val : (existing?.recon_note || ''),
-      updated_at: new Date().toISOString(),
-      updated_by: userEmail || 'unknown'
+      updated_at: now,
+      updated_by: userEmail || 'unknown',
+      reviewed_at: field === 'recon_status' && val ? now : (existing?.reviewed_at || null)
     }
     if (existing?.recon_id) {
       await supabase.from('cashflow_ap_recon').update(payload).eq('id', existing.recon_id)
@@ -5298,7 +5300,7 @@ function APReconView({ orgId, C, userEmail }) {
 
         {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded. Upload an AP Aging CSV in the Cash Flow tab first.'}</div>}
 
-        {!loading && bills.map((b, i) => (
+        {!loading && [...bills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b, i) => (
           <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 120px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
             <div>
               <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
@@ -5315,7 +5317,10 @@ function APReconView({ orgId, C, userEmail }) {
               {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
             </select>
             <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
-            {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, textAlign:'center' }}>{b.recon_status}</span>}
+            <div style={{ textAlign:'right' }}>
+              {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, display:'block', marginBottom:2 }}>{b.recon_status}</span>}
+              {b.reviewed_at && <span style={{ fontSize:9, color:C.g, display:'block' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
+            </div>
           </div>
         ))}
       </>}

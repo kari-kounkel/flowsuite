@@ -4786,27 +4786,6 @@ function CashFlowForecaster({ orgId, C }) {
             )}
             {b.queued && <span style={{ fontSize:10, padding:'3px 10px', borderRadius:99, background:C.gD, color:C.go, fontWeight:600, flexShrink:0 }}>{'queued'}</span>}
           </div>
-          <div style={{ display:'flex', gap:6, marginTop:4, marginLeft:44, flexWrap:'wrap' }}>
-            <input
-              value={(scheduled[b.vendor]||{}).scheduled_amt||''}
-              onChange={ev=>saveScheduled(b.vendor,'scheduled_amt',ev.target.value)}
-              placeholder="Scheduled $"
-              style={{ width:100, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
-            />
-            <input
-              value={(scheduled[b.vendor]||{}).scheduled_date||''}
-              onChange={ev=>saveScheduled(b.vendor,'scheduled_date',ev.target.value)}
-              type="date"
-              style={{ width:130, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
-            />
-            <input
-              value={(scheduled[b.vendor]||{}).notes||''}
-              onChange={ev=>saveScheduled(b.vendor,'notes',ev.target.value)}
-              placeholder="Notes..."
-              style={{ flex:1, minWidth:150, padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:10, fontFamily:'inherit' }}
-            />
-            {(scheduled[b.vendor]||{}).scheduled_amt && <span style={{ fontSize:10, color:WARN, alignSelf:'center' }}>{'Scheduled: '+fmt(parseFloat((scheduled[b.vendor]||{}).scheduled_amt)||0)+((scheduled[b.vendor]||{}).scheduled_date?' by '+(scheduled[b.vendor]||{}).scheduled_date:'')}</span>}
-          </div>
         ))}
       </>}
 

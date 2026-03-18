@@ -4256,8 +4256,8 @@ function JEHistoryTab({ orgId, C }) {
 function CashDashboard({ orgId, C }) {
   const [entity, setEntity] = useState('iaz')
   const [data, setData] = useState({
-    iaz: { balance: null, ar: null, payroll: null, pl: null, uploaded: {} },
-    omega: { balance: null, ar: null, payroll: null, pl: null, uploaded: {} }
+    iaz: { balance: null, payroll: null, uploaded: {} },
+    omega: { balance: null, payroll: null, uploaded: {} }
   })
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
@@ -4269,41 +4269,35 @@ function CashDashboard({ orgId, C }) {
 
   const parseBalanceSheet = (text) => {
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    const accounts = []
+    const cashAccounts = []
+    const ccAccounts = []
+    const otherAccounts = []
     let totalCash = 0
+    let totalCC = 0
     let totalAR = 0
+    let petty = null
+
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
       const label = parts[0] || ''
-      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
+      const raw = (parts[parts.length-1]||'').replace(/[$,]/g,'')
+      const val = parseFloat(raw) || 0
       const low = label.toLowerCase()
-      if (low.includes('checking') || low.includes('savings') || low.includes('cash')) {
-        accounts.push({ label, val, type: 'cash' })
+      if (!label || low.startsWith('total bank') || low === 'bank accounts' || low === 'cash and cash equivalents') return
+      if (low.includes('petty cash')) {
+        petty = { label, val }
         totalCash += val
-      }
-      if (low.includes('accounts receivable') || low === 'a/r' || low.includes('total accounts receivable')) {
+      } else if (low.includes('checking') || low.includes('savings')) {
+        cashAccounts.push({ label, val })
+        totalCash += val
+      } else if (low.includes('credit card') || low.includes('visa') || low.includes('amex') || low.includes('mastercard') || low.includes('discover')) {
+        ccAccounts.push({ label, val })
+        totalCC += val
+      } else if (low.includes('accounts receivable') || low === 'a/r' || (low.includes('receivable') && !low.includes('total'))) {
         totalAR = val
       }
     })
-    return { accounts, totalCash, totalAR, raw: lines.length }
-  }
-
-  const parseARaging = (text) => {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    const buckets = { current: 0, d30: 0, d60: 0, d90: 0, over90: 0, total: 0 }
-    lines.forEach(line => {
-      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      const label = (parts[0]||'').toLowerCase()
-      if (label.includes('total') || label === 'totals') {
-        buckets.current = parseFloat((parts[1]||'').replace(/[$,]/g,'')) || buckets.current
-        buckets.d30 = parseFloat((parts[2]||'').replace(/[$,]/g,'')) || buckets.d30
-        buckets.d60 = parseFloat((parts[3]||'').replace(/[$,]/g,'')) || buckets.d60
-        buckets.d90 = parseFloat((parts[4]||'').replace(/[$,]/g,'')) || buckets.d90
-        buckets.over90 = parseFloat((parts[5]||'').replace(/[$,]/g,'')) || buckets.over90
-        buckets.total = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || buckets.total
-      }
-    })
-    return buckets
+    return { cashAccounts, ccAccounts, petty, otherAccounts, totalCash, totalCC, totalAR }
   }
 
   const parsePayroll = (text) => {
@@ -4312,30 +4306,29 @@ function CashDashboard({ orgId, C }) {
     lines.forEach(line => {
       const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
       const label = (parts[0]||'').toLowerCase()
-      if (label.includes('gross') || label.includes('total wages')) grossPay = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || grossPay
-      if (label.includes('net pay') || label.includes('total net')) netPay = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || netPay
-      if (label.includes('total tax') || label.includes('taxes')) taxes = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || taxes
-      if (label.includes('period') || label.includes('pay date')) period = parts[1] || period
+      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
+      if (label.includes('gross') || label.includes('total wages') || label.includes('total compensation')) grossPay = val || grossPay
+      if (label.includes('net pay') || label.includes('total net')) netPay = val || netPay
+      if (label.includes('total tax') || label === 'taxes') taxes = val || taxes
+      if (label.includes('period') || label.includes('pay date') || label.includes('check date')) period = parts[1] || parts[2] || period
     })
     return { grossPay, netPay, taxes, period }
   }
 
-  const handleUpload = (ent, type, file) => {
+  const handleUpload = (eid, type, file) => {
     if (!file) return
     const reader = new FileReader()
     reader.onload = (e) => {
       const text = e.target.result
       let parsed = null
       if (type === 'balance') parsed = parseBalanceSheet(text)
-      else if (type === 'ar') parsed = parseARaging(text)
       else if (type === 'payroll') parsed = parsePayroll(text)
-      else parsed = { raw: text.split('\n').length }
       setData(p => ({
         ...p,
-        [ent]: {
-          ...p[ent],
+        [eid]: {
+          ...p[eid],
           [type]: parsed,
-          uploaded: { ...p[ent].uploaded, [type]: file.name + ' — ' + new Date().toLocaleTimeString() }
+          uploaded: { ...p[eid].uploaded, [type]: file.name + ' — ' + new Date().toLocaleTimeString() }
         }
       }))
       sh(file.name + ' loaded')
@@ -4347,87 +4340,101 @@ function CashDashboard({ orgId, C }) {
   const ent = data[entity]
 
   const UploadBtn = ({ type, label, eid }) => (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 10, color: ent.uploaded[type] ? C.gr : C.g, background: 'transparent', fontFamily: 'inherit' }}>
-      {ent.uploaded[type] ? '✓ ' + label : '↑ ' + label}
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 5, border: '1px solid ' + (ent.uploaded[type] ? C.gr : C.bdr), cursor: 'pointer', fontSize: 11, color: ent.uploaded[type] ? C.gr : C.g, background: 'transparent', fontFamily: 'inherit' }}>
+      {ent.uploaded[type] ? ('✓ ' + label) : ('↑ ' + label)}
       <input type="file" accept=".csv" style={{ display: 'none' }} onChange={ev => handleUpload(eid, type, ev.target.files[0])} />
     </label>
   )
 
-  const StatBox = ({ label, value, sub, color, warn }) => (
+  const StatBox = ({ label, value, color, warn, sub }) => (
     <div style={{ background: C.nL, borderRadius: 8, padding: '14px 16px', border: '1px solid ' + (warn ? C.rd : C.bdr), borderLeft: '3px solid ' + (color || C.go) }}>
-      <div style={{ fontSize: 9, color: C.g, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, color: color || C.go, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 9, color: C.g, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: warn ? C.rd : (color || C.go), lineHeight: 1 }}>{value}</div>
       {sub && <div style={{ fontSize: 10, color: C.g, marginTop: 4 }}>{sub}</div>}
     </div>
   )
 
+  const SectionHeader = ({ title }) => (
+    <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>{title}</div>
+  )
+
+  const EmptyState = ({ msg }) => (
+    <div style={{ fontSize: 12, color: C.g, padding: '16px 0', fontStyle: 'italic' }}>{msg}</div>
+  )
+
   return (
     <div>
-      {/* Entity toggle */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      {/* Entity toggle + upload bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ display: 'flex', gap: 4 }}>
           {ENTITIES.map(e => (
             <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid ' + (entity === e.id ? C.go : C.bdrF), background: entity === e.id ? C.gD : 'transparent', color: entity === e.id ? C.go : C.g, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>{e.label}</button>
           ))}
         </div>
-        <div style={{ fontSize: 10, color: C.g }}>
-          {ent.uploaded.balance || 'No balance sheet uploaded'}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: 1 }}>Upload:</span>
+          <UploadBtn type="balance" label="Balance Sheet" eid={entity} />
+          <UploadBtn type="payroll" label="Payroll Summary" eid={entity} />
         </div>
       </div>
 
-      {/* Upload bar */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20, padding: '10px 14px', background: C.nL, borderRadius: 8, border: '1px solid ' + C.bdr }}>
-        <span style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: 1, alignSelf: 'center', marginRight: 4 }}>Upload:</span>
-        <UploadBtn type="balance" label="Balance Sheet" eid={entity} />
-        <UploadBtn type="ar" label="AR Aging" eid={entity} />
-        <UploadBtn type="payroll" label="Payroll Summary" eid={entity} />
-        <UploadBtn type="pl" label="P&L" eid={entity} />
-      </div>
+      {ent.uploaded.balance && <div style={{ fontSize: 10, color: C.g, marginBottom: 16 }}>{'Last upload: ' + ent.uploaded.balance}</div>}
 
-      {/* Cash panel */}
-      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Cash Position</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10, marginBottom: 20 }}>
-        {ent.balance
-          ? <>
-              <StatBox label="Total Cash" value={fmt(ent.balance.totalCash)} color={ent.balance.totalCash >= 0 ? C.gr : C.rd} warn={ent.balance.totalCash < 0} />
-              {ent.balance.accounts.map((a, i) => (
-                <StatBox key={i} label={a.label} value={fmt(a.val)} color={a.val >= 0 ? C.bl : C.rd} />
-              ))}
-            </>
-          : <div style={{ gridColumn: '1/-1', fontSize: 12, color: C.g, padding: '20px 0' }}>Upload a Balance Sheet CSV to see cash position.</div>
-        }
-      </div>
+      {/* ── CASH ACCOUNTS ── */}
+      <SectionHeader title="Cash Accounts" />
+      {ent.balance
+        ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
+            {ent.balance.cashAccounts.length === 0 && ent.balance.petty === null
+              ? <EmptyState msg="No checking or savings accounts found in this Balance Sheet." />
+              : null
+            }
+            {ent.balance.cashAccounts.map((a, i) => (
+              <StatBox key={i} label={a.label} value={fmt(a.val)} color={a.val >= 0 ? C.gr : C.rd} warn={a.val < 0} />
+            ))}
+            {ent.balance.petty && <StatBox label={ent.balance.petty.label} value={fmt(ent.balance.petty.val)} color={C.bl} />}
+            {ent.balance.cashAccounts.length > 1 && (
+              <StatBox label="Total Cash" value={fmt(ent.balance.totalCash)} color={ent.balance.totalCash >= 0 ? C.go : C.rd} warn={ent.balance.totalCash < 0} sub="All cash accounts combined" />
+            )}
+          </div>
+        : <div style={{ marginBottom: 20 }}><EmptyState msg="Upload a Balance Sheet CSV to see cash accounts." /></div>
+      }
 
-      {/* AR panel */}
-      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Accounts Receivable</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10, marginBottom: 20 }}>
-        {ent.balance && ent.balance.totalAR > 0
-          ? <StatBox label="Total AR" value={fmt(ent.balance.totalAR)} color={C.am} />
-          : null
-        }
-        {ent.ar
-          ? <>
-              <StatBox label="Current" value={fmt(ent.ar.current)} color={C.gr} />
-              <StatBox label="1-30 Days" value={fmt(ent.ar.d30)} color={C.am} warn={ent.ar.d30 > 0} />
-              <StatBox label="31-60 Days" value={fmt(ent.ar.d60)} color={C.am} warn={ent.ar.d60 > 0} />
-              <StatBox label="61-90 Days" value={fmt(ent.ar.d90)} color={C.rd} warn={ent.ar.d90 > 0} />
-              <StatBox label="Over 90" value={fmt(ent.ar.over90)} color={C.rd} warn={ent.ar.over90 > 0} />
-            </>
-          : <div style={{ fontSize: 12, color: C.g, padding: '10px 0' }}>Upload AR Aging CSV for aging detail.</div>
-        }
-      </div>
+      {/* ── CREDIT CARDS ── */}
+      {ent.balance && ent.balance.ccAccounts.length > 0 && <>
+        <SectionHeader title="Credit Cards" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
+          {ent.balance.ccAccounts.map((a, i) => (
+            <StatBox key={i} label={a.label} value={fmt(Math.abs(a.val))} color={C.rd} warn={true} sub="Balance owed" />
+          ))}
+          {ent.balance.ccAccounts.length > 1 && (
+            <StatBox label="Total CC Owed" value={fmt(Math.abs(ent.balance.totalCC))} color={C.rd} warn={true} />
+          )}
+        </div>
+      </>}
 
-      {/* Payroll panel */}
-      <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid ' + C.bdr }}>Last Payroll</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10, marginBottom: 20 }}>
+      {/* ── ACCOUNTS RECEIVABLE ── */}
+      <SectionHeader title="Accounts Receivable" />
+      {ent.balance
+        ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
+            {ent.balance.totalAR > 0
+              ? <StatBox label="Total AR" value={fmt(ent.balance.totalAR)} color={C.am} sub="From Balance Sheet — totals from FLEX" />
+              : <EmptyState msg="No AR balance found. AR totals pull from Balance Sheet." />
+            }
+          </div>
+        : <div style={{ marginBottom: 20 }}><EmptyState msg="Upload a Balance Sheet CSV to see AR." /></div>
+      }
+
+      {/* ── LAST PAYROLL ── */}
+      <SectionHeader title="Last Payroll" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10, marginBottom: 20 }}>
         {ent.payroll
           ? <>
+              {ent.payroll.period && <StatBox label="Pay Period" value={ent.payroll.period} color={C.g} />}
               <StatBox label="Gross Pay" value={fmt(ent.payroll.grossPay)} color={C.bl} />
               <StatBox label="Net Pay" value={fmt(ent.payroll.netPay)} color={C.gr} />
-              <StatBox label="Taxes & Deductions" value={fmt(ent.payroll.taxes)} color={C.am} />
-              {ent.payroll.period && <StatBox label="Pay Period" value={ent.payroll.period} color={C.g} />}
+              <StatBox label="Taxes + Deductions" value={fmt(ent.payroll.taxes)} color={C.am} />
             </>
-          : <div style={{ fontSize: 12, color: C.g, padding: '10px 0' }}>Upload a Payroll Summary CSV to see last payroll.</div>
+          : <EmptyState msg="Upload a Payroll Summary CSV to see last payroll." />
         }
       </div>
 

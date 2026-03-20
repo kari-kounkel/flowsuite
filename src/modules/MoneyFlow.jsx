@@ -4285,17 +4285,99 @@ function CashDashboard({ orgId, C }) {
     return { cashAccounts, ccAccounts, loanAccounts, loc_balance, ar_total }
   }
 
-  const parseARaging = (text) => {
+  // Omega AR — simple summary CSV (one row per customer, 7 columns)
+  const parseOmegaAR = (text) => {
     const rows = []
+    function splitCSV(line) {
+      const result = []; let cur = '', inQ = false
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ }
+        else if (line[i] === ',' && !inQ) { result.push(cur.trim()); cur = '' }
+        else { cur += line[i] }
+      }
+      result.push(cur.trim()); return result
+    }
+    const pv = s => parseFloat((s||'').replace(/['"$, ]/g,'')) || 0
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
-    lines.forEach(line => {
-      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      const label = parts[0]
-      if (!label || ['customer','total','a/r aging','infinity','as of','wednesday'].some(x => label.toLowerCase().includes(x))) return
-      rows.push({ customer: label, current_amt: pv(parts[1]), d30: pv(parts[2]), d60: pv(parts[3]), d90: pv(parts[4]), over90: pv(parts[5]), total: pv(parts[6]) })
-    })
-    return rows
+    // Find header row
+    let dataStart = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes('customer') && lines[i].toLowerCase().includes('current')) {
+        dataStart = i + 1; break
+      }
+    }
+    if (dataStart < 0) dataStart = 1
+    for (let i = dataStart; i < lines.length; i++) {
+      const parts = splitCSV(lines[i])
+      const label = parts[0].replace(/"/g,'').trim()
+      if (!label) continue
+      const low = label.toLowerCase()
+      if (['total','a/r aging','infinity','as of','friday','monday','tuesday','wednesday','thursday','saturday','sunday'].some(x => low.includes(x))) continue
+      const curr = pv(parts[1]), d30 = pv(parts[2]), d60 = pv(parts[3]), d90 = pv(parts[4]), over90 = pv(parts[5]), total = pv(parts[6])
+      if (total === 0 && curr === 0) continue
+      rows.push({ customer: label, current_amt: curr, d30, d60, d90, over90, total })
+    }
+    rows.sort((a,b) => a.customer.localeCompare(b.customer))
+    return { rows, totalAR: rows.reduce((s,r)=>s+r.total,0), invoiceCount: null, oldestDate: null }
+  }
+
+  // IAZ AR — invoice-detail CSV (customer header rows + individual invoice rows)
+  const parseIAZAR = (text) => {
+    function splitCSV(line) {
+      const result = []; let cur = '', inQ = false
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ }
+        else if (line[i] === ',' && !inQ) { result.push(cur.trim()); cur = '' }
+        else { cur += line[i] }
+      }
+      result.push(cur.trim()); return result
+    }
+    const pv = s => { const c = (s||'').replace(/['"$, ]/g,''); if (!c||c==='-') return 0; const p = c.match(/^\((.+)\)$/); if (p) return -(parseFloat(p[1])||0); return parseFloat(c)||0 }
+    const isInvoiceNum = s => /^\d{7,}$/.test((s||'').trim())
+    const isDate = s => /\d{1,2}\/\d{1,2}\/\d{4}/.test((s||'').trim())
+
+    const lines = text.split('\n')
+    const customerMap = {}
+    let currentCustomer = null
+    let oldestAgeOverall = 0, oldestDateOverall = null
+
+    for (const rawLine of lines) {
+      const parts = splitCSV(rawLine)
+      const col0 = (parts[0]||'').replace(/"/g,'').trim()
+      const col1 = (parts[1]||'').trim()
+      const col2 = (parts[2]||'').trim()
+      if (!col0 && !col1) continue
+      const low0 = col0.toLowerCase()
+      if (low0.startsWith('outstanding')||low0.startsWith('totals:')||low0.includes('minuteman press uptown')||low0.includes('page ')) continue
+      if (low0.includes('*** customer has a credit')) continue
+      // Invoice row: 7-digit number in col0, date in col2
+      if (isInvoiceNum(col0) && isDate(col2)) {
+        if (!currentCustomer) continue
+        const balance = pv(parts[19]||parts[18]||'')
+        const age = parseInt(((parts[24]||parts[23]||'')).replace(/\D/g,'')) || 0
+        if (!customerMap[currentCustomer]) customerMap[currentCustomer] = { balance: 0, invoiceCount: 0, oldestDate: col2, oldestAge: 0 }
+        customerMap[currentCustomer].balance += balance
+        customerMap[currentCustomer].invoiceCount++
+        if (age > customerMap[currentCustomer].oldestAge) { customerMap[currentCustomer].oldestAge = age; customerMap[currentCustomer].oldestDate = col2 }
+        if (age > oldestAgeOverall) { oldestAgeOverall = age; oldestDateOverall = col2 }
+        continue
+      }
+      // Subtotal row: col0 empty, col1 starts with digit
+      if (col0 === '' && /^\d/.test(col1)) continue
+      // Customer row: has a name, not a total
+      if (col0 && !isInvoiceNum(col0) && !low0.startsWith('totals')) { currentCustomer = col0; continue }
+    }
+
+    const rows = Object.entries(customerMap)
+      .filter(([,v]) => Math.abs(v.balance) > 0.009)
+      .map(([customer, v]) => ({
+        customer, total: v.balance, invoice_count: v.invoiceCount,
+        oldest_date: v.oldestDate, oldest_age: v.oldestAge,
+        current_amt: 0, d30: 0, d60: 0, d90: 0, over90: 0,
+      }))
+      .sort((a,b) => a.customer.localeCompare(b.customer))
+
+    return { rows, totalAR: rows.reduce((s,r)=>s+r.total,0), invoiceCount: Object.values(customerMap).reduce((s,v)=>s+v.invoiceCount,0), oldestDate: oldestDateOverall }
   }
 
   const parseAPaging = (text) => {
@@ -4391,11 +4473,23 @@ function CashDashboard({ orgId, C }) {
           }
           sh('Balance Sheet loaded' + (detectedDate ? ' — dated ' + snapDate : '') + ' checkmark')
         } else if (type === 'ar') {
-          const rows = parseARaging(text)
+          const parsed = entity === 'iaz' ? parseIAZAR(text) : parseOmegaAR(text)
+          const rows = parsed.rows
           await supabase.from('cashflow_ar').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
           if (rows.length) await supabase.from('cashflow_ar').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
+          // For IAZ save/update meta row with totals + oldest date
+          if (entity === 'iaz') {
+            const metaPayload = { org_id: orgId, entity: 'iaz', report_date: snapDate, total_ar: parsed.totalAR || null, invoice_count: parsed.invoiceCount || null, oldest_date: parsed.oldestDate || null, uploaded_at: new Date().toISOString() }
+            const { data: existingMeta } = await supabase.from('cashflow_ar_reports').select('id').eq('org_id',orgId).eq('entity','iaz').order('uploaded_at',{ascending:false}).limit(1).single().catch(()=>({data:null}))
+            if (existingMeta?.id) {
+              const { data: upd } = await supabase.from('cashflow_ar_reports').update(metaPayload).eq('id',existingMeta.id).select().single()
+              if (upd) setIazARMeta(upd)
+            } else {
+              const { data: ins } = await supabase.from('cashflow_ar_reports').insert([metaPayload]).select().single()
+              if (ins) setIazARMeta(ins)
+            }
+          }
           sh(rows.length + ' AR customers loaded ✓')
-          // Reload AR rows directly without changing selected date
           const { data: freshAR } = await supabase.from('cashflow_ar').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).order('total',{ascending:false})
           if (entity === 'iaz') setIazAR(freshAR || [])
           else setOmegaAR(freshAR || [])
@@ -5820,6 +5914,9 @@ export default function MoneyFlowModule({ orgId, C }) {
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTask, setEditingTask] = useState(null)
+  // Recurring advance date picker
+  const [advanceModal, setAdvanceModal] = useState(null)  // { task } | null
+  const [advanceDate, setAdvanceDate] = useState('')
 
   // JE Generator sub-tab
   const [jeSubTab, setJeSubTab] = useState('tasks')
@@ -5896,25 +5993,12 @@ export default function MoneyFlowModule({ orgId, C }) {
   async function toggleDone(task) {
     const isDone = task.status === 'done'
 
-    if (!isDone && task.is_recurring && task.recur_interval > 0) {
-      const newDate = advanceDueDate(task.due_date, task.recur_interval)
-      setTasks(ts => ts.map(t =>
-        t.id === task.id ? { ...t, due_date: newDate, _justAdvanced: true } : t
-      ))
-      const { error: err } = await supabase
-        .from('moneyflow_tasks')
-        .update({ due_date: newDate, updated_at: new Date().toISOString() })
-        .eq('id', task.id)
-      if (err) {
-        setTasks(ts => ts.map(t =>
-          t.id === task.id ? { ...t, due_date: task.due_date, _justAdvanced: false } : t
-        ))
-      } else {
-        writeTaskLog(task, 'advanced', 'Advanced from ' + task.due_date + ' to ' + newDate)
-      }
-      setTimeout(() => setTasks(ts => ts.map(t =>
-        t.id === task.id ? { ...t, _justAdvanced: false } : t
-      )), 2000)
+    if (!isDone && task.is_recurring) {
+      // Open date picker modal — never auto-calculate
+      const suggested = advanceDueDate(task.due_date, task.recur_interval || 7)
+      setAdvanceDate(suggested)
+      setAdvanceModal({ task })
+      return
     } else {
       const newStatus = isDone ? 'open' : 'done'
       setTasks(ts => ts.map(t =>
@@ -5932,6 +6016,30 @@ export default function MoneyFlowModule({ orgId, C }) {
         writeTaskLog(task, newStatus === 'done' ? 'completed' : 'reopened', null)
       }
     }
+  }
+
+  async function confirmAdvance() {
+    if (!advanceModal || !advanceDate) return
+    const task = advanceModal.task
+    setTasks(ts => ts.map(t =>
+      t.id === task.id ? { ...t, due_date: advanceDate, _justAdvanced: true } : t
+    ))
+    const { error: err } = await supabase
+      .from('moneyflow_tasks')
+      .update({ due_date: advanceDate, updated_at: new Date().toISOString() })
+      .eq('id', task.id)
+    if (err) {
+      setTasks(ts => ts.map(t =>
+        t.id === task.id ? { ...t, due_date: task.due_date, _justAdvanced: false } : t
+      ))
+    } else {
+      writeTaskLog(task, 'advanced', 'Advanced from ' + task.due_date + ' to ' + advanceDate)
+      setTimeout(() => setTasks(ts => ts.map(t =>
+        t.id === task.id ? { ...t, _justAdvanced: false } : t
+      )), 2000)
+    }
+    setAdvanceModal(null)
+    setAdvanceDate('')
   }
 
   function openNewTask() {
@@ -6000,6 +6108,30 @@ export default function MoneyFlowModule({ orgId, C }) {
           onClose={closeModal}
           onDelete={handleDeleted}
         />
+      )}
+      {advanceModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:2000, padding:16 }}>
+          <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:14, padding:28, maxWidth:360, width:'100%', boxShadow:'0 8px 40px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize:15, fontWeight:700, color:C.go, marginBottom:6 }}>{'↻ Advance Recurring Task'}</div>
+            <div style={{ fontSize:12, color:C.w, marginBottom:4, fontWeight:600 }}>{advanceModal.task.name}</div>
+            <div style={{ fontSize:11, color:C.g, marginBottom:20 }}>{'Pick the next due date. The suggested date is based on your recur interval — change it to whatever actually makes sense.'}</div>
+            <label style={{ fontSize:10, color:C.g, display:'block', marginBottom:4, textTransform:'uppercase', letterSpacing:'0.8px' }}>Next Due Date</label>
+            <input
+              type="date"
+              value={advanceDate}
+              onChange={e => setAdvanceDate(e.target.value)}
+              style={{ width:'100%', background:C.bg, border:'1px solid '+C.bdr, color:C.w, borderRadius:6, padding:'8px 10px', fontSize:13, fontFamily:'inherit', boxSizing:'border-box', marginBottom:20 }}
+            />
+            <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
+              <button onClick={() => { setAdvanceModal(null); setAdvanceDate('') }} style={{ background:'transparent', border:'1px solid '+C.bdr, color:C.g, padding:'8px 18px', borderRadius:8, cursor:'pointer', fontSize:12, fontFamily:'inherit' }}>
+                Cancel
+              </button>
+              <button onClick={confirmAdvance} disabled={!advanceDate} style={{ background:C.go, border:'none', color:'#fff', padding:'8px 20px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700, fontFamily:'inherit', opacity:advanceDate?1:0.5 }}>
+                {'✓ Set Date'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>

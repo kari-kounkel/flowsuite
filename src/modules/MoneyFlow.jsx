@@ -4143,8 +4143,13 @@ function CashDashboard({ orgId, C }) {
   const [iazData, setIazData] = useState(null)
   const [omegaData, setOmegaData] = useState(null)
   const [iazAP, setIazAP] = useState([])
+  const [iazAR, setIazAR] = useState([])
+  const [iazARMeta, setIazARMeta] = useState(null)   // { total_ar, invoice_count, oldest_date, pdf_url, uploaded_at }
   const [omegaAR, setOmegaAR] = useState([])
   const [entityView, setEntityView] = useState('both')
+  const [arEditOpen, setArEditOpen] = useState(false)
+  const [arEditForm, setArEditForm] = useState({ total_ar: '', invoice_count: '', oldest_date: '' })
+  const [arEditSaving, setArEditSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(null)
   const [toast, setToast] = useState('')
@@ -4179,12 +4184,21 @@ function CashDashboard({ orgId, C }) {
       supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
         if (!r.data || !r.data[0]) return { data: [] }
         return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
-      })
-    ]).then(([iazSnap, omegaSnap, apR, arR]) => {
+      }),
+      // IAZ AR — customer-level rows from cashflow_ar
+      supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+        if (!r.data || !r.data[0]) return { data: [] }
+        return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
+      }),
+      // IAZ AR report meta (PDF summary)
+      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
+    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
       setOmegaData((omegaSnap.data || [])[0] || null)
       setIazAP(apR.data || [])
       setOmegaAR(arR.data || [])
+      setIazAR(iazArR.data || [])
+      setIazARMeta((iazArMetaR.data || [])[0] || null)
       setLoading(false)
     })
   }, [selectedDate, orgId])
@@ -4384,14 +4398,58 @@ function CashDashboard({ orgId, C }) {
     reader.readAsText(file)
   }
 
+  // ─── PDF upload handler (AR report + Payroll report) ─────────────────────────
+  const handlePDFUpload = async (entity, type, file) => {
+    if (!file) return
+    setUploading(entity + '_' + type)
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const storageKey = `${orgId}/${entity}_${type}_current.pdf`
+      // Upload — always replaces the current file
+      const { error: upErr } = await supabase.storage
+        .from('flowsuite-files')
+        .upload(storageKey, file, { upsert: true, contentType: 'application/pdf' })
+      if (upErr) throw upErr
+      const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(storageKey)
+      const pdf_url = urlData?.publicUrl || null
+
+      if (type === 'ar_report') {
+        // Save summary row — one row per upload (history), plus update meta state
+        const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{
+          org_id: orgId,
+          entity,
+          report_date: today,
+          pdf_url,
+          uploaded_at: new Date().toISOString(),
+        }]).select().single()
+        setIazARMeta(ins || { pdf_url, report_date: today, uploaded_at: new Date().toISOString() })
+        sh('AR Report uploaded ✓')
+      } else if (type === 'payroll_report') {
+        await supabase.from('cashflow_payroll_reports').insert([{
+          org_id: orgId,
+          entity,
+          report_date: today,
+          pdf_url,
+          uploaded_at: new Date().toISOString(),
+        }])
+        sh('Payroll Report uploaded ✓')
+      }
+    } catch(err) {
+      sh('Error: ' + err.message)
+    }
+    setUploading(null)
+  }
+
   const inpStyle = { display:'none' }
   const UpBtn = ({ entity, type, label }) => {
     const key = entity + '_' + type
     const busy = uploading === key
+    const isPDF = type === 'ar_report' || type === 'payroll_report'
     return (
       <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:5, border:'1px solid '+C.bdr, cursor: busy?'wait':'pointer', fontSize:10, color:C.g, fontFamily:'inherit', background:'transparent' }}>
         {busy ? 'Loading...' : ('↑ ' + label)}
-        <input type="file" accept=".csv" style={inpStyle} disabled={busy} onChange={ev=>handleUpload(entity,type,ev.target.files[0])} />
+        <input type="file" accept={isPDF ? '.pdf' : '.csv'} style={inpStyle} disabled={busy}
+          onChange={ev => isPDF ? handlePDFUpload(entity,type,ev.target.files[0]) : handleUpload(entity,type,ev.target.files[0])} />
       </label>
     )
   }
@@ -4441,7 +4499,7 @@ function CashDashboard({ orgId, C }) {
     </div>
   )
 
-  const EntityCol = ({ title, snap, ap, ar, entity }) => {
+  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, arEditOpen, arEditForm, arEditSaving, setArEditOpen, setArEditForm, setArEditSaving }) => {
     const cash = snap ? (snap.cash_accounts || []) : []
     const cc = snap ? (snap.cc_accounts || []) : []
     const loc = snap ? snap.loc_balance : null
@@ -4452,7 +4510,7 @@ function CashDashboard({ orgId, C }) {
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }]
+      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar_report', label:'AR PDF' }, { type:'payroll_report', label:'PR PDF' }]
       : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
 
     return (
@@ -4507,6 +4565,85 @@ function CashDashboard({ orgId, C }) {
               {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={POS} small />}
             </div>
           </>}
+          {entity === 'iaz' && (
+            <div style={{ marginBottom:14, background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
+              {/* header row */}
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, flexWrap:'wrap' }}>
+                <div style={{ fontSize:9, color:'#6ab87a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
+                  {'Accounts Receivable — Outstanding Invoices'}
+                </div>
+                {arMeta?.pdf_url && (
+                  <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
+                    style={{ fontSize:9, fontWeight:700, color:'#fff', background:'#3a5c7a', borderRadius:4, padding:'2px 8px', textDecoration:'none', flexShrink:0 }}>
+                    {'📄 View Report'}
+                  </a>
+                )}
+                {arMeta && (
+                  <button onClick={() => {
+                    setArEditForm({ total_ar: arMeta.total_ar || '', invoice_count: arMeta.invoice_count || '', oldest_date: arMeta.oldest_date || '' })
+                    setArEditOpen(v => !v)
+                  }} style={{ fontSize:9, color:C.go, background:'transparent', border:`1px solid ${C.bdrF}`, borderRadius:4, padding:'2px 8px', cursor:'pointer', fontFamily:'inherit', flexShrink:0 }}>
+                    {arEditOpen ? '✕ Cancel' : '✏️ Edit Totals'}
+                  </button>
+                )}
+              </div>
+
+              {/* inline edit form */}
+              {arMeta && arEditOpen && (
+                <div style={{ display:'flex', gap:8, alignItems:'flex-end', flexWrap:'wrap', marginBottom:10, padding:'10px 12px', background:C.ch, borderRadius:8, border:`1px solid ${C.bdrF}` }}>
+                  <div>
+                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Total AR ($)</div>
+                    <input type="number" inputMode="decimal" placeholder="e.g. 94511.16"
+                      value={arEditForm.total_ar}
+                      onChange={e => setArEditForm(f => ({ ...f, total_ar: e.target.value }))}
+                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:120 }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Invoice Count</div>
+                    <input type="number" inputMode="numeric" placeholder="e.g. 136"
+                      value={arEditForm.invoice_count}
+                      onChange={e => setArEditForm(f => ({ ...f, invoice_count: e.target.value }))}
+                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:90 }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Oldest Invoice Date</div>
+                    <input type="text" placeholder="e.g. 10/6/2025"
+                      value={arEditForm.oldest_date}
+                      onChange={e => setArEditForm(f => ({ ...f, oldest_date: e.target.value }))}
+                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:110 }} />
+                  </div>
+                  <button disabled={arEditSaving} onClick={async () => {
+                    setArEditSaving(true)
+                    await supabase.from('cashflow_ar_reports').update({
+                      total_ar: parseFloat(arEditForm.total_ar) || null,
+                      invoice_count: parseInt(arEditForm.invoice_count) || null,
+                      oldest_date: arEditForm.oldest_date || null,
+                    }).eq('id', arMeta.id)
+                    setIazARMeta(m => ({ ...m, total_ar: parseFloat(arEditForm.total_ar)||null, invoice_count: parseInt(arEditForm.invoice_count)||null, oldest_date: arEditForm.oldest_date||null }))
+                    setArEditSaving(false)
+                    setArEditOpen(false)
+                    sh('AR totals saved ✓')
+                  }} style={{ background:C.go, border:'none', color:'#fff', borderRadius:6, padding:'6px 14px', fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit', alignSelf:'flex-end' }}>
+                    {arEditSaving ? 'Saving…' : '✓ Save'}
+                  </button>
+                </div>
+              )}
+
+              {/* summary display */}
+              {arMeta ? (
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8 }}>
+                  <SBox label="Total AR" value={arMeta.total_ar ? fmt(arMeta.total_ar) : '—'} color={POS} small />
+                  <SBox label="Open Invoices" value={arMeta.invoice_count ? String(arMeta.invoice_count) : '—'} color={POS} small />
+                  <SBox label="Oldest Invoice" value={arMeta.oldest_date || '—'} color={WARN} small />
+                  <SBox label="Report Date" value={arMeta.uploaded_at ? new Date(arMeta.uploaded_at).toLocaleDateString() : '—'} color={NEUT} small />
+                </div>
+              ) : (
+                <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>
+                  {'No AR report yet — upload a PDF using ↑ AR PDF above.'}
+                </div>
+              )}
+            </div>
+          )}
           {ap.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
               {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}
@@ -4544,7 +4681,7 @@ function CashDashboard({ orgId, C }) {
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={[]} entity="iaz" />}
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} arEditOpen={arEditOpen} arEditForm={arEditForm} arEditSaving={arEditSaving} setArEditOpen={setArEditOpen} setArEditForm={setArEditForm} setArEditSaving={setArEditSaving} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
           {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
         </div>

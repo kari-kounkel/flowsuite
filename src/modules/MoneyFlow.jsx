@@ -4300,18 +4300,45 @@ function CashDashboard({ orgId, C }) {
 
   const parseAPaging = (text) => {
     const rows = []
+    // Split respecting quoted fields (commas inside quotes)
+    function splitCSV(line) {
+      const result = []
+      let cur = '', inQ = false
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ }
+        else if (line[i] === ',' && !inQ) { result.push(cur.trim()); cur = '' }
+        else { cur += line[i] }
+      }
+      result.push(cur.trim())
+      return result
+    }
+    const pv = s => {
+      const clean = (s||'').replace(/['"$, ]/g,'')
+      if (!clean || clean === '-') return 0
+      return parseFloat(clean) || 0
+    }
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
-    lines.forEach((line, idx) => {
-      if (idx === 0) return
-      const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-      const vendor = parts[0]
-      if (!vendor || ['vendor','total','totals','a/p aging','as of'].some(x => vendor.toLowerCase().includes(x))) return
-      const curr=pv(parts[1]), d30=pv(parts[2]), d60=pv(parts[3]), d90=pv(parts[4]), over90=pv(parts[5])
-      const total = curr+d30+d60+d90+over90
-      if (total === 0) return
+    // Find the header row — contains 'Vendor' or 'VENDOR'
+    let dataStart = -1
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].toLowerCase().includes('vendor') && lines[i].toLowerCase().includes('current')) {
+        dataStart = i + 1; break
+      }
+    }
+    if (dataStart < 0) dataStart = 1
+    for (let i = dataStart; i < lines.length; i++) {
+      const parts = splitCSV(lines[i])
+      const vendor = parts[0].replace(/"/g,'').trim()
+      if (!vendor) continue
+      const low = vendor.toLowerCase()
+      if (['total','totals','a/p aging','as of','friday','monday','tuesday','wednesday','thursday','saturday','sunday'].some(x => low.includes(x))) continue
+      const curr = pv(parts[1]), d30 = pv(parts[2]), d60 = pv(parts[3]), d90 = pv(parts[4]), over90 = pv(parts[5])
+      const total = curr + d30 + d60 + d90 + over90
+      if (total === 0 && !parts.slice(1,6).some(p => p.trim() && p.trim() !== '-')) continue
       rows.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
-    })
+    }
+    // Sort alphabetically
+    rows.sort((a, b) => a.vendor.localeCompare(b.vendor))
     return rows
   }
 
@@ -4367,12 +4394,21 @@ function CashDashboard({ orgId, C }) {
           const rows = parseARaging(text)
           await supabase.from('cashflow_ar').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
           if (rows.length) await supabase.from('cashflow_ar').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
-          sh(rows.length + ' AR customers loaded checkmark')
+          sh(rows.length + ' AR customers loaded ✓')
+          // Reload AR rows directly without changing selected date
+          const { data: freshAR } = await supabase.from('cashflow_ar').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).order('total',{ascending:false})
+          if (entity === 'iaz') setIazAR(freshAR || [])
+          else setOmegaAR(freshAR || [])
+          setUploading(null); return
         } else if (type === 'ap') {
           const rows = parseAPaging(text)
           await supabase.from('cashflow_ap').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
           if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
-          sh(rows.length + ' AP vendors loaded checkmark')
+          sh(rows.length + ' AP vendors loaded ✓')
+          // Reload AP rows directly without changing selected date
+          const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).order('total',{ascending:true})
+          setIazAP(freshAP || [])
+          setUploading(null); return
         } else if (type === 'payroll') {
           const parsed = parsePayroll(text)
           const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
@@ -4383,12 +4419,13 @@ function CashDashboard({ orgId, C }) {
           }
           sh('Payroll loaded — ' + parsed.payroll_period + ' checkmark')
         }
-        // Refresh date list and reload
+        // Refresh date list — for AP/AR uploads don't change the selected date
         const { data: allSnaps } = await supabase.from('cashflow_snapshots').select('snapshot_date').eq('org_id',orgId).order('snapshot_date',{ascending:false})
         if (allSnaps) {
           const dates = [...new Set(allSnaps.map(r => r.snapshot_date))].sort((a,b)=>b.localeCompare(a))
           setSnapshots(dates)
-          setSelectedDate(snapDate)
+          // Only move selected date if this upload created a snapshot (balance/payroll/pl)
+          if (['balance','payroll','pl'].includes(type)) setSelectedDate(snapDate)
         }
       } catch(err) {
         sh('Error: ' + err.message)
@@ -4510,7 +4547,7 @@ function CashDashboard({ orgId, C }) {
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar_report', label:'AR PDF' }, { type:'payroll_report', label:'PR PDF' }]
+      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }, { type:'payroll_report', label:'PR PDF' }]
       : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
 
     return (
@@ -4565,85 +4602,122 @@ function CashDashboard({ orgId, C }) {
               {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={POS} small />}
             </div>
           </>}
-          {entity === 'iaz' && (
-            <div style={{ marginBottom:14, background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
-              {/* header row */}
-              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, flexWrap:'wrap' }}>
-                <div style={{ fontSize:9, color:'#6ab87a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
-                  {'Accounts Receivable — Outstanding Invoices'}
+          {entity === 'iaz' && (() => {
+            const arRows = ar || []
+            const arTotal = arRows.reduce((s,r) => s + (r.total||0), 0)
+            const arCount = arRows.length
+            // Oldest invoice — find oldest snapshot date loaded
+            const hasAR = arRows.length > 0
+
+            return (
+              <div style={{ marginBottom:14 }}>
+                {/* AR Summary */}
+                <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+                  <div style={{ fontSize:9, color:'#6ab87a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                    {'Accounts Receivable — Outstanding Invoices'}
+                  </div>
+                  {hasAR ? (
+                    <>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
+                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
+                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
+                      </div>
+                      <AgedTable rows={arRows} keyField="customer" labelField="Customer" />
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
+                  )}
                 </div>
-                {arMeta?.pdf_url && (
-                  <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
-                    style={{ fontSize:9, fontWeight:700, color:'#fff', background:'#3a5c7a', borderRadius:4, padding:'2px 8px', textDecoration:'none', flexShrink:0 }}>
-                    {'📄 View Report'}
-                  </a>
-                )}
-                {arMeta && (
-                  <button onClick={() => {
-                    setArEditForm({ total_ar: arMeta.total_ar || '', invoice_count: arMeta.invoice_count || '', oldest_date: arMeta.oldest_date || '' })
-                    setArEditOpen(v => !v)
-                  }} style={{ fontSize:9, color:C.go, background:'transparent', border:`1px solid ${C.bdrF}`, borderRadius:4, padding:'2px 8px', cursor:'pointer', fontFamily:'inherit', flexShrink:0 }}>
-                    {arEditOpen ? '✕ Cancel' : '✏️ Edit Totals'}
-                  </button>
-                )}
+
+                {/* Sales Tax Entry */}
+                <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                    <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
+                      {'Sales Tax'}
+                    </div>
+                    <button onClick={() => setArEditOpen(v => !v)} style={{ fontSize:9, color:C.go, background:'transparent', border:`1px solid ${C.bdrF}`, borderRadius:4, padding:'2px 8px', cursor:'pointer', fontFamily:'inherit' }}>
+                      {arEditOpen ? '✕ Cancel' : '+ Enter Monthly Total'}
+                    </button>
+                    {arMeta?.st_history?.length > 0 && (
+                      <button onClick={() => setArEditSaving(v => !v)} style={{ fontSize:9, color:C.g, background:'transparent', border:`1px solid ${C.bdrF}`, borderRadius:4, padding:'2px 8px', cursor:'pointer', fontFamily:'inherit' }}>
+                        {arEditSaving ? '▲ Hide History' : '▼ History'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Current month display */}
+                  {arMeta?.st_current_amount && !arEditOpen && (
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom: arEditSaving ? 8 : 0 }}>
+                      <SBox label={arMeta.st_current_month || 'Current Month'} value={fmt(arMeta.st_current_amount)} color={C.am} small />
+                    </div>
+                  )}
+                  {!arMeta?.st_current_amount && !arEditOpen && (
+                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No sales tax entered yet.'}</div>
+                  )}
+
+                  {/* Entry form */}
+                  {arEditOpen && (
+                    <div style={{ display:'flex', gap:8, alignItems:'flex-end', flexWrap:'wrap', padding:'10px 12px', background:C.ch, borderRadius:8, border:`1px solid ${C.bdrF}` }}>
+                      <div>
+                        <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Month</div>
+                        <input type="month"
+                          value={arEditForm.st_month || ''}
+                          onChange={e => setArEditForm(f => ({ ...f, st_month: e.target.value }))}
+                          style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:140 }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Sales Tax Amount ($)</div>
+                        <input type="text" inputMode="decimal" placeholder="e.g. 4450.68"
+                          value={arEditForm.st_amount || ''}
+                          onChange={e => setArEditForm(f => ({ ...f, st_amount: e.target.value }))}
+                          style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:130 }} />
+                      </div>
+                      <button onClick={async () => {
+                        if (!arEditForm.st_month || !arEditForm.st_amount) return
+                        const amt = parseFloat(arEditForm.st_amount) || 0
+                        const mo = arEditForm.st_month
+                        const history = [...(arMeta?.st_history || []).filter(r => r.month !== mo), { month: mo, amount: amt }]
+                          .sort((a,b) => b.month.localeCompare(a.month))
+                        const payload = { st_current_month: mo, st_current_amount: amt, st_history: history }
+                        if (arMeta?.id) {
+                          await supabase.from('cashflow_ar_reports').update(payload).eq('id', arMeta.id)
+                          setIazARMeta(m => ({ ...m, ...payload }))
+                        } else {
+                          const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{ org_id: orgId, entity: 'iaz', ...payload }]).select().single()
+                          setIazARMeta(ins)
+                        }
+                        setArEditForm(f => ({ ...f, st_month:'', st_amount:'' }))
+                        setArEditOpen(false)
+                        sh('Sales tax saved ✓')
+                      }} style={{ background:C.go, border:'none', color:'#fff', borderRadius:6, padding:'6px 14px', fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+                        {'✓ Save'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* History — toggle with arEditSaving as reused bool */}
+                  {arEditSaving && arMeta?.st_history?.length > 0 && (
+                    <div style={{ marginTop:8, borderTop:`1px solid ${C.bdrF}`, paddingTop:8 }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                        <thead><tr>
+                          <th style={{ textAlign:'left', color:C.g, fontSize:9, padding:'3px 0', textTransform:'uppercase' }}>Month</th>
+                          <th style={{ textAlign:'right', color:C.g, fontSize:9, padding:'3px 0', textTransform:'uppercase' }}>Sales Tax</th>
+                        </tr></thead>
+                        <tbody>
+                          {arMeta.st_history.map((r,i) => (
+                            <tr key={i} style={{ borderBottom:`1px solid ${C.bdrF}` }}>
+                              <td style={{ padding:'4px 0', color:C.w }}>{r.month}</td>
+                              <td style={{ padding:'4px 0', textAlign:'right', color:C.am, fontFamily:"'DM Mono', monospace" }}>{fmt(r.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
-
-              {/* inline edit form */}
-              {arMeta && arEditOpen && (
-                <div style={{ display:'flex', gap:8, alignItems:'flex-end', flexWrap:'wrap', marginBottom:10, padding:'10px 12px', background:C.ch, borderRadius:8, border:`1px solid ${C.bdrF}` }}>
-                  <div>
-                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Total AR ($)</div>
-                    <input type="number" inputMode="decimal" placeholder="e.g. 94511.16"
-                      value={arEditForm.total_ar}
-                      onChange={e => setArEditForm(f => ({ ...f, total_ar: e.target.value }))}
-                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:120 }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Invoice Count</div>
-                    <input type="number" inputMode="numeric" placeholder="e.g. 136"
-                      value={arEditForm.invoice_count}
-                      onChange={e => setArEditForm(f => ({ ...f, invoice_count: e.target.value }))}
-                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:90 }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Oldest Invoice Date</div>
-                    <input type="text" placeholder="e.g. 10/6/2025"
-                      value={arEditForm.oldest_date}
-                      onChange={e => setArEditForm(f => ({ ...f, oldest_date: e.target.value }))}
-                      style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:110 }} />
-                  </div>
-                  <button disabled={arEditSaving} onClick={async () => {
-                    setArEditSaving(true)
-                    await supabase.from('cashflow_ar_reports').update({
-                      total_ar: parseFloat(arEditForm.total_ar) || null,
-                      invoice_count: parseInt(arEditForm.invoice_count) || null,
-                      oldest_date: arEditForm.oldest_date || null,
-                    }).eq('id', arMeta.id)
-                    setIazARMeta(m => ({ ...m, total_ar: parseFloat(arEditForm.total_ar)||null, invoice_count: parseInt(arEditForm.invoice_count)||null, oldest_date: arEditForm.oldest_date||null }))
-                    setArEditSaving(false)
-                    setArEditOpen(false)
-                    sh('AR totals saved ✓')
-                  }} style={{ background:C.go, border:'none', color:'#fff', borderRadius:6, padding:'6px 14px', fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit', alignSelf:'flex-end' }}>
-                    {arEditSaving ? 'Saving…' : '✓ Save'}
-                  </button>
-                </div>
-              )}
-
-              {/* summary display */}
-              {arMeta ? (
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8 }}>
-                  <SBox label="Total AR" value={arMeta.total_ar ? fmt(arMeta.total_ar) : '—'} color={POS} small />
-                  <SBox label="Open Invoices" value={arMeta.invoice_count ? String(arMeta.invoice_count) : '—'} color={POS} small />
-                  <SBox label="Oldest Invoice" value={arMeta.oldest_date || '—'} color={WARN} small />
-                  <SBox label="Report Date" value={arMeta.uploaded_at ? new Date(arMeta.uploaded_at).toLocaleDateString() : '—'} color={NEUT} small />
-                </div>
-              ) : (
-                <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>
-                  {'No AR report yet — upload a PDF using ↑ AR PDF above.'}
-                </div>
-              )}
-            </div>
-          )}
+            )
+          })()}
           {ap.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
               {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}

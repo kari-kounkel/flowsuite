@@ -4626,7 +4626,9 @@ function CashDashboard({ orgId, C }) {
   const NEUT = C.g           // grey for neutral labels
   const mColor = (n) => Number(n) >= 0 ? POS : NEG
 
-  const AgedTable = ({ rows, keyField, labelField }) => {
+  const AgedTable = ({ rows, keyField, labelField, defaultSortKey }) => {
+    const [sortKey, setSortKey] = useState(defaultSortKey || keyField)
+    const [sortDir, setSortDir] = useState('asc')
     const visible = rows.filter(r => r.total !== 0)
     const totCurr  = visible.reduce((s,r) => s + (r.current_amt||0), 0)
     const totD30   = visible.reduce((s,r) => s + (r.d30||0), 0)
@@ -4634,37 +4636,62 @@ function CashDashboard({ orgId, C }) {
     const totD90   = visible.reduce((s,r) => s + (r.d90||0), 0)
     const totO90   = visible.reduce((s,r) => s + (r.over90||0), 0)
     const totTotal = visible.reduce((s,r) => s + (r.total||0), 0)
+    const sorted = [...visible].sort((a,b) => {
+      const av = sortKey===keyField ? (a[keyField]||'').toLowerCase() : (a[sortKey]||0)
+      const bv = sortKey===keyField ? (b[keyField]||'').toLowerCase() : (b[sortKey]||0)
+      if (av<bv) return sortDir==='asc'?-1:1
+      if (av>bv) return sortDir==='asc'?1:-1
+      return 0
+    })
     return (
-      <div style={{ marginBottom:14, maxHeight:280, overflowY:'auto' }}>
+      <div style={{ marginBottom:14 }}>
+        <div style={{ maxHeight:300, overflowY:'auto' }}>
         <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
           <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
-            {[labelField,'Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2 }}>{h}</th>)}
+            {[
+              { key:keyField, label:labelField },
+              { key:'current_amt', label:'Current' },
+              { key:'d30', label:'1-30' },
+              { key:'d60', label:'31-60' },
+              { key:'d90', label:'61-90' },
+              { key:'over90', label:'90+' },
+              { key:'total', label:'Total' },
+            ].map(c => (
+              <th key={c.key} onClick={() => { if (sortKey===c.key) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortKey(c.key); setSortDir('asc') } }}
+                style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:sortKey===c.key?C.go:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2, cursor:'pointer', userSelect:'none', whiteSpace:'nowrap' }}>
+                {c.label}{sortKey===c.key?(sortDir==='asc'?' ↑':' ↓'):''}
+              </th>
+            ))}
           </tr></thead>
           <tbody>
-            {visible.map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
-              <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{r[keyField]}</td>
-              <td style={{ padding:'4px 6px', fontSize:11, color:r.current_amt?C.gr:C.g }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
-              <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?WARN:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
-              <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?WARN:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
-              <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?NEG:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
-              <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?NEG:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
-              <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:r.total<0?C.gr:C.w }}>{fmt(r.total)}</td>
+            {sorted.map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdrF }}>
+              <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11, color:C.w }}>{r[keyField]}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:C.w }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:C.w }}>{r.d30?fmt(r.d30):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:C.w }}>{r.d60?fmt(r.d60):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:C.w }}>{r.d90?fmt(r.d90):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:C.w }}>{r.over90?fmt(r.over90):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:C.w }}>{fmt(r.total)}</td>
             </tr>)}
           </tbody>
-          {visible.length > 1 && (
-            <tfoot>
-              <tr style={{ borderTop:'2px solid '+C.bdr, background:C.bg }}>
-                <td style={{ padding:'5px 6px', fontSize:10, fontWeight:700, color:C.g, textTransform:'uppercase', letterSpacing:'0.5px' }}>{'TOTAL'}</td>
-                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totCurr?C.gr:C.g }}>{totCurr?fmt(totCurr):'—'}</td>
-                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD30?WARN:C.g }}>{totD30?fmt(totD30):'—'}</td>
-                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD60?WARN:C.g }}>{totD60?fmt(totD60):'—'}</td>
-                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD90?NEG:C.g }}>{totD90?fmt(totD90):'—'}</td>
-                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totO90?NEG:C.g }}>{totO90?fmt(totO90):'—'}</td>
-                <td style={{ padding:'5px 6px', fontSize:13, fontWeight:700, color:totTotal<0?C.gr:C.w }}>{fmt(totTotal)}</td>
-              </tr>
-            </tfoot>
-          )}
+
         </table>
+        </div>
+        {visible.length > 1 && (
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11, borderTop:'2px solid '+C.bdr }}>
+            <tbody>
+              <tr style={{ background:C.bg }}>
+                <td style={{ padding:'5px 6px', fontSize:10, fontWeight:700, color:C.g, textTransform:'uppercase', letterSpacing:'0.5px' }}>{'TOTAL'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:C.w }}>{totCurr?fmt(totCurr):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:C.w }}>{totD30?fmt(totD30):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:C.w }}>{totD60?fmt(totD60):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:C.w }}>{totD90?fmt(totD90):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:C.w }}>{totO90?fmt(totO90):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:13, fontWeight:700, color:C.w }}>{fmt(totTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
       </div>
     )
   }
@@ -4721,46 +4748,34 @@ function CashDashboard({ orgId, C }) {
             </div>
           </>}
           {entity === 'omega' && arTotal !== null && arTotal !== 0 && <>
-            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
               <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
             </div>
             {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
           </>}
 
-          {entity === 'iaz' && <>
-            <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Receivables'}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              {arFlex !== null && arFlex !== 0 && <SBox label="Receivables from FLEX" value={fmt(arFlex)} color={mColor(arFlex)} warn={arFlex<0} sub={arFlex<0?'owes Omega':'due from FLEX'} small />}
-              {arDueOmega !== null && arDueOmega !== 0 && <SBox label="Due from Omega" value={fmt(arDueOmega)} color={POS} small />}
-            </div>
-          </>}
           {entity === 'iaz' && (() => {
             const arRows = ar || []
             const arTotal = arRows.reduce((s,r) => s + (r.total||0), 0)
             const arCount = arRows.length
-            // Oldest invoice — find oldest snapshot date loaded
             const hasAR = arRows.length > 0
 
             return (
               <div style={{ marginBottom:14 }}>
-                {/* AR Summary */}
-                <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-                  <div style={{ fontSize:9, color:'#6ab87a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                    {'Accounts Receivable — Outstanding Invoices'}
+                {/* Current Payroll */}
+                {snap.payroll_gross > 0 && (
+                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                      {'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
+                      <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
+                      <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
+                      <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
+                    </div>
                   </div>
-                  {hasAR ? (
-                    <>
-                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
-                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
-                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
-                      </div>
-                      <AgedTable rows={arRows} keyField="customer" labelField="Customer" />
-                    </>
-                  ) : (
-                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
-                  )}
-                </div>
+                )}
 
                 {/* Sales Tax Entry */}
                 <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
@@ -4848,23 +4863,47 @@ function CashDashboard({ orgId, C }) {
                     </div>
                   )}
                 </div>
+
+                {/* AR — Outstanding Invoices */}
+                <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
+                  <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                    {'Accounts Receivable — Outstanding Invoices'}
+                  </div>
+                  {hasAR ? (
+                    <>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
+                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
+                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
+                      </div>
+                      <AgedTable rows={arRows} keyField="customer" labelField="Customer" defaultSortKey="customer" />
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
+                  )}
+                  {arMeta?.pdf_url && (
+                    <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
+                      <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
+                        style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
+                        {'View AR Report PDF'}
+                      </a>
+                      {arMeta.uploaded_at && (
+                        <span style={{ fontSize:9, color:C.g, marginLeft:8 }}>
+                          {'Uploaded ' + new Date(arMeta.uploaded_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })()}
           {ap.length > 0 && <>
-            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
               {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}
             </div>
-            <AgedTable rows={ap} keyField="vendor" labelField="Vendor" />
+            <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
           </>}
-          {snap.payroll_gross > 0 && <>
-            <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Last Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:14 }}>
-              <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
-              <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
-              <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
-            </div>
-          </>}
+
         </>}
       </div>
     )

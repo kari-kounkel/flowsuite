@@ -4145,12 +4145,8 @@ function CashDashboard({ orgId, C }) {
   const [iazAP, setIazAP] = useState([])
   const [iazAR, setIazAR] = useState([])
   const [iazARMeta, setIazARMeta] = useState(null)   // { total_ar, invoice_count, oldest_date, pdf_url, uploaded_at }
-  const [iazPayrollMeta, setIazPayrollMeta] = useState(null) // { pdf_url, report_date, uploaded_at }
   const [omegaAR, setOmegaAR] = useState([])
   const [entityView, setEntityView] = useState('both')
-  const [arEditOpen, setArEditOpen] = useState(false)
-  const [arEditForm, setArEditForm] = useState({ total_ar: '', invoice_count: '', oldest_date: '' })
-  const [arEditSaving, setArEditSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(null)
   const [toast, setToast] = useState('')
@@ -4192,17 +4188,14 @@ function CashDashboard({ orgId, C }) {
         return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
       }),
       // IAZ AR report meta (PDF summary)
-      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1),
-      // IAZ Payroll report meta (PDF link)
-      supabase.from('cashflow_payroll_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
-    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR, iazPrMetaR]) => {
+      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
+    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
       setOmegaData((omegaSnap.data || [])[0] || null)
       setIazAP(apR.data || [])
       setOmegaAR(arR.data || [])
       setIazAR(iazArR.data || [])
       setIazARMeta((iazArMetaR.data || [])[0] || null)
-      setIazPayrollMeta((iazPrMetaR.data || [])[0] || null)
       setLoading(false)
     })
   }, [selectedDate, orgId])
@@ -4577,14 +4570,13 @@ function CashDashboard({ orgId, C }) {
         setIazARMeta(ins || { pdf_url, report_date: today, uploaded_at: new Date().toISOString() })
         sh('AR Report uploaded ✓')
       } else if (type === 'payroll_report') {
-        const { data: ins } = await supabase.from('cashflow_payroll_reports').insert([{
+        await supabase.from('cashflow_payroll_reports').insert([{
           org_id: orgId,
           entity,
           report_date: today,
           pdf_url,
           uploaded_at: new Date().toISOString(),
-        }]).select().single()
-        if (entity === 'iaz') setIazPayrollMeta(ins || { pdf_url, report_date: today, uploaded_at: new Date().toISOString() })
+        }])
         sh('Payroll Report uploaded ✓')
       }
     } catch(err) {
@@ -4701,7 +4693,10 @@ function CashDashboard({ orgId, C }) {
     )
   }
 
-  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta, arEditOpen, arEditForm, arEditSaving, setArEditOpen, setArEditForm, setArEditSaving }) => {
+  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta }) => {
+    const [arEditOpen, setArEditOpen] = useState(false)
+    const [arEditForm, setArEditForm] = useState({ st_month: '', st_amount: '' })
+    const [arEditSaving, setArEditSaving] = useState(false)
     const cash = snap ? (snap.cash_accounts || []) : []
     const cc = snap ? (snap.cc_accounts || []) : []
     const loc = snap ? snap.loc_balance : null
@@ -4712,7 +4707,7 @@ function CashDashboard({ orgId, C }) {
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }]
+      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }, { type:'payroll_report', label:'PR PDF' }]
       : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
 
     return (
@@ -4769,37 +4764,18 @@ function CashDashboard({ orgId, C }) {
             return (
               <div style={{ marginBottom:14 }}>
                 {/* Current Payroll */}
-                <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
-                      {'Current Payroll' + (snap && snap.payroll_period ? ' — ' + snap.payroll_period : '')}
+                {snap.payroll_gross > 0 && (
+                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                      {'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}
                     </div>
-                    <UpBtn entity="iaz" type="payroll" label="Payroll CSV" />
-                    <UpBtn entity="iaz" type="payroll_report" label="PR PDF" />
-                  </div>
-                  {snap && snap.payroll_gross > 0 ? (
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
                       <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
                       <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
                       <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
                     </div>
-                  ) : (
-                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No payroll data — upload Payroll CSV above.'}</div>
-                  )}
-                  {payrollMeta?.pdf_url && (
-                    <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
-                      <a href={payrollMeta.pdf_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
-                        {'View Payroll Report PDF'}
-                      </a>
-                      {payrollMeta.uploaded_at && (
-                        <span style={{ fontSize:9, color:C.g, marginLeft:8 }}>
-                          {'Uploaded ' + new Date(payrollMeta.uploaded_at).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Sales Tax Entry */}
                 <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
@@ -4951,7 +4927,7 @@ function CashDashboard({ orgId, C }) {
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} payrollMeta={iazPayrollMeta} arEditOpen={arEditOpen} arEditForm={arEditForm} arEditSaving={arEditSaving} setArEditOpen={setArEditOpen} setArEditForm={setArEditForm} setArEditSaving={setArEditSaving} />}
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} payrollMeta={iazPayrollMeta} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
           {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
         </div>

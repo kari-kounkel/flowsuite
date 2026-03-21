@@ -4145,6 +4145,7 @@ function CashDashboard({ orgId, C }) {
   const [iazAP, setIazAP] = useState([])
   const [iazAR, setIazAR] = useState([])
   const [iazARMeta, setIazARMeta] = useState(null)   // { total_ar, invoice_count, oldest_date, pdf_url, uploaded_at }
+  const [iazPayrollMeta, setIazPayrollMeta] = useState(null) // { pdf_url, report_date, uploaded_at }
   const [omegaAR, setOmegaAR] = useState([])
   const [entityView, setEntityView] = useState('both')
   const [arEditOpen, setArEditOpen] = useState(false)
@@ -4191,14 +4192,17 @@ function CashDashboard({ orgId, C }) {
         return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
       }),
       // IAZ AR report meta (PDF summary)
-      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
-    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
+      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1),
+      // IAZ Payroll report meta (PDF link)
+      supabase.from('cashflow_payroll_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
+    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR, iazPrMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
       setOmegaData((omegaSnap.data || [])[0] || null)
       setIazAP(apR.data || [])
       setOmegaAR(arR.data || [])
       setIazAR(iazArR.data || [])
       setIazARMeta((iazArMetaR.data || [])[0] || null)
+      setIazPayrollMeta((iazPrMetaR.data || [])[0] || null)
       setLoading(false)
     })
   }, [selectedDate, orgId])
@@ -4522,18 +4526,11 @@ function CashDashboard({ orgId, C }) {
           setUploading(null); return
         } else if (type === 'payroll') {
           const parsed = parsePayroll(text)
-          const payrollFields = {
-            payroll_gross: parsed.payroll_gross,
-            payroll_net: parsed.payroll_net,
-            payroll_taxes: parsed.payroll_taxes,
-            payroll_period: parsed.payroll_period,
-            uploaded_at: new Date().toISOString(),
-          }
-          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).maybeSingle()
-          if (existing?.id) {
-            await supabase.from('cashflow_snapshots').update(payrollFields).eq('id', existing.id)
+          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
+          if (existing) {
+            await supabase.from('cashflow_snapshots').update({ ...parsed, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
           } else {
-            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, ...payrollFields })
+            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, ...parsed })
           }
           sh('Payroll loaded — ' + parsed.payroll_period + ' checkmark')
         }
@@ -4580,13 +4577,14 @@ function CashDashboard({ orgId, C }) {
         setIazARMeta(ins || { pdf_url, report_date: today, uploaded_at: new Date().toISOString() })
         sh('AR Report uploaded ✓')
       } else if (type === 'payroll_report') {
-        await supabase.from('cashflow_payroll_reports').insert([{
+        const { data: ins } = await supabase.from('cashflow_payroll_reports').insert([{
           org_id: orgId,
           entity,
           report_date: today,
           pdf_url,
           uploaded_at: new Date().toISOString(),
-        }])
+        }]).select().single()
+        if (entity === 'iaz') setIazPayrollMeta(ins || { pdf_url, report_date: today, uploaded_at: new Date().toISOString() })
         sh('Payroll Report uploaded ✓')
       }
     } catch(err) {
@@ -4703,7 +4701,7 @@ function CashDashboard({ orgId, C }) {
     )
   }
 
-  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, arEditOpen, arEditForm, arEditSaving, setArEditOpen, setArEditForm, setArEditSaving }) => {
+  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta, arEditOpen, arEditForm, arEditSaving, setArEditOpen, setArEditForm, setArEditSaving }) => {
     const cash = snap ? (snap.cash_accounts || []) : []
     const cc = snap ? (snap.cc_accounts || []) : []
     const loc = snap ? snap.loc_balance : null
@@ -4714,7 +4712,7 @@ function CashDashboard({ orgId, C }) {
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
     const uploadDefs = entity === 'iaz'
-      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }, { type:'payroll_report', label:'PR PDF' }]
+      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }]
       : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
 
     return (
@@ -4771,18 +4769,37 @@ function CashDashboard({ orgId, C }) {
             return (
               <div style={{ marginBottom:14 }}>
                 {/* Current Payroll */}
-                {snap.payroll_gross > 0 && (
-                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                      {'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}
+                <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
+                      {'Current Payroll' + (snap && snap.payroll_period ? ' — ' + snap.payroll_period : '')}
                     </div>
+                    <UpBtn entity="iaz" type="payroll" label="Payroll CSV" />
+                    <UpBtn entity="iaz" type="payroll_report" label="PR PDF" />
+                  </div>
+                  {snap && snap.payroll_gross > 0 ? (
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
                       <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
                       <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
                       <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No payroll data — upload Payroll CSV above.'}</div>
+                  )}
+                  {payrollMeta?.pdf_url && (
+                    <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
+                      <a href={payrollMeta.pdf_url} target="_blank" rel="noreferrer"
+                        style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
+                        {'View Payroll Report PDF'}
+                      </a>
+                      {payrollMeta.uploaded_at && (
+                        <span style={{ fontSize:9, color:C.g, marginLeft:8 }}>
+                          {'Uploaded ' + new Date(payrollMeta.uploaded_at).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Sales Tax Entry */}
                 <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
@@ -4871,43 +4888,36 @@ function CashDashboard({ orgId, C }) {
                   )}
                 </div>
 
-                {/* AR — Outstanding Invoices (summary only) */}
-                {(() => {
-                  const metaTotal = arMeta?.total_ar != null ? arMeta.total_ar : (hasAR ? arTotal : null)
-                  const metaCount = arMeta?.invoice_count != null ? arMeta.invoice_count : (hasAR ? arCount : null)
-                  const metaOldest = arMeta?.oldest_date || null
-                  const metaUploaded = arMeta?.uploaded_at || null
-                  const hasAnyAR = hasAR || arMeta?.total_ar != null
-                  return (
-                    <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
-                      <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                        {'Accounts Receivable — Outstanding Invoices'}
-                        {metaUploaded && (
-                          <span style={{ fontWeight:400, marginLeft:8, textTransform:'none', letterSpacing:0 }}>
-                            {'(as of ' + new Date(metaUploaded).toLocaleDateString() + ')'}
-                          </span>
-                        )}
+                {/* AR — Outstanding Invoices */}
+                <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
+                  <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                    {'Accounts Receivable — Outstanding Invoices'}
+                  </div>
+                  {hasAR ? (
+                    <>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
+                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
+                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
                       </div>
-                      {hasAnyAR ? (
-                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom: arMeta?.pdf_url ? 8 : 0 }}>
-                          {metaTotal != null && <SBox label="Total Outstanding" value={fmt(metaTotal)} color={POS} small />}
-                          {metaCount != null && <SBox label="Open Customers" value={String(metaCount)} color={POS} small />}
-                          {metaOldest && <SBox label="Oldest Invoice" value={metaOldest} color={WARN} small />}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
-                      )}
-                      {arMeta?.pdf_url && (
-                        <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
-                          <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
-                            style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
-                            {'View AR Report PDF'}
-                          </a>
-                        </div>
+                      <AgedTable rows={arRows} keyField="customer" labelField="Customer" defaultSortKey="customer" />
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
+                  )}
+                  {arMeta?.pdf_url && (
+                    <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
+                      <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
+                        style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
+                        {'View AR Report PDF'}
+                      </a>
+                      {arMeta.uploaded_at && (
+                        <span style={{ fontSize:9, color:C.g, marginLeft:8 }}>
+                          {'Uploaded ' + new Date(arMeta.uploaded_at).toLocaleDateString()}
+                        </span>
                       )}
                     </div>
-                  )
-                })()}
+                  )}
+                </div>
               </div>
             )
           })()}
@@ -4941,7 +4951,7 @@ function CashDashboard({ orgId, C }) {
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} arEditOpen={arEditOpen} arEditForm={arEditForm} arEditSaving={arEditSaving} setArEditOpen={setArEditOpen} setArEditForm={setArEditForm} setArEditSaving={setArEditSaving} />}
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} payrollMeta={iazPayrollMeta} arEditOpen={arEditOpen} arEditForm={arEditForm} arEditSaving={arEditSaving} setArEditOpen={setArEditOpen} setArEditForm={setArEditForm} setArEditSaving={setArEditSaving} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
           {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
         </div>

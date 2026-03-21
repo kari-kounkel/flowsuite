@@ -4522,11 +4522,18 @@ function CashDashboard({ orgId, C }) {
           setUploading(null); return
         } else if (type === 'payroll') {
           const parsed = parsePayroll(text)
-          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
-          if (existing) {
-            await supabase.from('cashflow_snapshots').update({ ...parsed, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
+          const payrollFields = {
+            payroll_gross: parsed.payroll_gross,
+            payroll_net: parsed.payroll_net,
+            payroll_taxes: parsed.payroll_taxes,
+            payroll_period: parsed.payroll_period,
+            uploaded_at: new Date().toISOString(),
+          }
+          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).maybeSingle()
+          if (existing?.id) {
+            await supabase.from('cashflow_snapshots').update(payrollFields).eq('id', existing.id)
           } else {
-            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, ...parsed })
+            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, ...payrollFields })
           }
           sh('Payroll loaded — ' + parsed.payroll_period + ' checkmark')
         }
@@ -4864,36 +4871,43 @@ function CashDashboard({ orgId, C }) {
                   )}
                 </div>
 
-                {/* AR — Outstanding Invoices */}
-                <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
-                  <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                    {'Accounts Receivable — Outstanding Invoices'}
-                  </div>
-                  {hasAR ? (
-                    <>
-                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
-                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
-                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
+                {/* AR — Outstanding Invoices (summary only) */}
+                {(() => {
+                  const metaTotal = arMeta?.total_ar != null ? arMeta.total_ar : (hasAR ? arTotal : null)
+                  const metaCount = arMeta?.invoice_count != null ? arMeta.invoice_count : (hasAR ? arCount : null)
+                  const metaOldest = arMeta?.oldest_date || null
+                  const metaUploaded = arMeta?.uploaded_at || null
+                  const hasAnyAR = hasAR || arMeta?.total_ar != null
+                  return (
+                    <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
+                      <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
+                        {'Accounts Receivable — Outstanding Invoices'}
+                        {metaUploaded && (
+                          <span style={{ fontWeight:400, marginLeft:8, textTransform:'none', letterSpacing:0 }}>
+                            {'(as of ' + new Date(metaUploaded).toLocaleDateString() + ')'}
+                          </span>
+                        )}
                       </div>
-                      <AgedTable rows={arRows} keyField="customer" labelField="Customer" defaultSortKey="customer" />
-                    </>
-                  ) : (
-                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
-                  )}
-                  {arMeta?.pdf_url && (
-                    <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
-                      <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
-                        {'View AR Report PDF'}
-                      </a>
-                      {arMeta.uploaded_at && (
-                        <span style={{ fontSize:9, color:C.g, marginLeft:8 }}>
-                          {'Uploaded ' + new Date(arMeta.uploaded_at).toLocaleDateString()}
-                        </span>
+                      {hasAnyAR ? (
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom: arMeta?.pdf_url ? 8 : 0 }}>
+                          {metaTotal != null && <SBox label="Total Outstanding" value={fmt(metaTotal)} color={POS} small />}
+                          {metaCount != null && <SBox label="Open Customers" value={String(metaCount)} color={POS} small />}
+                          {metaOldest && <SBox label="Oldest Invoice" value={metaOldest} color={WARN} small />}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
+                      )}
+                      {arMeta?.pdf_url && (
+                        <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
+                          <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"
+                            style={{ fontSize:10, color:C.go, fontWeight:700, textDecoration:'none', display:'inline-flex', alignItems:'center', gap:4 }}>
+                            {'View AR Report PDF'}
+                          </a>
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  )
+                })()}
               </div>
             )
           })()}

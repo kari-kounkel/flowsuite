@@ -4497,7 +4497,7 @@ function CashDashboard({ orgId, C }) {
           // For IAZ save/update meta row with totals + oldest date
           if (entity === 'iaz') {
             const metaPayload = { org_id: orgId, entity: 'iaz', report_date: snapDate, total_ar: parsed.totalAR || null, invoice_count: parsed.invoiceCount || null, oldest_date: parsed.oldestDate || null, uploaded_at: new Date().toISOString() }
-            const { data: existingMeta } = await supabase.from('cashflow_ar_reports').select('id').eq('org_id',orgId).eq('entity','iaz').order('uploaded_at',{ascending:false}).limit(1).single().catch(()=>({data:null}))
+            const { data: existingMeta } = await supabase.from('cashflow_ar_reports').select('id').eq('org_id',orgId).eq('entity','iaz').order('uploaded_at',{ascending:false}).limit(1).maybeSingle()
             if (existingMeta?.id) {
               const { data: upd } = await supabase.from('cashflow_ar_reports').update(metaPayload).eq('id',existingMeta.id).select().single()
               if (upd) setIazARMeta(upd)

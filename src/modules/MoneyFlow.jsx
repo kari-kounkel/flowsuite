@@ -4245,10 +4245,24 @@ function CashDashboard({ orgId, C }) {
     let ar_total = 0
     let section = ''
 
+    // Find the last non-empty numeric value in a CSV row
+    const parseLastVal = (parts) => {
+      for (let i = parts.length - 1; i >= 1; i--) {
+        const s = (parts[i] || '').replace(/[$,"]/g, '').trim()
+        if (!s || s === '-') continue
+        // Handle parenthetical negatives: (1234.56)
+        const parens = s.match(/^\((.+)\)$/)
+        if (parens) return -(parseFloat(parens[1].replace(/,/g,'')) || 0)
+        const n = parseFloat(s.replace(/,/g,''))
+        if (!isNaN(n)) return n
+      }
+      return 0
+    }
+
     lines.forEach(row => {
       const parts = row.split(',').map(s => s.replace(/"/g,'').trim())
       const label = parts[0] || ''
-      const val = parseFloat((parts[parts.length-1]||'').replace(/[$,]/g,'')) || 0
+      const val = parseLastVal(parts)
       const low = label.toLowerCase()
       if (!label) return
 
@@ -4263,17 +4277,20 @@ function CashDashboard({ orgId, C }) {
       if (val === 0) return
 
       if (section === 'cash') {
+        // Cash should always be stored as-is (positive = good, negative = overdrawn)
         cashAccounts.push({ label, value: val })
       } else if (section === 'cc') {
-        ccAccounts.push({ label, value: val })
+        // CC balance = what you owe — store as positive (display handles abs)
+        ccAccounts.push({ label, value: Math.abs(val) })
       } else if (section === 'loans') {
-        loanAccounts.push({ label, value: val })
+        // Loan balances = what you owe — store as positive
+        loanAccounts.push({ label, value: Math.abs(val) })
       } else if (section === 'current_liab') {
         // LOC goes here
         if (low.includes('loc') || low.includes('cash flow manager') || low.includes('line of credit')) {
-          loc_balance = val
+          loc_balance = Math.abs(val)
         } else if (low.includes('loan') || low.includes('payable') || low.includes('meda') || low.includes('mortgage')) {
-          loanAccounts.push({ label, value: val })
+          loanAccounts.push({ label, value: Math.abs(val) })
         }
       } else {
         // Non-section items — pick up AR
@@ -4609,26 +4626,48 @@ function CashDashboard({ orgId, C }) {
   const NEUT = C.g           // grey for neutral labels
   const mColor = (n) => Number(n) >= 0 ? POS : NEG
 
-  const AgedTable = ({ rows, keyField, labelField }) => (
-    <div style={{ marginBottom:14, maxHeight:280, overflowY:'auto' }}>
-      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
-        <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
-          {[labelField,'Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2 }}>{h}</th>)}
-        </tr></thead>
-        <tbody>
-          {rows.filter(r=>r.total!==0).map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
-            <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{r[keyField]}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.current_amt?C.gr:C.g }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?WARN:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?WARN:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?NEG:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?NEG:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
-            <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:r.total<0?C.gr:C.w }}>{fmt(r.total)}</td>
-          </tr>)}
-        </tbody>
-      </table>
-    </div>
-  )
+  const AgedTable = ({ rows, keyField, labelField }) => {
+    const visible = rows.filter(r => r.total !== 0)
+    const totCurr  = visible.reduce((s,r) => s + (r.current_amt||0), 0)
+    const totD30   = visible.reduce((s,r) => s + (r.d30||0), 0)
+    const totD60   = visible.reduce((s,r) => s + (r.d60||0), 0)
+    const totD90   = visible.reduce((s,r) => s + (r.d90||0), 0)
+    const totO90   = visible.reduce((s,r) => s + (r.over90||0), 0)
+    const totTotal = visible.reduce((s,r) => s + (r.total||0), 0)
+    return (
+      <div style={{ marginBottom:14, maxHeight:280, overflowY:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+          <thead><tr style={{ borderBottom:'1px solid '+C.bdr }}>
+            {[labelField,'Current','1-30','31-60','61-90','90+','Total'].map(h => <th key={h} style={{ textAlign:'left', padding:'3px 6px', fontSize:9, color:C.g, textTransform:'uppercase', position:'sticky', top:0, background:C.bg2 }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {visible.map((r,i) => <tr key={i} style={{ borderBottom:'1px solid '+C.bdr }}>
+              <td style={{ padding:'4px 6px', fontWeight:500, fontSize:11 }}>{r[keyField]}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:r.current_amt?C.gr:C.g }}>{r.current_amt?fmt(r.current_amt):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:r.d30?WARN:C.g }}>{r.d30?fmt(r.d30):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:r.d60?WARN:C.g }}>{r.d60?fmt(r.d60):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:r.d90?NEG:C.g }}>{r.d90?fmt(r.d90):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:11, color:r.over90?NEG:C.g }}>{r.over90?fmt(r.over90):'—'}</td>
+              <td style={{ padding:'4px 6px', fontSize:12, fontWeight:700, color:r.total<0?C.gr:C.w }}>{fmt(r.total)}</td>
+            </tr>)}
+          </tbody>
+          {visible.length > 1 && (
+            <tfoot>
+              <tr style={{ borderTop:'2px solid '+C.bdr, background:C.bg }}>
+                <td style={{ padding:'5px 6px', fontSize:10, fontWeight:700, color:C.g, textTransform:'uppercase', letterSpacing:'0.5px' }}>{'TOTAL'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totCurr?C.gr:C.g }}>{totCurr?fmt(totCurr):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD30?WARN:C.g }}>{totD30?fmt(totD30):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD60?WARN:C.g }}>{totD60?fmt(totD60):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totD90?NEG:C.g }}>{totD90?fmt(totD90):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:11, fontWeight:700, color:totO90?NEG:C.g }}>{totO90?fmt(totO90):'—'}</td>
+                <td style={{ padding:'5px 6px', fontSize:13, fontWeight:700, color:totTotal<0?C.gr:C.w }}>{fmt(totTotal)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    )
+  }
 
   const EntityCol = ({ title, snap, ap, ar, entity, arMeta, arEditOpen, arEditForm, arEditSaving, setArEditOpen, setArEditForm, setArEditSaving }) => {
     const cash = snap ? (snap.cash_accounts || []) : []
@@ -4658,8 +4697,8 @@ function CashDashboard({ orgId, C }) {
         {snap && <>
           <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} small />)}
-            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} small />}
+            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} sub={a.value<0?'overdrawn':null} small />)}
+            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} sub={totalCash<0?'overdrawn':null} small />}
           </div>
           {cc.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>

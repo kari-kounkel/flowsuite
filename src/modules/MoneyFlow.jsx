@@ -4328,21 +4328,35 @@ function OmegaManualEntry({ orgId, snapDate, C }) {
 
   const inp = { padding: '6px 10px', background: C.bg, border: '1px solid ' + C.bdr, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: "'DM Mono', monospace", width: 140 }
 
+  const checkVal = parseFloat(checking) || 0
+  const ccVal = parseFloat(cc) || 0
+  const fmtVal = n => '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div>
-          <div style={{ fontSize: 9, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>10100 Checking – Old National</div>
-          <input value={checking} onChange={e => setChecking(e.target.value)} placeholder="0.00" style={inp} />
+      <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+C.go, cursor:'pointer' }}
+          onClick={() => { const v = prompt('10100 Checking — Old National:', checking); if (v !== null) setChecking(v) }}>
+          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>{'10100 Checking – Old National'}</div>
+          <div style={{ fontSize:22, fontWeight:700, color: checkVal < 0 ? '#B45055' : C.go, lineHeight:1 }}>{fmtVal(checkVal)}</div>
+          {checkVal < 0 && <div style={{ fontSize:9, color:'#B45055', marginTop:3 }}>overdrawn</div>}
+          <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
         </div>
-        <div>
-          <div style={{ fontSize: 9, color: C.rd, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>20500 Old National Bank 0979 (CC)</div>
-          <input value={cc} onChange={e => setCC(e.target.value)} placeholder="0.00" style={inp} />
-        </div>
-        <button onClick={save} style={{ padding: '6px 16px', background: C.go, border: 'none', color: '#fff', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-          {saved ? '✓ Saved' : 'Save'}
-        </button>
       </div>
+      <div style={{ fontSize:9, color:'#B45055', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid #B45055', borderLeft:'3px solid #c4956a', cursor:'pointer' }}
+          onClick={() => { const v = prompt('20500 Old National Bank 0979 (CC):', cc); if (v !== null) setCC(v) }}>
+          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>{'20500 Old National Bank 0979'}</div>
+          <div style={{ fontSize:22, fontWeight:700, color:'#c4956a', lineHeight:1 }}>{fmtVal(ccVal)}</div>
+          <div style={{ fontSize:9, color:'#c4956a', marginTop:3 }}>owed</div>
+          <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+        </div>
+      </div>
+      <button onClick={save} style={{ padding:'5px 14px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit', marginBottom:8 }}>
+        {saved ? '✓ Saved' : 'Save Changes'}
+      </button>
     </div>
   )
 }
@@ -4385,26 +4399,28 @@ function OmegaPDFReports({ orgId, C, uploading, setUploading, sh }) {
     setUploading(null)
   }
 
-  const linkStyle = { fontSize: 11, color: C.go, fontWeight: 700, textDecoration: 'none' }
-  const upLabel = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 10, color: C.g, fontFamily: 'inherit', background: 'transparent' }
-
   return (
-    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <label style={upLabel}>
-          {'↑ P&L PDF'}
-          <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => uploadReport('pl', e.target.files[0])} />
-        </label>
-        {plUrl && <a href={plUrl} target="_blank" rel="noreferrer" style={linkStyle}>View P&L ↗</a>}
-        {plDate && <span style={{ fontSize: 9, color: C.g }}>{'Uploaded ' + new Date(plDate).toLocaleDateString()}</span>}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <label style={upLabel}>
-          {'↑ Bal Sheet PDF'}
-          <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => uploadReport('bs', e.target.files[0])} />
-        </label>
-        {bsUrl && <a href={bsUrl} target="_blank" rel="noreferrer" style={linkStyle}>View Balance Sheet ↗</a>}
-        {bsDate && <span style={{ fontSize: 9, color: C.g }}>{'Uploaded ' + new Date(bsDate).toLocaleDateString()}</span>}
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{'Reports'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8 }}>
+        {[
+          { type:'pl', label:'Profit & Loss', icon:'📊', url:plUrl, date:plDate },
+          { type:'bs', label:'Balance Sheet', icon:'📋', url:bsUrl, date:bsDate },
+        ].map(r => (
+          <div key={r.type} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+C.go, display:'flex', flexDirection:'column', gap:8 }}>
+            <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{r.label}</div>
+            <div style={{ fontSize:20 }}>{r.icon}</div>
+            {r.url
+              ? <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize:11, color:C.go, fontWeight:700, textDecoration:'none' }}>{'View ↗'}</a>
+              : <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Not uploaded'}</span>
+            }
+            {r.date && <div style={{ fontSize:9, color:C.g }}>{'Uploaded ' + new Date(r.date).toLocaleDateString()}</div>}
+            <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 8px', borderRadius:5, border:'1px solid '+C.bdrF, cursor:'pointer', fontSize:9, color:C.g, fontFamily:'inherit', background:'transparent', marginTop:'auto' }}>
+              {'↑ ' + (r.url ? 'Replace' : 'Upload')}
+              <input type="file" accept=".pdf" style={{ display:'none' }} onChange={e => uploadReport(r.type, e.target.files[0])} />
+            </label>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -5317,11 +5333,13 @@ function CashDashboard({ orgId, C }) {
               </div>
             )
           })()}
-          <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
-            <span>{ap.length > 0 ? 'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors' : 'Accounts Payable'}</span>
-            {entity === 'iaz' && <UpBtn entity={entity} type="ap" label="AP Aging" />}
-          </div>
-          {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
+          {entity === 'iaz' && <>
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
+              <span>{ap.length > 0 ? 'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors' : 'Accounts Payable'}</span>
+              <UpBtn entity={entity} type="ap" label="AP Aging" />
+            </div>
+            {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
+          </>}
 
         </>}
       </div>

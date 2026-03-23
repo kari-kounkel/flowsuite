@@ -4363,64 +4363,96 @@ function OmegaManualEntry({ orgId, snapDate, C }) {
 
 // ─── OMEGA PDF REPORTS ────────────────────────────────────────────────────────
 function OmegaPDFReports({ orgId, C, uploading, setUploading, sh }) {
-  const [plUrl, setPlUrl] = useState(null)
-  const [bsUrl, setBsUrl] = useState(null)
-  const [plDate, setPlDate] = useState(null)
-  const [bsDate, setBsDate] = useState(null)
+  const [allReports, setAllReports] = useState([])
+  const [showHistory, setShowHistory] = useState({})
 
   useEffect(() => {
     if (!orgId) return
     supabase.from('cashflow_ar_reports').select('*')
       .eq('org_id', orgId).eq('entity', 'omega')
-      .order('uploaded_at', { ascending: false }).limit(2)
-      .then(({ data }) => {
-        if (!data) return
-        const pl = data.find(r => r.report_type === 'pl')
-        const bs = data.find(r => r.report_type === 'bs')
-        if (pl) { setPlUrl(pl.pdf_url); setPlDate(pl.uploaded_at) }
-        if (bs) { setBsUrl(bs.pdf_url); setBsDate(bs.uploaded_at) }
-      })
+      .order('uploaded_at', { ascending: false })
+      .then(({ data }) => setAllReports(data || []))
   }, [orgId])
 
   async function uploadReport(type, file) {
     if (!file) return
     setUploading('omega_' + type)
     try {
-      const key = orgId + '/omega_' + type + '_current.pdf'
-      const { error } = await supabase.storage.from('flowsuite-files').upload(key, file, { upsert: true, contentType: 'application/pdf' })
+      // Timestamped key — preserves every upload
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const key = orgId + '/omega_' + type + '_' + ts + '.pdf'
+      const { error } = await supabase.storage.from('flowsuite-files').upload(key, file, { contentType: 'application/pdf' })
       if (error) throw error
       const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(key)
       const url = urlData?.publicUrl
-      await supabase.from('cashflow_ar_reports').insert([{ org_id: orgId, entity: 'omega', report_type: type, report_date: new Date().toISOString().split('T')[0], pdf_url: url, uploaded_at: new Date().toISOString() }])
-      if (type === 'pl') { setPlUrl(url); setPlDate(new Date().toISOString()) }
-      if (type === 'bs') { setBsUrl(url); setBsDate(new Date().toISOString()) }
+      const { data: inserted } = await supabase.from('cashflow_ar_reports').insert([{
+        org_id: orgId, entity: 'omega', report_type: type,
+        report_date: new Date().toISOString().split('T')[0],
+        pdf_url: url, uploaded_at: new Date().toISOString()
+      }]).select().single()
+      if (inserted) setAllReports(prev => [inserted, ...prev])
       sh((type === 'pl' ? 'P&L' : 'Balance Sheet') + ' uploaded ✓')
     } catch(e) { sh('Error: ' + e.message) }
     setUploading(null)
   }
+
+  const plReports = allReports.filter(r => r.report_type === 'pl')
+  const bsReports = allReports.filter(r => r.report_type === 'bs')
+  const latest = { pl: plReports[0], bs: bsReports[0] }
+  const history = { pl: plReports.slice(1), bs: bsReports.slice(1) }
 
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{'Reports'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8 }}>
         {[
-          { type:'pl', label:'Profit & Loss', icon:'📊', url:plUrl, date:plDate },
-          { type:'bs', label:'Balance Sheet', icon:'📋', url:bsUrl, date:bsDate },
-        ].map(r => (
-          <div key={r.type} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+C.go, display:'flex', flexDirection:'column', gap:8 }}>
-            <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{r.label}</div>
-            <div style={{ fontSize:20 }}>{r.icon}</div>
-            {r.url
-              ? <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize:11, color:C.go, fontWeight:700, textDecoration:'none' }}>{'View ↗'}</a>
-              : <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Not uploaded'}</span>
-            }
-            {r.date && <div style={{ fontSize:9, color:C.g }}>{'Uploaded ' + new Date(r.date).toLocaleDateString()}</div>}
-            <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 8px', borderRadius:5, border:'1px solid '+C.bdrF, cursor:'pointer', fontSize:9, color:C.g, fontFamily:'inherit', background:'transparent', marginTop:'auto' }}>
-              {'↑ ' + (r.url ? 'Replace' : 'Upload')}
-              <input type="file" accept=".pdf" style={{ display:'none' }} onChange={e => uploadReport(r.type, e.target.files[0])} />
-            </label>
-          </div>
-        ))}
+          { type:'pl', label:'Profit & Loss', icon:'📊' },
+          { type:'bs', label:'Balance Sheet', icon:'📋' },
+        ].map(r => {
+          const cur = latest[r.type]
+          const hist = history[r.type] || []
+          return (
+            <div key={r.type} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+C.go, display:'flex', flexDirection:'column', gap:6 }}>
+              <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{r.label}</div>
+              <div style={{ fontSize:20 }}>{r.icon}</div>
+              {cur
+                ? <a href={cur.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:11, color:C.go, fontWeight:700, textDecoration:'none' }}>{'View Latest ↗'}</a>
+                : <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Not uploaded'}</span>
+              }
+              {cur && <div style={{ fontSize:9, color:C.g }}>{new Date(cur.uploaded_at).toLocaleDateString()}</div>}
+              {cur && (
+                <button onClick={async () => {
+                  if (!confirm('Delete this report?')) return
+                  await supabase.from('cashflow_ar_reports').delete().eq('id', cur.id)
+                  setAllReports(prev => prev.filter(x => x.id !== cur.id))
+                }} style={{ background:'transparent', border:'none', color:'#e07070', fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit', textAlign:'left' }}>✕ Delete latest</button>
+              )}
+              {hist.length > 0 && (
+                <div>
+                  <button onClick={() => setShowHistory(p => ({ ...p, [r.type]: !p[r.type] }))} style={{ background:'transparent', border:'none', color:C.g, fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                    {showHistory[r.type] ? '▲ Hide' : '▼ History (' + hist.length + ')'}
+                  </button>
+                  {showHistory[r.type] && hist.map((h, i) => (
+                    <div key={i} style={{ marginTop:4, display:'flex', alignItems:'center', gap:6 }}>
+                      <a href={h.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:10, color:C.g, textDecoration:'none', flex:1 }}>
+                        {'↗ ' + new Date(h.uploaded_at).toLocaleDateString()}
+                      </a>
+                      <button onClick={async () => {
+                        if (!confirm('Delete this report?')) return
+                        await supabase.from('cashflow_ar_reports').delete().eq('id', h.id)
+                        setAllReports(prev => prev.filter(x => x.id !== h.id))
+                      }} style={{ background:'transparent', border:'none', color:'#e07070', fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 8px', borderRadius:5, border:'1px solid '+C.bdrF, cursor:'pointer', fontSize:9, color:C.g, fontFamily:'inherit', background:'transparent', marginTop:'auto' }}>
+                {'↑ ' + (cur ? 'Upload New' : 'Upload')}
+                <input type="file" accept=".pdf" style={{ display:'none' }} onChange={e => uploadReport(r.type, e.target.files[0])} />
+              </label>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

@@ -4288,6 +4288,265 @@ function JEHistoryTab({ orgId, C }) {
 
 
 
+// ─── IAZ PDF REPORTS ─────────────────────────────────────────────────────────
+function IAZPDFReports({ orgId, C }) {
+  const [allReports, setAllReports] = useState([])
+  const [showHistory, setShowHistory] = useState({})
+  const [uploading, setUploading] = useState(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    supabase.from('cashflow_ar_reports').select('*')
+      .eq('org_id', orgId).eq('entity', 'iaz')
+      .in('report_type', ['pl','bs'])
+      .order('uploaded_at', { ascending: false })
+      .then(({ data }) => setAllReports(data || []))
+  }, [orgId])
+
+  async function uploadReport(type, file) {
+    if (!file) return
+    setUploading(type)
+    try {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const key = orgId + '/iaz_' + type + '_' + ts + '.pdf'
+      const { error } = await supabase.storage.from('flowsuite-files').upload(key, file, { contentType: 'application/pdf' })
+      if (error) throw error
+      const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(key)
+      const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{
+        org_id: orgId, entity: 'iaz', report_type: type,
+        report_date: new Date().toISOString().split('T')[0],
+        pdf_url: urlData?.publicUrl, uploaded_at: new Date().toISOString()
+      }]).select().single()
+      if (ins) setAllReports(prev => [ins, ...prev])
+    } catch(e) { console.error(e) }
+    setUploading(null)
+  }
+
+  async function deleteReport(id) {
+    if (!confirm('Delete this report?')) return
+    await supabase.from('cashflow_ar_reports').delete().eq('id', id)
+    setAllReports(prev => prev.filter(r => r.id !== id))
+  }
+
+  const plReports = allReports.filter(r => r.report_type === 'pl')
+  const bsReports = allReports.filter(r => r.report_type === 'bs')
+  const latest = { pl: plReports[0], bs: bsReports[0] }
+  const history = { pl: plReports.slice(1), bs: bsReports.slice(1) }
+
+  return (
+    <div style={{ marginTop:16 }}>
+      <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{'Reports'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8 }}>
+        {[
+          { type:'pl', label:'Profit & Loss', icon:'📊' },
+          { type:'bs', label:'Balance Sheet', icon:'📋' },
+        ].map(r => {
+          const cur = latest[r.type]
+          const hist = history[r.type] || []
+          return (
+            <div key={r.type} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', display:'flex', flexDirection:'column', gap:6 }}>
+              <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{r.label}</div>
+              <div style={{ fontSize:20 }}>{r.icon}</div>
+              {cur
+                ? <a href={cur.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:11, color:'#c4a45a', fontWeight:700, textDecoration:'none' }}>{'View Latest ↗'}</a>
+                : <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Not uploaded'}</span>
+              }
+              {cur && <div style={{ fontSize:9, color:C.g }}>{new Date(cur.uploaded_at).toLocaleDateString()}</div>}
+              {cur && <button onClick={() => deleteReport(cur.id)} style={{ background:'transparent', border:'none', color:'#9a6a6a', fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit', textAlign:'left' }}>✕ Delete</button>}
+              {hist.length > 0 && (
+                <div>
+                  <button onClick={() => setShowHistory(p => ({ ...p, [r.type]: !p[r.type] }))} style={{ background:'transparent', border:'none', color:C.g, fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                    {showHistory[r.type] ? '▲ Hide' : '▼ History (' + hist.length + ')'}
+                  </button>
+                  {showHistory[r.type] && hist.map((h, i) => (
+                    <div key={i} style={{ marginTop:4, display:'flex', alignItems:'center', gap:6 }}>
+                      <a href={h.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:10, color:C.g, textDecoration:'none', flex:1 }}>{'↗ ' + new Date(h.uploaded_at).toLocaleDateString()}</a>
+                      <button onClick={() => deleteReport(h.id)} style={{ background:'transparent', border:'none', color:'#9a6a6a', fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 8px', borderRadius:5, border:'1px solid '+C.bdrF, cursor:'pointer', fontSize:9, color:C.g, fontFamily:'inherit', background:'transparent', marginTop:'auto' }}>
+                {uploading === r.type ? 'Uploading…' : '↑ ' + (cur ? 'Upload New' : 'Upload')}
+                <input type="file" accept=".pdf" style={{ display:'none' }} onChange={e => uploadReport(r.type, e.target.files[0])} disabled={uploading === r.type} />
+              </label>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── IAZ MANUAL ENTRY ────────────────────────────────────────────────────────
+function IAZManualEntry({ orgId, snapDate, C }) {
+  const FIELDS = [
+    { key:'iaz_2204',    label:'1010 US Bank 2204',      section:'cash', color:'#c4a45a' },
+    { key:'iaz_2805',    label:'1011 US Bank 2805',      section:'cash', color:'#c4a45a' },
+    { key:'iaz_postage', label:'1012 US Bank Postage',   section:'cash', color:'#c4a45a' },
+    { key:'iaz_cash',    label:'1020 Cash on Hand',      section:'cash', color:'#c4a45a' },
+    { key:'iaz_amex',    label:'2810 American Express',  section:'cc',   color:'#c4956a' },
+  ]
+  const PR_FIELDS = [
+    { key:'pr_date',       label:'Pay Date',        type:'text', placeholder:'e.g. 03/21/2026' },
+    { key:'pr_gross',      label:'Gross Total',     type:'number' },
+    { key:'pr_net',        label:'Net Pay',         type:'number' },
+    { key:'pr_taxes',      label:'Taxes',           type:'number' },
+    { key:'pr_deductions', label:'Deductions',      type:'number' },
+  ]
+
+  const blank = {}
+  FIELDS.forEach(f => { blank[f.key] = '' })
+  PR_FIELDS.forEach(f => { blank[f.key] = '' })
+
+  const [vals, setVals] = useState(blank)
+  const [saved, setSaved] = useState(false)
+  const [prReports, setPrReports] = useState([])
+  const [showPrHist, setShowPrHist] = useState(false)
+  const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    if (!orgId || !snapDate) return
+    const keys = [...FIELDS.map(f => f.key), ...PR_FIELDS.map(f => f.key)].join(',')
+    supabase.from('cashflow_snapshots').select(keys)
+      .eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', snapDate)
+      .maybeSingle().then(({ data }) => {
+        if (data) {
+          const next = { ...blank }
+          Object.keys(next).forEach(k => { if (data[k] != null) next[k] = String(data[k]) })
+          setVals(next)
+        }
+      })
+    supabase.from('cashflow_ar_reports').select('*')
+      .eq('org_id', orgId).eq('entity', 'iaz').eq('report_type', 'payroll')
+      .order('uploaded_at', { ascending: false })
+      .then(({ data }) => setPrReports(data || []))
+  }, [orgId, snapDate])
+
+  async function save() {
+    const payload = {}
+    FIELDS.forEach(f => { payload[f.key] = parseFloat(vals[f.key]) || 0 })
+    PR_FIELDS.forEach(f => {
+      payload[f.key] = f.type === 'number' ? (parseFloat(vals[f.key]) || 0) : (vals[f.key] || '')
+    })
+    const { data: existing } = await supabase.from('cashflow_snapshots').select('id')
+      .eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', snapDate).maybeSingle()
+    if (existing?.id) {
+      await supabase.from('cashflow_snapshots').update(payload).eq('id', existing.id)
+    } else {
+      await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity: 'iaz', snapshot_date: snapDate, ...payload })
+    }
+    setSaved(true); setTimeout(() => setSaved(false), 2000)
+  }
+
+  async function uploadPR(file) {
+    if (!file) return
+    setUploading(true)
+    try {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const key = orgId + '/iaz_payroll_' + ts + '.pdf'
+      const { error } = await supabase.storage.from('flowsuite-files').upload(key, file, { contentType: 'application/pdf' })
+      if (error) throw error
+      const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(key)
+      const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{
+        org_id: orgId, entity: 'iaz', report_type: 'payroll',
+        report_date: new Date().toISOString().split('T')[0],
+        pdf_url: urlData?.publicUrl, uploaded_at: new Date().toISOString()
+      }]).select().single()
+      if (ins) setPrReports(prev => [ins, ...prev])
+    } catch(e) { console.error(e) }
+    setUploading(false)
+  }
+
+  async function deletePR(id) {
+    if (!confirm('Delete this payroll report?')) return
+    await supabase.from('cashflow_ar_reports').delete().eq('id', id)
+    setPrReports(prev => prev.filter(r => r.id !== id))
+  }
+
+  const fmtVal = n => '$' + Math.abs(parseFloat(n)||0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const box = (f) => (
+    <div key={f.key} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid '+f.color, display:'flex', flexDirection:'column', gap:4, cursor:'pointer' }}
+      onClick={() => { const v = prompt(f.label + ':', vals[f.key]); if (v !== null) setVals(p => ({ ...p, [f.key]: v })) }}>
+      <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{f.label}</div>
+      <div style={{ fontSize:22, fontWeight:700, color:f.color, lineHeight:1 }}>{fmtVal(vals[f.key])}</div>
+      {f.section === 'cc' && <div style={{ fontSize:9, color:f.color }}>owed</div>}
+      <div style={{ fontSize:9, color:C.g, marginTop:2 }}>click to edit</div>
+    </div>
+  )
+
+  const cashFields = FIELDS.filter(f => f.section === 'cash')
+  const ccFields = FIELDS.filter(f => f.section === 'cc')
+  const totalCash = cashFields.reduce((s,f) => s + (parseFloat(vals[f.key])||0), 0)
+
+  return (
+    <div>
+      {/* Cash */}
+      <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+        {cashFields.map(box)}
+        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a' }}>
+          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>Total Cash</div>
+          <div style={{ fontSize:22, fontWeight:700, color: totalCash < 0 ? '#B45055' : '#c4a45a', lineHeight:1 }}>{fmtVal(totalCash)}</div>
+          {totalCash < 0 && <div style={{ fontSize:9, color:'#B45055' }}>overdrawn</div>}
+        </div>
+      </div>
+
+      {/* CC */}
+      <div style={{ fontSize:9, color:'#c4956a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:8 }}>{'Credit Cards'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+        {ccFields.map(box)}
+      </div>
+
+      {/* Payroll */}
+      <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:12 }}>{'Current Payroll'}</div>
+      <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:10 }}>
+          {PR_FIELDS.map(f => (
+            <div key={f.key} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
+              onClick={() => { const v = prompt(f.label + ':', vals[f.key]); if (v !== null) setVals(p => ({ ...p, [f.key]: v })) }}>
+              <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{f.label}</div>
+              <div style={{ fontSize: f.key === 'pr_date' ? 14 : 22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>
+                {f.key === 'pr_date' ? (vals[f.key] || '—') : fmtVal(vals[f.key])}
+              </div>
+              <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+            </div>
+          ))}
+        </div>
+        {/* Payroll PDF */}
+        <div style={{ borderTop:'1px solid '+C.bdrF, paddingTop:10 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            {prReports[0] && <a href={prReports[0].pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:11, color:'#c4a45a', fontWeight:700, textDecoration:'none' }}>{'View Payroll Report ↗'}</a>}
+            {prReports[0] && <span style={{ fontSize:9, color:C.g }}>{new Date(prReports[0].uploaded_at).toLocaleDateString()}</span>}
+            {prReports[0] && <button onClick={() => deletePR(prReports[0].id)} style={{ background:'transparent', border:'none', color:'#9a6a6a', fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>✕ Delete</button>}
+            <label style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'4px 8px', borderRadius:5, border:'1px solid '+C.bdrF, cursor:'pointer', fontSize:9, color:C.g, fontFamily:'inherit', background:'transparent' }}>
+              {uploading ? 'Uploading…' : '↑ ' + (prReports[0] ? 'Upload New' : 'Upload Payroll PDF')}
+              <input type="file" accept=".pdf" style={{ display:'none' }} onChange={e => uploadPR(e.target.files[0])} disabled={uploading} />
+            </label>
+          </div>
+          {prReports.length > 1 && (
+            <div style={{ marginTop:8 }}>
+              <button onClick={() => setShowPrHist(v => !v)} style={{ background:'transparent', border:'none', color:C.g, fontSize:9, cursor:'pointer', padding:0, fontFamily:'inherit' }}>
+                {showPrHist ? '▲ Hide' : '▼ History (' + (prReports.length - 1) + ')'}
+              </button>
+              {showPrHist && prReports.slice(1).map((r,i) => (
+                <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginTop:4 }}>
+                  <a href={r.pdf_url} target="_blank" rel="noreferrer" style={{ fontSize:10, color:C.g, textDecoration:'none', flex:1 }}>{'↗ ' + new Date(r.uploaded_at).toLocaleDateString()}</a>
+                  <button onClick={() => deletePR(r.id)} style={{ background:'transparent', border:'none', color:'#9a6a6a', fontSize:9, cursor:'pointer', fontFamily:'inherit' }}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <button onClick={save} style={{ padding:'5px 14px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit', marginTop:4 }}>
+        {saved ? '✓ Saved' : 'Save Changes'}
+      </button>
+    </div>
+  )
+}
+
 // ─── OMEGA MANUAL ENTRY ──────────────────────────────────────────────────────
 function OmegaManualEntry({ orgId, snapDate, C }) {
   const [checking, setChecking] = useState('')
@@ -5167,37 +5426,7 @@ function CashDashboard({ orgId, C }) {
         )}
 
         {snap && <>
-          {entity === 'iaz' && <>
-          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
-            <span>{'Cash'}</span>
-            <UpBtn entity={entity} type="balance" label="Bal Sheet" />
-            <UpBtn entity={entity} type="pl" label="P&L" />
-          </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-            {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} sub={a.value<0?'overdrawn':null} small />)}
-            {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} sub={totalCash<0?'overdrawn':null} small />}
-          </div>
-          {cc.length > 0 && <>
-            <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
-              {cc.length > 1 && <SBox label="Total CC" value={fmt(Math.abs(cc.reduce((s,a)=>s+(a.value||0),0)))} color={WARN} warn sub="total owed" small />}
-            </div>
-          </>}
-          {loc !== null && loc > 0 && <>
-            <div style={{ fontSize:9, color:WARN, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Line of Credit'}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              <SBox label="LOC Balance" value={fmt(loc)} color={WARN} warn sub="amount drawn" small />
-            </div>
-          </>}
-          {loans.length > 0 && <>
-            <div style={{ fontSize:9, color:NEG, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Loans & Long-term Liabilities'}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-              {loans.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={NEG} sub="owed" small />)}
-              {loans.length > 1 && <SBox label="Total Loans" value={fmt(loans.reduce((s,a)=>s+Math.abs(a.value),0))} color={NEG} small />}
-            </div>
-          </>}
-          </>}{/* end IAZ-only sections */}
+          {entity === 'iaz' && <IAZManualEntry orgId={orgId} snapDate={selectedDate} C={C} />}
           {entity === 'omega' && <>
             <OmegaManualEntry orgId={orgId} snapDate={selectedDate} C={C} />
             {/* AR */}
@@ -5216,38 +5445,14 @@ function CashDashboard({ orgId, C }) {
           {entity === 'iaz' && (() => {
             const arRows = ar || []
             const arTotal = arRows.reduce((s,r) => s + (r.total||0), 0)
-            const arCount = arRows.length
             const hasAR = arRows.length > 0
 
             return (
               <div style={{ marginBottom:14 }}>
-                {/* Current Payroll */}
-                {snap.payroll_gross <= 0 && (
-                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'10px 14px', marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
-                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>{'Current Payroll'}</div>
-                    <UpBtn entity={entity} type="payroll" label="Payroll CSV" />
-                    <UpBtn entity={entity} type="payroll_report" label="PR PDF" />
-                  </div>
-                )}
-                {snap.payroll_gross > 0 && (
-                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
-                      <span>{'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</span>
-                      <UpBtn entity={entity} type="payroll" label="Payroll CSV" />
-                      <UpBtn entity={entity} type="payroll_report" label="PR PDF" />
-                    </div>
-                    <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
-                      <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
-                      <SBox label="Taxes + Ded." value={fmt(snap.payroll_taxes)} color={WARN} small />
-                      <SBox label="Net Pay" value={fmt(snap.payroll_net)} color={POS} small />
-                    </div>
-                  </div>
-                )}
-
                 {/* Sales Tax Entry */}
                 <div style={{ background:C.bg2, border:`1px solid ${C.bdr}`, borderRadius:10, padding:'12px 14px' }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
-                    <div style={{ fontSize:9, color:C.am, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
+                    <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>
                       {'Sales Tax'}
                     </div>
                     <button onClick={() => setArEditOpen(v => !v)} style={{ fontSize:9, color:C.go, background:'transparent', border:`1px solid ${C.bdrF}`, borderRadius:4, padding:'2px 8px', cursor:'pointer', fontFamily:'inherit' }}>
@@ -5263,7 +5468,8 @@ function CashDashboard({ orgId, C }) {
                   {/* Current month display */}
                   {arMeta?.st_current_amount && !arEditOpen && (
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom: arEditSaving ? 8 : 0 }}>
-                      <SBox label={arMeta.st_current_month || 'Current Month'} value={fmt(arMeta.st_current_amount)} color={C.am} small />
+                      <SBox label={arMeta.st_current_month || 'Current Month'} value={fmt(arMeta.st_current_amount)} color={'#c4a45a'} small />
+                      {arMeta.st_pay_date && <SBox label="Pay Date" value={arMeta.st_pay_date} color={'#c4a45a'} small />}
                     </div>
                   )}
                   {!arMeta?.st_current_amount && !arEditOpen && (
@@ -5287,13 +5493,21 @@ function CashDashboard({ orgId, C }) {
                           onChange={e => setArEditForm(f => ({ ...f, st_amount: e.target.value }))}
                           style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:130 }} />
                       </div>
+                      <div>
+                        <div style={{ fontSize:9, color:C.g, marginBottom:3, textTransform:'uppercase', letterSpacing:'0.8px' }}>Pay Date</div>
+                        <input type="text" placeholder="e.g. 03/20/2026"
+                          value={arEditForm.st_pay_date || ''}
+                          onChange={e => setArEditForm(f => ({ ...f, st_pay_date: e.target.value }))}
+                          style={{ background:C.bg, border:`1px solid ${C.bdr}`, color:C.w, borderRadius:5, padding:'5px 8px', fontSize:11, fontFamily:'inherit', width:120 }} />
+                      </div>
                       <button onClick={async () => {
                         if (!arEditForm.st_month || !arEditForm.st_amount) return
                         const amt = parseFloat(arEditForm.st_amount) || 0
                         const mo = arEditForm.st_month
-                        const history = [...(arMeta?.st_history || []).filter(r => r.month !== mo), { month: mo, amount: amt }]
+                        const payDate = arEditForm.st_pay_date || ''
+                        const history = [...(arMeta?.st_history || []).filter(r => r.month !== mo), { month: mo, amount: amt, pay_date: payDate }]
                           .sort((a,b) => b.month.localeCompare(a.month))
-                        const payload = { st_current_month: mo, st_current_amount: amt, st_history: history }
+                        const payload = { st_current_month: mo, st_current_amount: amt, st_pay_date: payDate, st_history: history }
                         if (arMeta?.id) {
                           await supabase.from('cashflow_ar_reports').update(payload).eq('id', arMeta.id)
                           setIazARMeta(m => ({ ...m, ...payload }))
@@ -5316,13 +5530,15 @@ function CashDashboard({ orgId, C }) {
                       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
                         <thead><tr>
                           <th style={{ textAlign:'left', color:C.g, fontSize:9, padding:'3px 0', textTransform:'uppercase' }}>Month</th>
+                          <th style={{ textAlign:'left', color:C.g, fontSize:9, padding:'3px 6px', textTransform:'uppercase' }}>Pay Date</th>
                           <th style={{ textAlign:'right', color:C.g, fontSize:9, padding:'3px 0', textTransform:'uppercase' }}>Sales Tax</th>
                         </tr></thead>
                         <tbody>
                           {arMeta.st_history.map((r,i) => (
                             <tr key={i} style={{ borderBottom:`1px solid ${C.bdrF}` }}>
                               <td style={{ padding:'4px 0', color:C.w }}>{r.month}</td>
-                              <td style={{ padding:'4px 0', textAlign:'right', color:C.am, fontFamily:"'DM Mono', monospace" }}>{fmt(r.amount)}</td>
+                              <td style={{ padding:'4px 6px', color:C.g, fontSize:10 }}>{r.pay_date || '—'}</td>
+                              <td style={{ padding:'4px 0', textAlign:'right', color:'#c4a45a', fontFamily:"'DM Mono', monospace" }}>{fmt(r.amount)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -5362,6 +5578,8 @@ function CashDashboard({ orgId, C }) {
                     </div>
                   )}
                 </div>
+                {/* IAZ PDF Reports — P&L and Balance Sheet */}
+                <IAZPDFReports orgId={orgId} C={C} />
               </div>
             )
           })()}

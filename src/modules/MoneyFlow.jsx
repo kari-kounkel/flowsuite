@@ -4543,11 +4543,7 @@ function IAZManualEntry({ orgId, snapDate, C }) {
       <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
         {cashFields.map(box)}
-        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a' }}>
-          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>Total Cash</div>
-          <div style={{ fontSize:22, fontWeight:700, color: totalCash < 0 ? '#B45055' : '#c4a45a', lineHeight:1 }}>{fmtVal(totalCash)}</div>
-          {totalCash < 0 && <div style={{ fontSize:9, color:'#B45055' }}>overdrawn</div>}
-        </div>
+
       </div>
 
       {/* CC */}

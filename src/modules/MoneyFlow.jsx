@@ -1303,26 +1303,31 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
         // Quarterly: "KK 2025 Q4 AR FLEX Quarterly" -> use Dec 31
         function jeEndDate(je) {
           const name = je.je_number || ''
-          // Weekly — has a date after the dot
-          const weeklyMatch = name.match(/·\s*(\w+)\s+(\d+)$/)
-          if (weeklyMatch) {
-            const months = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 }
-            const mo = months[weeklyMatch[1]]
-            const day = parseInt(weeklyMatch[2])
-            const yr = (je.period || '2025').slice(0,4)
-            if (mo && day) return new Date(parseInt(yr), mo-1, day)
+          const isWeekly = je.upload_mode === 'weekly' || !je.upload_mode
+          const months = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 }
+          // Weekly — parse date from name, return that date at noon
+          if (isWeekly) {
+            const m = name.match(/[··]\s*([A-Za-z]+)\s+(\d+)/)
+            if (m) {
+              const mo = months[m[1]]
+              const day = parseInt(m[2])
+              const yr = parseInt((je.period || '2025-01').slice(0,4))
+              if (mo && day) return new Date(yr, mo-1, day, 12, 0, 0)
+            }
           }
-          // Monthly — last day of the period month
-          if (je.period && je.period.match(/^\d{4}-\d{2}$/)) {
-            const [yr, mo] = je.period.split('-').map(Number)
-            return new Date(yr, mo, 0) // day 0 = last day of previous month = last day of mo
-          }
-          // Quarterly — last day of Q4=Dec31, Q3=Sep30, Q2=Jun30, Q1=Mar31
+          // Quarterly — end of quarter + 1 extra day so it sorts above monthly
           const qMatch = name.match(/Q(\d)/)
           if (qMatch) {
             const qEndMonth = { 1:3, 2:6, 3:9, 4:12 }[parseInt(qMatch[1])]
             const yr = parseInt((je.period || name).match(/\d{4}/)?.[0] || '2025')
-            return new Date(yr, qEndMonth, 0)
+            const d = new Date(yr, qEndMonth, 0, 23, 59, 59)
+            d.setDate(d.getDate() + 1) // float above monthly
+            return d
+          }
+          // Monthly — last day of the period month at end of day (after weeklies)
+          if (je.period && je.period.match(/^\d{4}-\d{2}$/)) {
+            const [yr, mo] = je.period.split('-').map(Number)
+            return new Date(yr, mo, 0, 23, 59, 58) // 23:59:58 — above weeklies, below quarterly
           }
           return new Date(je.posted_at || 0)
         }

@@ -4560,17 +4560,45 @@ function IAZManualEntry({ orgId, snapDate, C }) {
       {/* Payroll */}
       <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:4 }}>{'Current Payroll'}</div>
       <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:10 }}>
-          {PR_FIELDS.map(f => (
-            <div key={f.key} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
-              onClick={() => { const v = prompt(f.label + ':', vals[f.key]); if (v !== null) setVals(p => ({ ...p, [f.key]: v })) }}>
-              <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{f.label}</div>
-              <div style={{ fontSize: f.key === 'pr_date' ? 14 : 22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>
-                {f.key === 'pr_date' ? (vals[f.key] || '—') : fmtVal(vals[f.key])}
+        {/* Row 1: Pay Date + Gross Total */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+          {['pr_date','pr_gross'].map(key => {
+            const f = PR_FIELDS.find(x => x.key === key)
+            return (
+              <div key={key} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
+                onClick={() => { const v = prompt(f.label + ':', vals[key]); if (v !== null) setVals(p => ({ ...p, [key]: v })) }}>
+                <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{f.label}</div>
+                <div style={{ fontSize:22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>
+                  {key === 'pr_date' ? (vals[key] || '—') : fmtVal(vals[key])}
+                </div>
+                <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
               </div>
-              <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+            )
+          })}
+        </div>
+        {/* Row 2: Net Pay + Taxes + Deductions */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+          {['pr_net','pr_taxes','pr_deductions'].map(key => {
+            const f = PR_FIELDS.find(x => x.key === key)
+            return (
+              <div key={key} style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
+                onClick={() => { const v = prompt(f.label + ':', vals[key]); if (v !== null) setVals(p => ({ ...p, [key]: v })) }}>
+                <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>{f.label}</div>
+                <div style={{ fontSize:22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>{fmtVal(vals[key])}</div>
+                <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+              </div>
+            )
+          })}
+        </div>
+        {/* Row 3: Total Payroll Cost (calculated) */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:10 }}>
+          <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a' }}>
+            <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>Total Payroll Cost</div>
+            <div style={{ fontSize:22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>
+              {fmtVal((parseFloat(vals.pr_net)||0) + (parseFloat(vals.pr_taxes)||0) + (parseFloat(vals.pr_deductions)||0))}
             </div>
-          ))}
+            <div style={{ fontSize:9, color:C.g, marginTop:4 }}>net + taxes + deductions</div>
+          </div>
         </div>
         {/* Payroll PDF */}
         <div style={{ borderTop:'1px solid '+C.bdrF, paddingTop:10 }}>
@@ -4887,7 +4915,7 @@ function CashDashboard({ orgId, C }) {
         return supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: false })
       }),
       // IAZ AR report meta (PDF summary)
-      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
+      supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('report_type', 'ar').order('uploaded_at', { ascending: false }).limit(1)
     ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
       const omegaSnapRow = (omegaSnap.data || [])[0] || null
@@ -5243,7 +5271,7 @@ function CashDashboard({ orgId, C }) {
           // For IAZ save/update meta row with totals + oldest date
           if (entity === 'iaz') {
             const metaPayload = { org_id: orgId, entity: 'iaz', report_date: snapDate, total_ar: parsed.totalAR || null, invoice_count: parsed.invoiceCount || null, oldest_date: parsed.oldestDate || null, uploaded_at: new Date().toISOString() }
-            const { data: existingMeta } = await supabase.from('cashflow_ar_reports').select('id').eq('org_id',orgId).eq('entity','iaz').order('uploaded_at',{ascending:false}).limit(1).maybeSingle()
+            const { data: existingMeta } = await supabase.from('cashflow_ar_reports').select('id').eq('org_id',orgId).eq('entity','iaz').eq('report_type','ar').order('uploaded_at',{ascending:false}).limit(1).maybeSingle()
             if (existingMeta?.id) {
               const { data: upd } = await supabase.from('cashflow_ar_reports').update(metaPayload).eq('id',existingMeta.id).select().single()
               if (upd) setIazARMeta(upd)
@@ -5568,10 +5596,10 @@ function CashDashboard({ orgId, C }) {
                           .sort((a,b) => b.month.localeCompare(a.month))
                         const payload = { st_current_month: mo, st_current_amount: amt, st_pay_date: payDate, st_history: history }
                         if (arMeta?.id) {
-                          await supabase.from('cashflow_ar_reports').update(payload).eq('id', arMeta.id)
+                          await supabase.from('cashflow_ar_reports').update({ ...payload, report_type: 'ar' }).eq('id', arMeta.id)
                           setIazARMeta(m => ({ ...m, ...payload }))
                         } else {
-                          const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{ org_id: orgId, entity: 'iaz', ...payload }]).select().single()
+                          const { data: ins } = await supabase.from('cashflow_ar_reports').insert([{ org_id: orgId, entity: 'iaz', report_type: 'ar', ...payload }]).select().single()
                           setIazARMeta(ins)
                         }
                         setArEditForm(f => ({ ...f, st_month:'', st_amount:'' }))

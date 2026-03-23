@@ -4865,7 +4865,7 @@ function OmegaCSVViewer({ title, raw, C }) {
 // ═══════════════════════════════════════════════════════
 function CashDashboard({ orgId, C }) {
   const [snapshots, setSnapshots] = useState([])
-  const [selectedDate, setSelectedDate] = useState('')
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [iazData, setIazData] = useState(null)
   const [omegaData, setOmegaData] = useState(null)
   const [iazAP, setIazAP] = useState([])
@@ -5682,8 +5682,7 @@ function CashDashboard({ orgId, C }) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
-        <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
-        <input type="date" value={selectedDate} readOnly disabled style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.g, fontSize:12, fontFamily:'inherit', opacity:0.5, cursor:'not-allowed' }} />
+        <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'As of: '}<span style={{ color:C.go, fontWeight:700 }}>{new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })}</span></div>
 
         <div style={{ flex:1 }} />
         {['both','iaz','omega'].map(e => (
@@ -6557,7 +6556,7 @@ function APReconView({ orgId, C, userEmail }) {
         .then(async r => {
           if (!r.data || !r.data[0]) return { data: [] }
           const latestDate = r.data[0].snapshot_date
-          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('over90', { ascending: false })
+          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
         }),
       supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
     ]).then(([apR, reconR]) => {

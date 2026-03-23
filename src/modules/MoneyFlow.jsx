@@ -4288,6 +4288,62 @@ function JEHistoryTab({ orgId, C }) {
 
 
 
+// ─── OMEGA CSV VIEWER ────────────────────────────────────────────────────────
+function OmegaCSVViewer({ title, raw, C }) {
+  const [open, setOpen] = useState(false)
+  if (!raw) return null
+  // Parse CSV into rows
+  function splitLine(line) {
+    const result = []; let cur = '', inQ = false
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') { inQ = !inQ }
+      else if (line[i] === ',' && !inQ) { result.push(cur.trim()); cur = '' }
+      else { cur += line[i] }
+    }
+    result.push(cur.trim()); return result
+  }
+  const rows = raw.split('\n').map(splitLine).filter(r => r.some(c => c.trim()))
+  // Find header row — has multiple non-empty cells
+  const headerIdx = rows.findIndex(r => r.filter(c => c.trim()).length > 2)
+  const headers = headerIdx >= 0 ? rows[headerIdx] : rows[0]
+  const dataRows = rows.slice(headerIdx + 1)
+  return (
+    <div style={{ marginTop:12, background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, overflow:'hidden' }}>
+      <div onClick={() => setOpen(v => !v)} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', cursor:'pointer', background:open ? C.gD : 'transparent' }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.go }}>{title}</div>
+        <span style={{ fontSize:10, color:C.g }}>{open ? '▲ Hide' : '▼ View'}</span>
+      </div>
+      {open && (
+        <div style={{ overflowX:'auto', maxHeight:400, overflowY:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:10, fontFamily:"'DM Mono',monospace" }}>
+            <thead style={{ position:'sticky', top:0, background:C.bg }}>
+              <tr>
+                {headers.map((h, i) => (
+                  <th key={i} style={{ textAlign: i === 0 ? 'left' : 'right', color:C.g, padding:'6px 8px', fontWeight:600, whiteSpace:'nowrap', borderBottom:'1px solid '+C.bdr }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dataRows.map((row, ri) => {
+                const isEmpty = row.every(c => !c.trim())
+                if (isEmpty) return null
+                const isTotal = (row[0] || '').toLowerCase().startsWith('total') || (row[0] || '').toLowerCase().startsWith('net')
+                return (
+                  <tr key={ri} style={{ borderBottom:'1px solid '+C.bdrF, background: isTotal ? C.gD : 'transparent', fontWeight: isTotal ? 700 : 400 }}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} style={{ padding:'4px 8px', color: isTotal ? C.go : C.w, textAlign: ci === 0 ? 'left' : 'right', whiteSpace: ci === 0 ? 'normal' : 'nowrap' }}>{cell}</td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ═══════════════════════════════════════════════════════
 // CASH DASHBOARD — upload QBO CSVs, view entity panels
 // ═══════════════════════════════════════════════════════
@@ -4683,7 +4739,14 @@ function CashDashboard({ orgId, C }) {
               loc_balance: parsed.loc_balance, ar_total: parsed.ar_total
             })
           }
-          sh('Balance Sheet loaded' + (detectedDate ? ' — dated ' + snapDate : '') + ' checkmark')
+          if (entity === 'omega') {
+            // Save raw CSV alongside parsed data
+            const bsSnap = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity','omega').eq('snapshot_date',snapDate).maybeSingle()
+            if (bsSnap.data?.id) {
+              await supabase.from('cashflow_snapshots').update({ raw_bs: text }).eq('id', bsSnap.data.id)
+            }
+          }
+          sh('Balance Sheet loaded' + (detectedDate ? ' — dated ' + snapDate : '') + ' ✓')
         } else if (type === 'ar') {
           const parsed = entity === 'iaz' ? parseIAZAR(text) : parseOmegaAR(text)
           const rows = parsed.rows
@@ -4717,15 +4780,14 @@ function CashDashboard({ orgId, C }) {
           setUploading(null); return
         } else if (type === 'pl') {
           const parsed = parseOmegaPL(text)
-          // Store in cashflow_snapshots as pl_data jsonb
           const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).maybeSingle()
           if (existing) {
-            await supabase.from('cashflow_snapshots').update({ pl_data: parsed, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
+            await supabase.from('cashflow_snapshots').update({ pl_data: parsed, raw_pl: text, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
           } else {
-            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, pl_data: parsed })
+            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, pl_data: parsed, raw_pl: text })
           }
           if (entity === 'omega') setOmegaPL(parsed)
-          sh('P&L loaded — ' + (parsed.current?.label || '') + ' ✓')
+          sh('P&L loaded ✓')
         } else if (type === 'payroll') {
           const parsed = parsePayroll(text)
           const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
@@ -4965,58 +5027,28 @@ function CashDashboard({ orgId, C }) {
             </div>
           </>}
           {entity === 'omega' && <>
-            {/* Old National 0979 — CC between cash and AR */}
-            {cc.length > 0 && (
-              <>
-                <div style={{ fontSize:9, color:WARN, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards / Lines'}</div>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-                  {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
-                </div>
-              </>
-            )}
+            {/* Credit Cards */}
+            {cc.length > 0 && <>
+              <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+                {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
+              </div>
+            </>}
             {/* AR */}
             <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
               <span>{'Accounts Receivable'}</span>
               <UpBtn entity={entity} type="ar" label="AR Aging" />
             </div>
-            {arTotal !== null && arTotal !== 0 ? (
-              <>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
-                  <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
-                </div>
-                {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
-              </>
-            ) : (
-              <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No AR data — upload AR Aging CSV above.'}</div>
+            {ar.length > 0
+              ? <AgedTable rows={ar} keyField="customer" labelField="Customer" />
+              : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No AR data — upload AR Aging above.'}</div>
+            }
+            {/* Viewable reports */}
+            {snap?.raw_pl && (
+              <OmegaCSVViewer title="Profit & Loss" raw={snap.raw_pl} C={C} />
             )}
-            {/* P&L */}
-            {plData && plData.periods && plData.periods.length > 0 && (
-              <div style={{ marginTop:8 }}>
-                <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{'P&L by Period'}</div>
-                <div style={{ overflowX:'auto' }}>
-                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11, fontFamily:"'DM Mono',monospace" }}>
-                    <thead>
-                      <tr style={{ borderBottom:'1px solid '+C.bdr }}>
-                        <th style={{ textAlign:'left', color:C.g, padding:'4px 0', fontSize:10 }}>Period</th>
-                        <th style={{ textAlign:'right', color:C.g, padding:'4px 8px', fontSize:10 }}>Income</th>
-                        <th style={{ textAlign:'right', color:C.g, padding:'4px 0', fontSize:10 }}>Net</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {plData.periods.filter(p => p.income !== 0).map((p, i) => (
-                        <tr key={i} style={{ borderBottom:'1px solid '+C.bdrF }}>
-                          <td style={{ padding:'4px 0', color:C.w, fontSize:11 }}>{p.label}</td>
-                          <td style={{ padding:'4px 8px', textAlign:'right', color:POS, fontSize:11 }}>{p.income ? fmt(p.income) : '—'}</td>
-                          <td style={{ padding:'4px 0', textAlign:'right', fontWeight:700, fontSize:11, color:p.net >= 0 ? POS : NEG }}>{p.income ? fmt(p.net) : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-            {!plData && (
-              <div style={{ marginTop:8, fontSize:11, color:C.g, fontStyle:'italic' }}>{'No P&L data — upload P&L CSV above.'}</div>
+            {snap?.raw_bs && (
+              <OmegaCSVViewer title="Balance Sheet" raw={snap.raw_bs} C={C} />
             )}
           </>}
 

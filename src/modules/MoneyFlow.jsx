@@ -3943,17 +3943,26 @@ function JEHistoryTab({ orgId, C }) {
   const [error, setError]     = useState(null)
   const [expanded, setExpanded] = useState({})   // { jeKey: bool }
   const [filterYear, setFilterYear] = useState('all')
+  const [acctNumMap, setAcctNumMap] = useState({}) // source_account -> account_number
 
   useEffect(() => {
     async function load() {
       setLoading(true)
       setError(null)
-      const { data, error: err } = await supabase
-        .from('iif_je_history')
-        .select('*')
-        .eq('org_id', orgId)
-        .order('posted_at', { ascending: true })
+      const [{ data, error: err }, { data: mapData }, { data: coaData }] = await Promise.all([
+        supabase.from('iif_je_history').select('*').eq('org_id', orgId).order('posted_at', { ascending: true }),
+        supabase.from('iif_account_map').select('source_account,qbo_account').eq('org_id', orgId),
+        supabase.from('coa_accounts').select('account_name,account_number').eq('org_id', orgId),
+      ])
       if (err) { setError(err.message); setLoading(false); return }
+      const qboToNum = {}
+      ;(coaData || []).forEach(r => { if (r.account_number) qboToNum[r.account_name] = r.account_number })
+      const srcToNum = {}
+      ;(mapData || []).forEach(r => {
+        const num = qboToNum[r.qbo_account]
+        if (num) srcToNum[r.source_account] = num
+      })
+      setAcctNumMap(srcToNum)
       setRows(data || [])
       setLoading(false)
     }
@@ -4099,15 +4108,21 @@ function JEHistoryTab({ orgId, C }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
                     <thead>
                       <tr style={{ borderBottom: `1px solid ${C.bdr}` }}>
-                        <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', fontWeight: 600 }}>Account</th>
+                        <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', fontWeight: 600, width: 80 }}>Acct #</th>
+                        <th style={{ textAlign: 'left', color: C.g, padding: '4px 8px', fontWeight: 600 }}>Account Name</th>
                         <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 110 }}>Debit</th>
                         <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 110 }}>Credit</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {je.lines.sort((a, b) => (b.amount - a.amount)).map((l, i) => (
+                      {[...je.lines].sort((a, b) => {
+                        const na = acctNumMap[a.source_account] || '99999'
+                        const nb = acctNumMap[b.source_account] || '99999'
+                        return parseFloat(na) - parseFloat(nb)
+                      }).map((l, i) => (
                         <tr key={i} style={{ borderBottom: `1px solid ${C.bdrF}` }}>
-                          <td style={{ color: C.w, padding: '4px 0', wordBreak: 'break-word' }}>{l.qbo_account || l.source_account}</td>
+                          <td style={{ color: C.go, padding: '4px 0', fontSize: 10, whiteSpace: 'nowrap', fontFamily: "'DM Mono', monospace" }}>{acctNumMap[l.source_account] || ''}</td>
+                          <td style={{ color: C.w, padding: '4px 8px', wordBreak: 'break-word' }}>{l.qbo_account || l.source_account}</td>
                           <td style={{ textAlign: 'right', color: '#6ab87a', padding: '4px 0' }}>{l.amount > 0 ? fmt(l.amount) : ''}</td>
                           <td style={{ textAlign: 'right', color: '#e07070', padding: '4px 0' }}>{l.amount < 0 ? fmt(Math.abs(l.amount)) : ''}</td>
                         </tr>
@@ -4115,7 +4130,8 @@ function JEHistoryTab({ orgId, C }) {
                     </tbody>
                     <tfoot>
                       <tr style={{ borderTop: `1px solid ${C.bdr}` }}>
-                        <td style={{ color: C.g, fontSize: 10, padding: '4px 0' }}>TOTALS</td>
+                        <td style={{ color: C.g, fontSize: 10, padding: '4px 0' }}></td>
+                        <td style={{ color: C.g, fontSize: 10, padding: '4px 8px' }}>TOTALS</td>
                         <td style={{ textAlign: 'right', color: '#6ab87a', fontWeight: 700, padding: '4px 0' }}>${fmt(jeDr)}</td>
                         <td style={{ textAlign: 'right', color: '#e07070', fontWeight: 700, padding: '4px 0' }}>${fmt(jeCr)}</td>
                       </tr>

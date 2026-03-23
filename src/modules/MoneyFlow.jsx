@@ -4288,6 +4288,128 @@ function JEHistoryTab({ orgId, C }) {
 
 
 
+// ─── OMEGA MANUAL ENTRY ──────────────────────────────────────────────────────
+function OmegaManualEntry({ orgId, snapDate, C }) {
+  const [checking, setChecking] = useState('')
+  const [cc, setCC] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!orgId || !snapDate) return
+    setLoading(true)
+    supabase.from('cashflow_snapshots').select('omega_checking,omega_cc')
+      .eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', snapDate)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setChecking(data.omega_checking != null ? String(data.omega_checking) : '')
+          setCC(data.omega_cc != null ? String(data.omega_cc) : '')
+        }
+        setLoading(false)
+      })
+  }, [orgId, snapDate])
+
+  async function save() {
+    const payload = {
+      omega_checking: parseFloat(checking) || 0,
+      omega_cc: parseFloat(cc) || 0,
+    }
+    const { data: existing } = await supabase.from('cashflow_snapshots').select('id')
+      .eq('org_id', orgId).eq('entity', 'omega').eq('snapshot_date', snapDate).maybeSingle()
+    if (existing?.id) {
+      await supabase.from('cashflow_snapshots').update(payload).eq('id', existing.id)
+    } else {
+      await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity: 'omega', snapshot_date: snapDate, ...payload })
+    }
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  const inp = { padding: '6px 10px', background: C.bg, border: '1px solid ' + C.bdr, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: "'DM Mono', monospace", width: 140 }
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ fontSize: 9, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>10100 Checking – Old National</div>
+          <input value={checking} onChange={e => setChecking(e.target.value)} placeholder="0.00" style={inp} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: C.rd, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>20500 Old National Bank 0979 (CC)</div>
+          <input value={cc} onChange={e => setCC(e.target.value)} placeholder="0.00" style={inp} />
+        </div>
+        <button onClick={save} style={{ padding: '6px 16px', background: C.go, border: 'none', color: '#fff', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+          {saved ? '✓ Saved' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── OMEGA PDF REPORTS ────────────────────────────────────────────────────────
+function OmegaPDFReports({ orgId, C, uploading, setUploading, sh }) {
+  const [plUrl, setPlUrl] = useState(null)
+  const [bsUrl, setBsUrl] = useState(null)
+  const [plDate, setPlDate] = useState(null)
+  const [bsDate, setBsDate] = useState(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    supabase.from('cashflow_ar_reports').select('*')
+      .eq('org_id', orgId).eq('entity', 'omega')
+      .order('uploaded_at', { ascending: false }).limit(2)
+      .then(({ data }) => {
+        if (!data) return
+        const pl = data.find(r => r.report_type === 'pl')
+        const bs = data.find(r => r.report_type === 'bs')
+        if (pl) { setPlUrl(pl.pdf_url); setPlDate(pl.uploaded_at) }
+        if (bs) { setBsUrl(bs.pdf_url); setBsDate(bs.uploaded_at) }
+      })
+  }, [orgId])
+
+  async function uploadReport(type, file) {
+    if (!file) return
+    setUploading('omega_' + type)
+    try {
+      const key = orgId + '/omega_' + type + '_current.pdf'
+      const { error } = await supabase.storage.from('flowsuite-files').upload(key, file, { upsert: true, contentType: 'application/pdf' })
+      if (error) throw error
+      const { data: urlData } = supabase.storage.from('flowsuite-files').getPublicUrl(key)
+      const url = urlData?.publicUrl
+      await supabase.from('cashflow_ar_reports').insert([{ org_id: orgId, entity: 'omega', report_type: type, report_date: new Date().toISOString().split('T')[0], pdf_url: url, uploaded_at: new Date().toISOString() }])
+      if (type === 'pl') { setPlUrl(url); setPlDate(new Date().toISOString()) }
+      if (type === 'bs') { setBsUrl(url); setBsDate(new Date().toISOString()) }
+      sh((type === 'pl' ? 'P&L' : 'Balance Sheet') + ' uploaded ✓')
+    } catch(e) { sh('Error: ' + e.message) }
+    setUploading(null)
+  }
+
+  const linkStyle = { fontSize: 11, color: C.go, fontWeight: 700, textDecoration: 'none' }
+  const upLabel = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 5, border: '1px solid ' + C.bdr, cursor: 'pointer', fontSize: 10, color: C.g, fontFamily: 'inherit', background: 'transparent' }
+
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <label style={upLabel}>
+          {'↑ P&L PDF'}
+          <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => uploadReport('pl', e.target.files[0])} />
+        </label>
+        {plUrl && <a href={plUrl} target="_blank" rel="noreferrer" style={linkStyle}>View P&L ↗</a>}
+        {plDate && <span style={{ fontSize: 9, color: C.g }}>{'Uploaded ' + new Date(plDate).toLocaleDateString()}</span>}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <label style={upLabel}>
+          {'↑ Bal Sheet PDF'}
+          <input type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => uploadReport('bs', e.target.files[0])} />
+        </label>
+        {bsUrl && <a href={bsUrl} target="_blank" rel="noreferrer" style={linkStyle}>View Balance Sheet ↗</a>}
+        {bsDate && <span style={{ fontSize: 9, color: C.g }}>{'Uploaded ' + new Date(bsDate).toLocaleDateString()}</span>}
+      </div>
+    </div>
+  )
+}
+
 // ─── OMEGA CSV VIEWER ────────────────────────────────────────────────────────
 function OmegaCSVViewer({ title, raw, C }) {
   const [open, setOpen] = useState(false)
@@ -4997,6 +5119,7 @@ function CashDashboard({ orgId, C }) {
         )}
 
         {snap && <>
+          {entity === 'iaz' && <>
           <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
             <span>{'Cash'}</span>
             <UpBtn entity={entity} type="balance" label="Bal Sheet" />
@@ -5006,7 +5129,7 @@ function CashDashboard({ orgId, C }) {
             {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} sub={a.value<0?'overdrawn':null} small />)}
             {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} sub={totalCash<0?'overdrawn':null} small />}
           </div>
-          {entity === 'iaz' && cc.length > 0 && <>
+          {cc.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
               {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
@@ -5026,16 +5149,11 @@ function CashDashboard({ orgId, C }) {
               {loans.length > 1 && <SBox label="Total Loans" value={fmt(loans.reduce((s,a)=>s+Math.abs(a.value),0))} color={NEG} small />}
             </div>
           </>}
+          </>}{/* end IAZ-only sections */}
           {entity === 'omega' && <>
-            {/* Credit Cards */}
-            {cc.length > 0 && <>
-              <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
-              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
-                {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
-              </div>
-            </>}
+            <OmegaManualEntry orgId={orgId} snapDate={selectedDate} C={C} />
             {/* AR */}
-            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:8, display:'flex', alignItems:'center', gap:8 }}>
               <span>{'Accounts Receivable'}</span>
               <UpBtn entity={entity} type="ar" label="AR Aging" />
             </div>
@@ -5043,13 +5161,8 @@ function CashDashboard({ orgId, C }) {
               ? <AgedTable rows={ar} keyField="customer" labelField="Customer" />
               : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No AR data — upload AR Aging above.'}</div>
             }
-            {/* Viewable reports */}
-            {snap?.raw_pl && (
-              <OmegaCSVViewer title="Profit & Loss" raw={snap.raw_pl} C={C} />
-            )}
-            {snap?.raw_bs && (
-              <OmegaCSVViewer title="Balance Sheet" raw={snap.raw_bs} C={C} />
-            )}
+            {/* PDF Reports */}
+            <OmegaPDFReports orgId={orgId} C={C} uploading={uploading} setUploading={setUploading} sh={sh} />
           </>}
 
           {entity === 'iaz' && (() => {

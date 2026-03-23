@@ -5200,7 +5200,7 @@ function CashDashboard({ orgId, C }) {
       if (['total','totals','a/p aging','as of','friday','monday','tuesday','wednesday','thursday','saturday','sunday'].some(x => low.includes(x))) continue
       const curr = pv(parts[1]), d30 = pv(parts[2]), d60 = pv(parts[3]), d90 = pv(parts[4]), over90 = pv(parts[5])
       const total = curr + d30 + d60 + d90 + over90
-      if (total === 0 && !parts.slice(1,6).some(p => p.trim() && p.trim() !== '-')) continue
+      if (total === 0) continue
       rows.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
     }
     // Sort alphabetically

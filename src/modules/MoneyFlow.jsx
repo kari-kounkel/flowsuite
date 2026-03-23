@@ -1201,32 +1201,54 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
         </>
       )}
 
-      {parsedData && jeLines.length === 0 && (
+      {parsedData && jeLines.length === 0 && uploadMode === 'weekly' && (
         <div style={{ fontSize: 12, color: '#6ab87a', padding: '12px 0' }}>
           ✓ All accounts fully posted for period {period}. Nothing new to post.
         </div>
       )}
+      {parsedData && jeLines.length === 0 && uploadMode === 'periodend' && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: '#6ab87a', padding: '8px 0' }}>
+            ✓ No delta — period totals match weekly posts exactly.
+          </div>
+          <button
+            onClick={() => handlePost(false)}
+            disabled={posting}
+            style={{ background: C.go, border: 'none', color: '#fff', padding: '8px 24px', borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit', marginTop: 8 }}
+          >{posting ? 'Posting…' : 'Post Period-End to History'}</button>
+          {postMsg && (
+            <span style={{ fontSize: 11, color: postMsg.ok ? '#6ab87a' : '#e07070', marginLeft: 12 }}>
+              {postMsg.ok ? '✓' : '⚠'} {postMsg.msg}
+            </span>
+          )}
+        </div>
+      )}
       {accountMap.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 8 }}>Account Map ({accountMap.length} entries)</div>
-          <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8, overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
-              <thead style={{ position: 'sticky', top: 0, background: C.bg }}>
-                <tr>
-                  <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>IIF Source Account</th>
-                  <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>QBO Account</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...accountMap].sort((a, b) => (a.source_account || '').localeCompare(b.source_account || '')).map((r, i) => (
-                  <tr key={r.id} style={{ borderTop: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? 'transparent' : C.bg + '88' }}>
-                    <td style={{ color: '#e07070', padding: '5px 12px' }}>{r.source_account}</td>
-                    <td style={{ color: C.w, padding: '5px 12px' }}>{r.qbo_account}</td>
+          <button
+            onClick={() => setShowMapEditor(v => !v)}
+            style={{ background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g, padding: '5px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}
+          >{showMapEditor ? '▲ Hide' : '▼ View'} Account Map ({accountMap.length} entries)</button>
+          {showMapEditor && (
+            <div style={{ marginTop: 10, background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8, overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+                <thead style={{ position: 'sticky', top: 0, background: C.bg }}>
+                  <tr>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>IIF Source Account</th>
+                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>QBO Account</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {[...accountMap].sort((a, b) => (a.source_account || '').localeCompare(b.source_account || '')).map((r, i) => (
+                    <tr key={r.id} style={{ borderTop: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? 'transparent' : C.bg + '88' }}>
+                      <td style={{ color: '#e07070', padding: '5px 12px' }}>{r.source_account}</td>
+                      <td style={{ color: C.w, padding: '5px 12px' }}>{r.qbo_account}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
       <div style={{ marginTop: 20 }}>
@@ -1276,13 +1298,13 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           byJE[key].lines.push(r)
         })
         const jeList = Object.entries(byJE).sort(([, a], [, b]) => {
-          const pCmp = (a.period || '').localeCompare(b.period || '')
+          const pCmp = (b.period || '').localeCompare(a.period || '')
           if (pCmp !== 0) return pCmp
           const aW = a.upload_mode === 'weekly' || !a.upload_mode
           const bW = b.upload_mode === 'weekly' || !b.upload_mode
           if (aW && !bW) return -1
           if (!aW && bW) return 1
-          return (a.posted_at || '').localeCompare(b.posted_at || '')
+          return (b.posted_at || '').localeCompare(a.posted_at || '')
         })
         return (
           <div style={{ marginTop: 24 }}>

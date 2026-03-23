@@ -4543,17 +4543,22 @@ function IAZManualEntry({ orgId, snapDate, C }) {
       <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
         {cashFields.map(box)}
-
       </div>
+      <button onClick={save} style={{ padding:'4px 12px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit', marginBottom:12 }}>
+        {saved ? '✓ Saved' : 'Save Cash'}
+      </button>
 
       {/* CC */}
-      <div style={{ fontSize:9, color:'#c4956a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:8 }}>{'Credit Cards'}</div>
+      <div style={{ fontSize:9, color:'#c4956a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:4 }}>{'Credit Cards'}</div>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
         {ccFields.map(box)}
       </div>
+      <button onClick={save} style={{ padding:'4px 12px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit', marginBottom:12 }}>
+        {saved ? '✓ Saved' : 'Save CC'}
+      </button>
 
       {/* Payroll */}
-      <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:12 }}>{'Current Payroll'}</div>
+      <div style={{ fontSize:9, color:'#c4a45a', fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:4 }}>{'Current Payroll'}</div>
       <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:10 }}>
           {PR_FIELDS.map(f => (
@@ -4591,12 +4596,12 @@ function IAZManualEntry({ orgId, snapDate, C }) {
               ))}
             </div>
           )}
+          <button onClick={save} style={{ marginTop:10, padding:'4px 12px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+            {saved ? '✓ Saved' : 'Save Payroll'}
+          </button>
         </div>
       </div>
 
-      <button onClick={save} style={{ padding:'5px 14px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:10, fontWeight:700, cursor:'pointer', fontFamily:'inherit', marginTop:4 }}>
-        {saved ? '✓ Saved' : 'Save Changes'}
-      </button>
     </div>
   )
 }
@@ -5707,7 +5712,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
       .then(({ data }) => {
         if (!data || !data[0]) { setBills([]); setLoading(false); return }
         const latestDate = data[0].snapshot_date
-        supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('over90', { ascending: false })
+        supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
           .then(async ({ data: apData }) => {
             const { data: schedData } = await supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
             const schedMap = {}
@@ -5887,6 +5892,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
         scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
         notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
       }))
+      rows.sort((a, b) => a.vendor.localeCompare(b.vendor))
       setBills(rows)
       const scheduledCount = Object.values(schedMap).filter(s => s.scheduled_amt).length
       sh(parsed.length + ' vendors loaded' + (scheduledCount ? ' — ' + scheduledCount + ' scheduled amounts carried forward' : ''))
@@ -6971,15 +6977,14 @@ export default function MoneyFlowModule({ orgId, C }) {
         <div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
             {subPill('Tasks', jeSubTab === 'tasks', () => setJeSubTab('tasks'))}
-            {subPill('Task History', jeSubTab === 'tasklog', () => setJeSubTab('tasklog'))}
             {subPill('AP Recon', jeSubTab === 'aprecon', () => setJeSubTab('aprecon'))}
-            {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
-
             {subPill('Payroll Orders', jeSubTab === 'payroll', () => setJeSubTab('payroll'))}
+            {subPill('Close Checklist', jeSubTab === 'checklist', () => setJeSubTab('checklist'))}
             {subPill('Resources', jeSubTab === 'resources', () => setJeSubTab('resources'))}
+            {subPill('Task History', jeSubTab === 'tasklog', () => setJeSubTab('tasklog'))}
           </div>
           {jeSubTab === 'tasks' && (
             <div>

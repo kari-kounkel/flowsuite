@@ -4300,6 +4300,7 @@ function CashDashboard({ orgId, C }) {
   const [iazAR, setIazAR] = useState([])
   const [iazARMeta, setIazARMeta] = useState(null)   // { total_ar, invoice_count, oldest_date, pdf_url, uploaded_at }
   const [omegaAR, setOmegaAR] = useState([])
+  const [omegaPL, setOmegaPL] = useState(null)   // { periods: [{label, income, expenses}], uploaded_at }
   const [entityView, setEntityView] = useState('both')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(null)
@@ -4345,7 +4346,9 @@ function CashDashboard({ orgId, C }) {
       supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').order('uploaded_at', { ascending: false }).limit(1)
     ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
-      setOmegaData((omegaSnap.data || [])[0] || null)
+      const omegaSnapRow = (omegaSnap.data || [])[0] || null
+      setOmegaData(omegaSnapRow)
+      if (omegaSnapRow?.pl_data) setOmegaPL(omegaSnapRow.pl_data)
       setIazAP(apR.data || [])
       setOmegaAR(arR.data || [])
       setIazAR(iazArR.data || [])
@@ -4548,6 +4551,47 @@ function CashDashboard({ orgId, C }) {
     return { rows, totalAR: rows.reduce((s,r)=>s+r.total,0), invoiceCount: Object.values(customerMap).reduce((s,v)=>s+v.invoiceCount,0), oldestDate: oldestDateOverall }
   }
 
+  const parseOmegaPL = (text) => {
+    // Proper CSV splitter to handle quoted fields with commas
+    function splitCSVLine(line) {
+      const result = []; let cur = '', inQ = false
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') { inQ = !inQ }
+        else if (line[i] === ',' && !inQ) { result.push(cur.trim()); cur = '' }
+        else { cur += line[i] }
+      }
+      result.push(cur.trim()); return result
+    }
+    const pv = s => { const c = (s||'').replace(/[$, ]/g,'').replace(/\((.+)\)/, '-$1').trim(); return !c || c === '-' ? 0 : parseFloat(c) || 0 }
+    const rawLines = text.split('\n').filter(l => l.trim())
+    const rows = rawLines.map(splitCSVLine)
+    const headerIdx = rows.findIndex(r => r[0] && r[0].toLowerCase().includes('distribution account'))
+    if (headerIdx < 0) return { periods: [], current: null }
+    const periodLabels = rows[headerIdx].slice(1).map(s => s.trim()).filter(l => l && l !== 'Total')
+    const incomeByPeriod = periodLabels.map(() => 0)
+    const expensesByPeriod = periodLabels.map(() => 0)
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const row = rows[i]
+      const label = (row[0] || '').toLowerCase().trim()
+      if (!label) continue
+      if (label.startsWith('total for income') || label.startsWith('gross profit')) {
+        periodLabels.forEach((_, pi) => { incomeByPeriod[pi] = pv(row[pi + 1]) })
+      }
+      if (label.startsWith('total for expenses') || label.startsWith('net income') || label.startsWith('net operating')) {
+        periodLabels.forEach((_, pi) => { expensesByPeriod[pi] = pv(row[pi + 1]) })
+        break
+      }
+    }
+    const periods = periodLabels.map((label, i) => ({
+      label,
+      income: incomeByPeriod[i],
+      expenses: expensesByPeriod[i],
+      net: incomeByPeriod[i] - expensesByPeriod[i],
+    }))
+    const current = [...periods].reverse().find(p => p.income !== 0) || periods[periods.length - 1]
+    return { periods, current, uploaded_at: new Date().toISOString() }
+  }
+
   const parseAPaging = (text) => {
     const rows = []
     // Split respecting quoted fields (commas inside quotes)
@@ -4671,6 +4715,17 @@ function CashDashboard({ orgId, C }) {
           const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).order('total',{ascending:true})
           setIazAP(freshAP || [])
           setUploading(null); return
+        } else if (type === 'pl') {
+          const parsed = parseOmegaPL(text)
+          // Store in cashflow_snapshots as pl_data jsonb
+          const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).maybeSingle()
+          if (existing) {
+            await supabase.from('cashflow_snapshots').update({ pl_data: parsed, uploaded_at: new Date().toISOString() }).eq('id', existing.id)
+          } else {
+            await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity, snapshot_date: snapDate, pl_data: parsed })
+          }
+          if (entity === 'omega') setOmegaPL(parsed)
+          sh('P&L loaded — ' + (parsed.current?.label || '') + ' ✓')
         } else if (type === 'payroll') {
           const parsed = parsePayroll(text)
           const { data: existing } = await supabase.from('cashflow_snapshots').select('id').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).single()
@@ -4847,7 +4902,7 @@ function CashDashboard({ orgId, C }) {
     )
   }
 
-  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta }) => {
+  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta, plData }) => {
     const [arEditOpen, setArEditOpen] = useState(false)
     const [arEditForm, setArEditForm] = useState({ st_month: '', st_amount: '' })
     const [arEditSaving, setArEditSaving] = useState(false)
@@ -4866,7 +4921,18 @@ function CashDashboard({ orgId, C }) {
           {title}
         </div>
 
-        {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>{'No data for this date.'}</div>}
+        {!snap && (
+          <div style={{ fontSize:12, color:C.g, padding:'20px 0' }}>
+            <div style={{ fontStyle:'italic', marginBottom:12 }}>{'No data for this date.'}</div>
+            <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+              <UpBtn entity={entity} type="balance" label="Bal Sheet" />
+              <UpBtn entity={entity} type="pl" label="P&L" />
+              <UpBtn entity={entity} type="ar" label="AR Aging" />
+              {entity === 'iaz' && <UpBtn entity={entity} type="ap" label="AP Aging" />}
+              {entity === 'iaz' && <UpBtn entity={entity} type="payroll" label="Payroll CSV" />}
+            </div>
+          </div>
+        )}
 
         {snap && <>
           <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
@@ -4878,7 +4944,7 @@ function CashDashboard({ orgId, C }) {
             {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} sub={a.value<0?'overdrawn':null} small />)}
             {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} sub={totalCash<0?'overdrawn':null} small />}
           </div>
-          {cc.length > 0 && <>
+          {entity === 'iaz' && cc.length > 0 && <>
             <div style={{ fontSize:9, color:C.rd, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards'}</div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
               {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
@@ -4899,17 +4965,58 @@ function CashDashboard({ orgId, C }) {
             </div>
           </>}
           {entity === 'omega' && <>
+            {/* Old National 0979 — CC between cash and AR */}
+            {cc.length > 0 && (
+              <>
+                <div style={{ fontSize:9, color:WARN, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Credit Cards / Lines'}</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
+                  {cc.map((a,i) => <SBox key={i} label={a.label} value={fmt(Math.abs(a.value))} color={WARN} warn sub="owed" small />)}
+                </div>
+              </>
+            )}
+            {/* AR */}
             <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
               <span>{'Accounts Receivable'}</span>
               <UpBtn entity={entity} type="ar" label="AR Aging" />
             </div>
-            {arTotal !== null && arTotal !== 0 && (
+            {arTotal !== null && arTotal !== 0 ? (
               <>
                 <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
                   <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
                 </div>
                 {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
               </>
+            ) : (
+              <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No AR data — upload AR Aging CSV above.'}</div>
+            )}
+            {/* P&L */}
+            {plData && plData.periods && plData.periods.length > 0 && (
+              <div style={{ marginTop:8 }}>
+                <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>{'P&L by Period'}</div>
+                <div style={{ overflowX:'auto' }}>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11, fontFamily:"'DM Mono',monospace" }}>
+                    <thead>
+                      <tr style={{ borderBottom:'1px solid '+C.bdr }}>
+                        <th style={{ textAlign:'left', color:C.g, padding:'4px 0', fontSize:10 }}>Period</th>
+                        <th style={{ textAlign:'right', color:C.g, padding:'4px 8px', fontSize:10 }}>Income</th>
+                        <th style={{ textAlign:'right', color:C.g, padding:'4px 0', fontSize:10 }}>Net</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plData.periods.filter(p => p.income !== 0).map((p, i) => (
+                        <tr key={i} style={{ borderBottom:'1px solid '+C.bdrF }}>
+                          <td style={{ padding:'4px 0', color:C.w, fontSize:11 }}>{p.label}</td>
+                          <td style={{ padding:'4px 8px', textAlign:'right', color:POS, fontSize:11 }}>{p.income ? fmt(p.income) : '—'}</td>
+                          <td style={{ padding:'4px 0', textAlign:'right', fontWeight:700, fontSize:11, color:p.net >= 0 ? POS : NEG }}>{p.income ? fmt(p.net) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            {!plData && (
+              <div style={{ marginTop:8, fontSize:11, color:C.g, fontStyle:'italic' }}>{'No P&L data — upload P&L CSV above.'}</div>
             )}
           </>}
 
@@ -5096,7 +5203,7 @@ function CashDashboard({ orgId, C }) {
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
           {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
-          {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
+          {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" plData={omegaPL} />}
         </div>
       )}
 

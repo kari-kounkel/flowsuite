@@ -4288,6 +4288,64 @@ function JEHistoryTab({ orgId, C }) {
 
 
 
+// ─── IAZ AR ENTRY ────────────────────────────────────────────────────────────
+function IAZAREntry({ orgId, snapDate, C }) {
+  const [customers, setCustomers] = useState('')
+  const [total, setTotal] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    if (!orgId || !snapDate) return
+    supabase.from('cashflow_snapshots').select('iaz_ar_customers,iaz_ar_total')
+      .eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', snapDate)
+      .maybeSingle().then(({ data }) => {
+        if (data) {
+          setCustomers(data.iaz_ar_customers != null ? String(data.iaz_ar_customers) : '')
+          setTotal(data.iaz_ar_total != null ? String(data.iaz_ar_total) : '')
+        }
+      })
+  }, [orgId, snapDate])
+
+  async function save() {
+    const payload = {
+      iaz_ar_customers: parseInt(customers) || 0,
+      iaz_ar_total: parseFloat(total) || 0,
+    }
+    const { data: existing } = await supabase.from('cashflow_snapshots').select('id')
+      .eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', snapDate).maybeSingle()
+    if (existing?.id) {
+      await supabase.from('cashflow_snapshots').update(payload).eq('id', existing.id)
+    } else {
+      await supabase.from('cashflow_snapshots').insert({ org_id: orgId, entity: 'iaz', snapshot_date: snapDate, ...payload })
+    }
+    setSaved(true); setTimeout(() => setSaved(false), 2000)
+  }
+
+  const fmtAmt = n => '$' + Math.abs(parseFloat(n)||0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:8 }}>
+        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
+          onClick={() => { const v = prompt('Total AR Outstanding:', total); if (v !== null) setTotal(v) }}>
+          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>Total AR</div>
+          <div style={{ fontSize:22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>{fmtAmt(total)}</div>
+          <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+        </div>
+        <div style={{ background:C.nL, borderRadius:8, padding:'14px 16px', border:'1px solid '+C.bdr, borderLeft:'3px solid #c4a45a', cursor:'pointer' }}
+          onClick={() => { const v = prompt('Open Customers:', customers); if (v !== null) setCustomers(v) }}>
+          <div style={{ fontSize:9, color:C.g, textTransform:'uppercase', letterSpacing:1 }}>Open Customers</div>
+          <div style={{ fontSize:22, fontWeight:700, color:'#c4a45a', lineHeight:1, marginTop:4 }}>{customers || '0'}</div>
+          <div style={{ fontSize:9, color:C.g, marginTop:4 }}>click to edit</div>
+        </div>
+      </div>
+      <button onClick={save} style={{ padding:'4px 12px', background:C.go, border:'none', color:'#fff', borderRadius:20, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+        {saved ? '✓ Saved' : 'Save'}
+      </button>
+    </div>
+  )
+}
+
 // ─── IAZ PDF REPORTS ─────────────────────────────────────────────────────────
 function IAZPDFReports({ orgId, C }) {
   const [allReports, setAllReports] = useState([])
@@ -5553,17 +5611,13 @@ function CashDashboard({ orgId, C }) {
                     <span>{'Accounts Receivable — Outstanding Invoices'}</span>
                     <UpBtn entity={entity} type="ar" label="AR Aging" />
                   </div>
+                  {/* Manual AR summary — always editable */}
+                  <IAZAREntry orgId={orgId} snapDate={selectedDate} C={C} />
                   {hasAR ? (
                     <>
-                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))', gap:8, marginBottom:8 }}>
-                        <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
-                        <SBox label="Open Customers" value={String(arCount)} color={POS} small />
-                      </div>
                       <AgedTable rows={arRows} keyField="customer" labelField="Customer" defaultSortKey="customer" />
                     </>
-                  ) : (
-                    <div style={{ fontSize:11, color:C.g, fontStyle:'italic' }}>{'No AR data — upload AR Aging CSV above.'}</div>
-                  )}
+                  ) : null}
                   {arMeta?.pdf_url && (
                     <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid '+C.bdrF }}>
                       <a href={arMeta.pdf_url} target="_blank" rel="noreferrer"

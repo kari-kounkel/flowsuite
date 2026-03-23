@@ -1298,12 +1298,7 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           byJE[key].lines.push(r)
         })
         const jeList = Object.entries(byJE).sort(([, a], [, b]) => {
-          const pCmp = (b.period || '').localeCompare(a.period || '')
-          if (pCmp !== 0) return pCmp
-          const aW = a.upload_mode === 'weekly' || !a.upload_mode
-          const bW = b.upload_mode === 'weekly' || !b.upload_mode
-          if (aW && !bW) return -1
-          if (!aW && bW) return 1
+          // Sort purely by posted_at descending so monthly lands naturally after its last weekly
           return (b.posted_at || '').localeCompare(a.posted_at || '')
         })
         return (
@@ -1348,12 +1343,12 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
                           </thead>
                           <tbody>
                             {[...je.lines].sort((a, b) => {
-                              const na = acctNumMapInline[a.source_account] || '99999'
-                              const nb = acctNumMapInline[b.source_account] || '99999'
-                              return parseFloat(na) - parseFloat(nb)
+                              const na = parseFloat(acctNumMapInline[a.source_account] || '99999')
+                              const nb = parseFloat(acctNumMapInline[b.source_account] || '99999')
+                              return na - nb
                             }).map((l, i) => (
                               <tr key={i} style={{ borderBottom: '1px solid ' + C.bdrF }}>
-                                <td style={{ color: C.go, padding: '4px 0', fontSize: 10, fontFamily: "'DM Mono', monospace" }}>{acctNumMapInline[l.source_account] || ''}</td>
+                                <td style={{ color: C.go, padding: '4px 0', fontSize: 10, fontFamily: "'DM Mono', monospace", minWidth: 44 }}>{acctNumMapInline[l.source_account] || '—'}</td>
                                 <td style={{ color: C.w, padding: '4px 8px', wordBreak: 'break-word' }}>{l.qbo_account || l.source_account}</td>
                                 <td style={{ textAlign: 'right', color: '#6ab87a', padding: '4px 0' }}>{l.amount > 0 ? fmt(l.amount) : ''}</td>
                                 <td style={{ textAlign: 'right', color: '#e07070', padding: '4px 0' }}>{l.amount < 0 ? fmt(Math.abs(l.amount)) : ''}</td>

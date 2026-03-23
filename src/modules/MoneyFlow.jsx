@@ -673,6 +673,8 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
   const [showMapEditor, setShowMapEditor] = useState(false)
   const [showCoaImport, setShowCoaImport] = useState(false)
   const [coaImporting, setCoaImporting] = useState(false)
+  const [expandedInline, setExpandedInline] = useState({})
+  const [acctNumMapInline, setAcctNumMapInline] = useState({})
 
   // ── Upload mode: weekly straight post vs period-end true-up ──
   const [uploadMode, setUploadMode] = useState('weekly') // 'weekly' | 'periodend'
@@ -738,11 +740,17 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       const [{ data: mapData }, { data: histData }, { data: coaData }] = await Promise.all([
         supabase.from('iif_account_map').select('*').eq('org_id', orgId),
         supabase.from('iif_je_history').select('*').eq('org_id', orgId),  // load all — period-end needs cross-period history
-        supabase.from('coa_accounts').select('account_name,account_type').eq('org_id', orgId).order('account_name'),
+        supabase.from('coa_accounts').select('account_name,account_type,account_number').eq('org_id', orgId).order('account_name'),
       ])
       setAccountMap(mapData || [])
       setHistory(histData || [])
       setCoaAccounts(coaData || [])
+      // Build source_account -> account_number for inline history display
+      const qboToNum = {}
+      ;(coaData || []).forEach(r => { if (r.account_number) qboToNum[r.account_name] = r.account_number })
+      const srcToNum = {}
+      ;(mapData || []).forEach(r => { const n = qboToNum[r.qbo_account]; if (n) srcToNum[r.source_account] = n })
+      setAcctNumMapInline(srcToNum)
       setLoadingMap(false)
     }
     load()
@@ -1200,37 +1208,25 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       )}
       {accountMap.length > 0 && (
         <div style={{ marginTop: 20 }}>
-          <button
-            onClick={() => setShowMapEditor(v => !v)}
-            style={{
-              background: 'transparent', border: `1px solid ${C.bdrF}`,
-              color: C.g, padding: '5px 14px', borderRadius: 20,
-              cursor: 'pointer', fontSize: 11, fontFamily: 'inherit',
-            }}
-          >{showMapEditor ? '▲ Hide' : '▼ View'} Account Map ({accountMap.length} entries)</button>
-          {showMapEditor && (
-            <div style={{
-              marginTop: 10, background: C.bg2, border: `1px solid ${C.bdr}`,
-              borderRadius: 8, overflow: 'hidden',
-            }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
-                <thead>
-                  <tr style={{ background: C.bg }}>
-                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>IIF Source Account</th>
-                    <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>QBO Account</th>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 8 }}>Account Map ({accountMap.length} entries)</div>
+          <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8, overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+              <thead style={{ position: 'sticky', top: 0, background: C.bg }}>
+                <tr>
+                  <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>IIF Source Account</th>
+                  <th style={{ textAlign: 'left', color: C.g, padding: '8px 12px' }}>QBO Account</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...accountMap].sort((a, b) => (a.source_account || '').localeCompare(b.source_account || '')).map((r, i) => (
+                  <tr key={r.id} style={{ borderTop: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? 'transparent' : C.bg + '88' }}>
+                    <td style={{ color: '#e07070', padding: '5px 12px' }}>{r.source_account}</td>
+                    <td style={{ color: C.w, padding: '5px 12px' }}>{r.qbo_account}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {accountMap.map((r, i) => (
-                    <tr key={r.id} style={{ borderTop: `1px solid ${C.bdrF}`, background: i % 2 === 0 ? 'transparent' : C.bg + '88' }}>
-                      <td style={{ color: '#e07070', padding: '5px 12px' }}>{r.source_account}</td>
-                      <td style={{ color: C.w, padding: '5px 12px' }}>{r.qbo_account}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       <div style={{ marginTop: 20 }}>
@@ -1269,6 +1265,98 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
       }}>
         <strong style={{ color: C.go }}>Sidebar:</strong> IIF is cumulative. Delta logic subtracts what's already in history so you don't double-post. Unmapped accounts block posting. Map once, never again.
       </div>
+
+      {/* ── INLINE HISTORY ── oldest first, newest at bottom */}
+      {history.length > 0 && (() => {
+        // Group by je_number
+        const byJE = {}
+        history.forEach(r => {
+          const key = r.je_number || r.file_name || r.period + '-legacy'
+          if (!byJE[key]) byJE[key] = { je_number: r.je_number || key, file_name: r.file_name || '', period: r.period, upload_mode: r.upload_mode || 'weekly', memo: r.memo || '', posted_at: r.posted_at, lines: [] }
+          byJE[key].lines.push(r)
+        })
+        const jeList = Object.entries(byJE).sort(([, a], [, b]) => {
+          const pCmp = (a.period || '').localeCompare(b.period || '')
+          if (pCmp !== 0) return pCmp
+          const aW = a.upload_mode === 'weekly' || !a.upload_mode
+          const bW = b.upload_mode === 'weekly' || !b.upload_mode
+          if (aW && !bW) return -1
+          if (!aW && bW) return 1
+          return (a.posted_at || '').localeCompare(b.posted_at || '')
+        })
+        return (
+          <div style={{ marginTop: 24 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10, letterSpacing: '0.5px' }}>
+              {'POSTED ENTRIES — ' + jeList.length + ' total'}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {jeList.map(([key, je]) => {
+                const isOpen = expandedInline[key]
+                const jeDr = je.lines.filter(l => l.amount > 0).reduce((s, l) => s + l.amount, 0)
+                const jeCr = je.lines.filter(l => l.amount < 0).reduce((s, l) => s + Math.abs(l.amount), 0)
+                const balanced = Math.abs(jeDr - jeCr) < 0.01
+                const isWeekly = je.upload_mode === 'weekly' || !je.upload_mode
+                const modeColor = isWeekly ? '#6ab87a' : '#9a6ac4'
+                const modeLabel = isWeekly ? 'Weekly' : 'Period-End'
+                return (
+                  <div key={key} style={{ background: C.bg2, border: '1px solid ' + C.bdr, borderRadius: 10, overflow: 'hidden' }}>
+                    <div onClick={() => setExpandedInline(e => ({ ...e, [key]: !e[key] }))} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: '10px 14px', cursor: 'pointer', background: isOpen ? C.gD : 'transparent', borderBottom: isOpen ? '1px solid ' + C.bdr : 'none' }}>
+                      <span style={{ fontSize: 11, color: C.g, width: 14 }}>{isOpen ? '▼' : '▶'}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.go, flex: 1, minWidth: 200 }}>{je.je_number}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: modeColor, border: '1px solid ' + modeColor, borderRadius: 4, padding: '1px 6px' }}>{modeLabel}</span>
+                      <span style={{ fontSize: 10, color: C.g, fontFamily: "'DM Mono', monospace" }}>
+                        {'DR: '}<span style={{ color: '#6ab87a' }}>{'$' + fmt(jeDr)}</span>
+                        {'  CR: '}<span style={{ color: '#e07070' }}>{'$' + fmt(jeCr)}</span>
+                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: balanced ? '#6ab87a' : '#e07070' }}>{balanced ? '✓' : '⚠ OFF $' + fmt(Math.abs(jeDr - jeCr))}</span>
+                      <span style={{ fontSize: 9, color: C.g }}>{je.period}</span>
+                    </div>
+                    {isOpen && (
+                      <div style={{ padding: '12px 16px' }}>
+                        {je.memo && <div style={{ fontSize: 10, color: C.g, marginBottom: 8, fontFamily: "'DM Mono', monospace" }}>{'Note: ' + je.memo}</div>}
+                        {je.file_name && <div style={{ fontSize: 10, color: C.g, marginBottom: 10 }}>{'File: ' + je.file_name}</div>}
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid ' + C.bdr }}>
+                              <th style={{ textAlign: 'left', color: C.g, padding: '4px 0', fontWeight: 600, width: 60 }}>Acct #</th>
+                              <th style={{ textAlign: 'left', color: C.g, padding: '4px 8px', fontWeight: 600 }}>Account Name</th>
+                              <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 110 }}>Debit</th>
+                              <th style={{ textAlign: 'right', color: C.g, padding: '4px 0', width: 110 }}>Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[...je.lines].sort((a, b) => {
+                              const na = acctNumMapInline[a.source_account] || '99999'
+                              const nb = acctNumMapInline[b.source_account] || '99999'
+                              return parseFloat(na) - parseFloat(nb)
+                            }).map((l, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid ' + C.bdrF }}>
+                                <td style={{ color: C.go, padding: '4px 0', fontSize: 10, fontFamily: "'DM Mono', monospace" }}>{acctNumMapInline[l.source_account] || ''}</td>
+                                <td style={{ color: C.w, padding: '4px 8px', wordBreak: 'break-word' }}>{l.qbo_account || l.source_account}</td>
+                                <td style={{ textAlign: 'right', color: '#6ab87a', padding: '4px 0' }}>{l.amount > 0 ? fmt(l.amount) : ''}</td>
+                                <td style={{ textAlign: 'right', color: '#e07070', padding: '4px 0' }}>{l.amount < 0 ? fmt(Math.abs(l.amount)) : ''}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ borderTop: '1px solid ' + C.bdr }}>
+                              <td></td>
+                              <td style={{ color: C.g, fontSize: 10, padding: '4px 8px' }}>TOTALS</td>
+                              <td style={{ textAlign: 'right', color: '#6ab87a', fontWeight: 700, padding: '4px 0' }}>{'$' + fmt(jeDr)}</td>
+                              <td style={{ textAlign: 'right', color: '#e07070', fontWeight: 700, padding: '4px 0' }}>{'$' + fmt(jeCr)}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                        {je.posted_at && <div style={{ fontSize: 9, color: C.g, marginTop: 8 }}>{'Posted: ' + new Date(je.posted_at).toLocaleString()}</div>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -4722,23 +4810,20 @@ function CashDashboard({ orgId, C }) {
     const loans = snap ? (snap.loan_accounts || []) : []
     const totalCash = cash.reduce((s,a) => s + (a.value||0), 0)
 
-    const uploadDefs = entity === 'iaz'
-      ? [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'payroll', label:'Payroll' }, { type:'ap', label:'AP Aging' }, { type:'ar', label:'AR Aging' }, { type:'payroll_report', label:'PR PDF' }]
-      : [{ type:'pl', label:'P&L' }, { type:'balance', label:'Bal Sheet' }, { type:'ar', label:'AR Aging' }]
-
     return (
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontWeight:700, fontSize:15, color:C.go, marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:6 }}>
-          <span>{title}</span>
-          <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
-            {uploadDefs.map(u => <UpBtn key={u.type} entity={entity} type={u.type} label={u.label} />)}
-          </div>
+        <div style={{ fontWeight:700, fontSize:15, color:C.go, marginBottom:12 }}>
+          {title}
         </div>
 
         {!snap && <div style={{ fontSize:12, color:C.g, padding:'20px 0', fontStyle:'italic' }}>{'No data for this date.'}</div>}
 
         {snap && <>
-          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Cash'}</div>
+          <div style={{ fontSize:9, color:C.go, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
+            <span>{'Cash'}</span>
+            <UpBtn entity={entity} type="balance" label="Bal Sheet" />
+            <UpBtn entity={entity} type="pl" label="P&L" />
+          </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:14 }}>
             {cash.map((a,i) => <SBox key={i} label={a.label} value={fmt(a.value)} color={mColor(a.value)} warn={a.value<0} sub={a.value<0?'overdrawn':null} small />)}
             {cash.length > 1 && <SBox label="Total Cash" value={fmt(totalCash)} color={mColor(totalCash)} warn={totalCash<0} sub={totalCash<0?'overdrawn':null} small />}
@@ -4763,12 +4848,19 @@ function CashDashboard({ orgId, C }) {
               {loans.length > 1 && <SBox label="Total Loans" value={fmt(loans.reduce((s,a)=>s+Math.abs(a.value),0))} color={NEG} small />}
             </div>
           </>}
-          {entity === 'omega' && arTotal !== null && arTotal !== 0 && <>
-            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>{'Accounts Receivable'}</div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
-              <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
+          {entity === 'omega' && <>
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
+              <span>{'Accounts Receivable'}</span>
+              <UpBtn entity={entity} type="ar" label="AR Aging" />
             </div>
-            {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
+            {arTotal !== null && arTotal !== 0 && (
+              <>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(148px,1fr))', gap:8, marginBottom:ar.length?6:14 }}>
+                  <SBox label="Total AR" value={fmt(arTotal)} color={POS} small />
+                </div>
+                {ar.length > 0 && <AgedTable rows={ar} keyField="customer" labelField="Customer" />}
+              </>
+            )}
           </>}
 
           {entity === 'iaz' && (() => {
@@ -4780,10 +4872,19 @@ function CashDashboard({ orgId, C }) {
             return (
               <div style={{ marginBottom:14 }}>
                 {/* Current Payroll */}
+                {snap.payroll_gross <= 0 && (
+                  <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'10px 14px', marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
+                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, flex:1 }}>{'Current Payroll'}</div>
+                    <UpBtn entity={entity} type="payroll" label="Payroll CSV" />
+                    <UpBtn entity={entity} type="payroll_report" label="PR PDF" />
+                  </div>
+                )}
                 {snap.payroll_gross > 0 && (
                   <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginBottom:8 }}>
-                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                      {'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}
+                    <div style={{ fontSize:9, color:C.bl, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
+                      <span>{'Current Payroll' + (snap.payroll_period?' — '+snap.payroll_period:'')}</span>
+                      <UpBtn entity={entity} type="payroll" label="Payroll CSV" />
+                      <UpBtn entity={entity} type="payroll_report" label="PR PDF" />
                     </div>
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
                       <SBox label="Gross" value={fmt(snap.payroll_gross)} color={C.bl} small />
@@ -4882,8 +4983,9 @@ function CashDashboard({ orgId, C }) {
 
                 {/* AR — Outstanding Invoices */}
                 <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:10, padding:'12px 14px', marginTop:8 }}>
-                  <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>
-                    {'Accounts Receivable — Outstanding Invoices'}
+                  <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:8, display:'flex', alignItems:'center', gap:8 }}>
+                    <span>{'Accounts Receivable — Outstanding Invoices'}</span>
+                    <UpBtn entity={entity} type="ar" label="AR Aging" />
                   </div>
                   {hasAR ? (
                     <>
@@ -4913,12 +5015,11 @@ function CashDashboard({ orgId, C }) {
               </div>
             )
           })()}
-          {ap.length > 0 && <>
-            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
-              {'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors'}
-            </div>
-            <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
-          </>}
+          <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
+            <span>{ap.length > 0 ? 'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors' : 'Accounts Payable'}</span>
+            {entity === 'iaz' && <UpBtn entity={entity} type="ap" label="AP Aging" />}
+          </div>
+          {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
 
         </>}
       </div>
@@ -6256,7 +6357,7 @@ export default function MoneyFlowModule({ orgId, C }) {
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
-            {subPill('JE History', jeSubTab === 'history', () => setJeSubTab('history'))}
+
             {subPill('Payroll Orders', jeSubTab === 'payroll', () => setJeSubTab('payroll'))}
             {subPill('Resources', jeSubTab === 'resources', () => setJeSubTab('resources'))}
           </div>
@@ -6336,7 +6437,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           )}
           {jeSubTab === 'recurring' && <RecurringJETab orgId={orgId} C={C} />}
           {jeSubTab === 'amort' && <AmortizationTab orgId={orgId} C={C} />}
-          {jeSubTab === 'history' && <JEHistoryTab orgId={orgId} C={C} />}
+
           {jeSubTab === 'resources' && <ResourceLibraryTab orgId={orgId} C={C} />}
           {jeSubTab === 'payroll' && (
             <div style={{ position: 'relative' }}>

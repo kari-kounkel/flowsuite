@@ -5661,8 +5661,6 @@ function CashDashboard({ orgId, C }) {
                     </div>
                   )}
                 </div>
-                {/* IAZ PDF Reports — P&L and Balance Sheet */}
-                <IAZPDFReports orgId={orgId} C={C} />
               </div>
             )
           })()}
@@ -5672,6 +5670,8 @@ function CashDashboard({ orgId, C }) {
               <UpBtn entity={entity} type="ap" label="AP Aging" />
             </div>
             {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
+            {/* IAZ PDF Reports — P&L and Balance Sheet — at the bottom */}
+            <IAZPDFReports orgId={orgId} C={C} />
           </>}
 
         </>}
@@ -5683,7 +5683,7 @@ function CashDashboard({ orgId, C }) {
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
         <div style={{ fontSize:11, color:C.g, fontWeight:600 }}>{'View as of:'}</div>
-        <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.w, fontSize:12, fontFamily:'inherit' }} />
+        <input type="date" value={selectedDate} readOnly disabled style={{ padding:'5px 10px', background:C.ch, border:'1px solid '+C.bdr, borderRadius:6, color:C.g, fontSize:12, fontFamily:'inherit', opacity:0.5, cursor:'not-allowed' }} />
 
         <div style={{ flex:1 }} />
         {['both','iaz','omega'].map(e => (

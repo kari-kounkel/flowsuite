@@ -4943,7 +4943,7 @@ function CashDashboard({ orgId, C }) {
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} payrollMeta={iazPayrollMeta} />}
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
           {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" />}
         </div>

@@ -1297,9 +1297,37 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
           if (!byJE[key]) byJE[key] = { je_number: r.je_number || key, file_name: r.file_name || '', period: r.period, upload_mode: r.upload_mode || 'weekly', memo: r.memo || '', posted_at: r.posted_at, lines: [] }
           byJE[key].lines.push(r)
         })
+        // Parse the actual end date from je_number for sorting
+        // Weekly: "KK 2025 10 AR FLEX Weekly · Oct 25" -> use Oct 25 in period 2025-10
+        // Monthly: "KK 2025 10 AR FLEX Monthly" -> use Oct 31 (last day of period)
+        // Quarterly: "KK 2025 Q4 AR FLEX Quarterly" -> use Dec 31
+        function jeEndDate(je) {
+          const name = je.je_number || ''
+          // Weekly — has a date after the dot
+          const weeklyMatch = name.match(/·\s*(\w+)\s+(\d+)$/)
+          if (weeklyMatch) {
+            const months = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 }
+            const mo = months[weeklyMatch[1]]
+            const day = parseInt(weeklyMatch[2])
+            const yr = (je.period || '2025').slice(0,4)
+            if (mo && day) return new Date(parseInt(yr), mo-1, day)
+          }
+          // Monthly — last day of the period month
+          if (je.period && je.period.match(/^\d{4}-\d{2}$/)) {
+            const [yr, mo] = je.period.split('-').map(Number)
+            return new Date(yr, mo, 0) // day 0 = last day of previous month = last day of mo
+          }
+          // Quarterly — last day of Q4=Dec31, Q3=Sep30, Q2=Jun30, Q1=Mar31
+          const qMatch = name.match(/Q(\d)/)
+          if (qMatch) {
+            const qEndMonth = { 1:3, 2:6, 3:9, 4:12 }[parseInt(qMatch[1])]
+            const yr = parseInt((je.period || name).match(/\d{4}/)?.[0] || '2025')
+            return new Date(yr, qEndMonth, 0)
+          }
+          return new Date(je.posted_at || 0)
+        }
         const jeList = Object.entries(byJE).sort(([, a], [, b]) => {
-          // Sort purely by posted_at descending so monthly lands naturally after its last weekly
-          return (b.posted_at || '').localeCompare(a.posted_at || '')
+          return jeEndDate(b) - jeEndDate(a)
         })
         return (
           <div style={{ marginTop: 24 }}>

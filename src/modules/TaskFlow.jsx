@@ -273,15 +273,18 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
 
   async function saveTaskEdit() {
     if (!editModal || !editFields.title.trim()) return
-    const { error } = await supabase.from('tasks').update({
+    const assignTo = editFields.assigned_to && editFields.assigned_to.trim() !== ""
+      ? editFields.assigned_to
+      : (editModal.assigned_to || null)
+    const { error } = await supabase.from("tasks").update({
       title: editFields.title.trim(),
-      priority: editFields.priority,
-      due_date: editFields.due_date || null,
-      assigned_to: editFields.assigned_to || editModal.assigned_to,
-      notes: editFields.notes || null
-    }).eq('id', editModal.id)
-    if (error) { sh(`❌ ${error.message}`); return }
-    sh('✓ Task updated')
+      priority: editFields.priority || "normal",
+      due_date: editFields.due_date && editFields.due_date.trim() !== "" ? editFields.due_date : null,
+      assigned_to: assignTo,
+      notes: editFields.notes && editFields.notes.trim() !== "" ? editFields.notes.trim() : null
+    }).eq("id", editModal.id)
+    if (error) { sh("Error: " + error.message); return }
+    sh("Task updated")
     setEditModal(null)
     loadTasks()
   }

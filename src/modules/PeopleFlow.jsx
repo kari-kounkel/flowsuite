@@ -1928,12 +1928,26 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:6}}>Prior Records ({priorDisc.length})</div>
         {priorDisc.map((d,i)=>{
           const pdt = DISC_TYPES.find(t=>t.v===d.type)
-          return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,padding:'3px 0'}}>
-            <span style={{display:'flex',alignItems:'center',gap:4}}>
-              <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
+          const isCl = (d.status||d.st)==='closed'
+          const isRev = d.status==='reversed'
+          const active = isDiscActive(d)
+          const discDate = d.date || d.created_at
+          const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
+          const daysLeft = Math.max(0, 365 - daysSince)
+          const statusBadge = isCl
+            ? {label:'CLOSED',bg:'rgba(107,114,128,0.15)',color:'#6B7280',border:'#6B7280'}
+            : isRev
+              ? {label:'REVERSED',bg:'rgba(107,114,128,0.1)',color:'#9CA3AF',border:'#9CA3AF'}
+              : active
+                ? {label:daysLeft+'d left',bg:'rgba(34,197,94,0.12)',color:'#22C55E',border:'#22C55E'}
+                : {label:'RETIRED',bg:'rgba(107,114,128,0.1)',color:'#9CA3AF',border:'#9CA3AF'}
+          return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,padding:'5px 0',borderBottom:'1px solid '+C.bdr+'44',opacity:(isCl||isRev)?0.5:1}}>
+            <span style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+              <Tag c={isCl||isRev?'#6B7280':pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
               <span style={{color:C.g,fontSize:10}}>{d.natures||d.category||''}</span>
+              <span style={{fontSize:8,padding:'1px 6px',borderRadius:99,fontWeight:700,background:statusBadge.bg,color:statusBadge.color,border:'1px solid '+statusBadge.border}}>{statusBadge.label}</span>
             </span>
-            <span style={{color:C.g,fontSize:10}}>{d.date ? new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+            <span style={{color:C.g,fontSize:10,flexShrink:0,marginLeft:8}}>{d.date ? new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
           </div>
         })}
       </div>}
@@ -2324,6 +2338,222 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
         <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
         <Btn gold small onClick={handleSave} C={C}>{uploading ? 'Saving...' : 'Save Record'}</Btn>
+      </div>
+    </div>
+  </div>)
+}
+
+// ── Edit Existing Discipline Record ──
+function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail, userEmpRecord}) {
+  const [f, setF] = useState({...record})
+  const [selNatures, setSelNatures] = useState(() => {
+    if (!record.natures) return []
+    return typeof record.natures === 'string' ? record.natures.split(', ').filter(Boolean) : record.natures
+  })
+  const [sigMode, setSigMode] = useState(null)
+  const [sigName, setSigName] = useState('')
+  const [existingAtts, setExistingAtts] = useState(() => {
+    try { return record.attachments ? (typeof record.attachments === 'string' ? JSON.parse(record.attachments) : record.attachments) : [] } catch(e) { return [] }
+  })
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const toggleNature = (n) => setSelNatures(prev => prev.includes(n) ? prev.filter(x=>x!==n) : [...prev, n])
+
+  const applySignature = () => {
+    if (!sigName.trim()) return
+    const ts = new Date().toISOString()
+    if (sigMode==='employee') { up('emp_signature',sigName.trim()); up('emp_sig_date',ts) }
+    else if (sigMode==='employer') { up('employer_signature',sigName.trim()); up('sup_sig_date',ts) }
+    else if (sigMode==='witness') { up('witness_name',sigName.trim()); up('witness_sig_date',ts) }
+    setSigName(''); setSigMode(null)
+  }
+
+  const handleFileAdd = (e) => {
+    const files = Array.from(e.target.files)
+    if (existingAtts.length + attachments.length + files.length > 7) { alert('Maximum 7 attachments'); return }
+    setAttachments(prev => [...prev, ...files].slice(0, 7))
+    e.target.value = ''
+  }
+  const removeExistingAtt = (i) => setExistingAtts(prev => prev.filter((_,idx)=>idx!==i))
+  const removeNewFile = (i) => setAttachments(prev => prev.filter((_,idx)=>idx!==i))
+
+  const handleSave = async () => {
+    setUploading(true)
+    try {
+      const uploaded = []
+      for (const file of attachments) {
+        const ts = Date.now()
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g,'_')
+        const path = 'discipline/'+(f.employee_id||'unknown')+'/'+ts+'_'+safeName
+        const {data:upData,error:upErr} = await supabase.storage.from('flowsuite-files').upload(path,file)
+        if (upErr) { console.error('Upload error:',upErr); continue }
+        const {data:urlData} = supabase.storage.from('flowsuite-files').getPublicUrl(path)
+        uploaded.push({name:file.name,path,url:urlData?.publicUrl||path,size:file.size,type:file.type,uploaded_at:new Date().toISOString()})
+      }
+      const allAtts = [...existingAtts, ...uploaded]
+      const updated = {...f, natures:selNatures.join(', '), attachments:allAtts.length>0?JSON.stringify(allAtts):null}
+      onSave(updated)
+    } catch(err) { console.error('Save error:',err) }
+    setUploading(false)
+  }
+
+  const fmSigTs = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
+  }
+
+  const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
+
+  if (sigMode) {
+    const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+    return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
+        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
+        <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.</div>
+        <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
+          style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}} onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
+        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+          <Btn ghost small onClick={()=>{setSigMode(null);setSigName('')}} C={C}>Cancel</Btn>
+          <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
+        </div>
+      </div>
+    </div>)
+  }
+
+  return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
+    <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
+        <div>
+          <div style={{fontSize:9,color:C.am,textTransform:'uppercase',letterSpacing:2}}>Editing Record</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>{f.employee_name||'Discipline Record'}</h3>
+        </div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
+      </div>
+
+      {/* Weingarten */}
+      <div style={{background:'#FFFBEB',border:'2px solid #F59E0B',borderRadius:8,padding:'12px 16px',marginBottom:16}}>
+        <div style={{fontSize:12,fontWeight:700,color:'#92400E',marginBottom:6}}>⚖ WEINGARTEN RIGHTS NOTICE</div>
+        <div style={{fontSize:11,color:'#78350F',lineHeight:1.6,marginBottom:10}}>You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action.</div>
+        <div style={{display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
+          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
+            <input type="checkbox" checked={f.weingarten_offered||false} onChange={e=>up('weingarten_offered',e.target.checked)} style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rights Offered
+          </label>
+          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
+            <input type="checkbox" checked={f.weingarten_rep_requested||false} onChange={e=>up('weingarten_rep_requested',e.target.checked)} style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rep Requested
+          </label>
+          {f.weingarten_rep_requested && <input value={f.weingarten_rep_name||''} onChange={e=>up('weingarten_rep_name',e.target.value)} placeholder="Union Rep Name"
+            style={{padding:'5px 10px',background:'#FEF3C7',border:'1px solid #F59E0B',borderRadius:4,fontSize:12,color:'#78350F',fontFamily:'inherit',flex:1,minWidth:140}}/>}
+        </div>
+      </div>
+
+      {/* Fields */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
+        <div><label style={lbl}>Employee Name</label>
+          <select value={f.employee_id||''} onChange={e=>{const emp=emps.find(x=>x.id===e.target.value);up('employee_id',e.target.value);up('employee_name',emp?gn(emp):'')}} style={inp}>
+            <option value="">Select</option>{emps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
+          </select></div>
+        <div><label style={lbl}>Date</label><input type="date" value={f.date||''} onChange={e=>up('date',e.target.value)} style={inp}/></div>
+        <div><label style={lbl}>Type</label>
+          <select value={f.type||''} onChange={e=>up('type',e.target.value)} style={inp}>
+            <option value="">Select</option>{DISC_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+          </select></div>
+        <div><label style={lbl}>Current Step (Manual)</label>
+          <select value={f.step||''} onChange={e=>up('step',e.target.value)} style={inp}>
+            <option value="">-- Select Step --</option>
+            <option value="1">Step 1 — Verbal Warning</option>
+            <option value="2">Step 2 — Written Warning</option>
+            <option value="3">Step 3 — Final Written Warning</option>
+            <option value="4">Step 4 — Suspension</option>
+            <option value="5">Step 5 — Termination</option>
+          </select></div>
+        <div><label style={lbl}>Prepared By</label><input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7}}/></div>
+        {f.type==='suspension' && <div><label style={{...lbl,color:'#B91C1C'}}>Suspension Return Date</label>
+          <input type="date" value={f.suspension_return_date||''} onChange={e=>up('suspension_return_date',e.target.value)} style={{...inp,borderColor:'#B91C1C'}}/></div>}
+      </div>
+
+      {/* Natures */}
+      <label style={{...lbl,marginBottom:6}}>Nature of Incident</label>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
+        {INCIDENT_NATURES.map(n=>(<button key={n} onClick={()=>toggleNature(n)} style={{
+          padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
+          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:'1px solid '+(selNatures.includes(n)?'#DC2626':C.bdr),color:selNatures.includes(n)?'#DC2626':C.g
+        }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>))}
+      </div>
+
+      <label style={lbl}>Specifics</label>
+      <textarea value={f.specifics||''} onChange={e=>up('specifics',e.target.value)} rows={4} style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      <label style={lbl}>Current Disciplinary Action</label>
+      <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      <label style={lbl}>Employee's Comments</label>
+      <textarea value={f.employee_comments||''} onChange={e=>up('employee_comments',e.target.value)} rows={2} style={{...inp,resize:'vertical',marginBottom:10}}/>
+
+      {/* Attachments */}
+      <label style={{...lbl,marginBottom:6}}>Attachments ({existingAtts.length + attachments.length}/7)</label>
+      <div style={{border:'1px dashed '+C.bdr,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
+        {existingAtts.map((att,i) => (
+          <div key={'ex'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid '+C.bdr,marginBottom:4}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
+              <span style={{fontSize:12}}>📎</span>
+              <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</span>
+            </div>
+            <button onClick={()=>removeExistingAtt(i)} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,padding:'0 4px'}}>×</button>
+          </div>
+        ))}
+        {attachments.map((file,i) => (
+          <div key={'new'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid #22C55E',marginBottom:4}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
+              <span style={{fontSize:12}}>📎</span>
+              <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span>
+              <span style={{fontSize:8,color:'#22C55E'}}>NEW</span>
+            </div>
+            <button onClick={()=>removeNewFile(i)} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,padding:'0 4px'}}>×</button>
+          </div>
+        ))}
+        {(existingAtts.length + attachments.length) < 7 && <label style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 0',cursor:'pointer',color:C.go,fontSize:11,fontWeight:600}}>
+          <span>+ Add File</span><input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.xlsx,.xls,.csv" onChange={handleFileAdd} style={{display:'none'}}/>
+        </label>}
+      </div>
+
+      {/* Future Action */}
+      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:'1px solid '+C.bdr}}>
+        If Performance doesn't improve, it may result in further disciplinary action, up to and including termination of employment.
+        <div style={{marginTop:6,fontSize:11,fontWeight:600,fontStyle:'italic'}}>My signature below signifies that I have read and understand the above report.</div>
+      </div>
+
+      {/* Signatures */}
+      <label style={{...lbl,marginBottom:8,fontSize:11}}>Signatures</label>
+      <div style={{display:'grid',gap:8,marginBottom:16}}>
+        {[
+          {key:'employee',label:'Employee Signature',name:f.emp_signature,ts:f.emp_sig_date,clear:()=>{up('emp_signature','');up('emp_sig_date','')}},
+          {key:'employer',label:'Employer Signature',name:f.employer_signature,ts:f.sup_sig_date,clear:()=>{up('employer_signature','');up('sup_sig_date','')}},
+          {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,clear:()=>{up('witness_name','');up('witness_sig_date','')}}
+        ].map((s,i)=>(
+          <div key={i} style={{border:'1px solid '+(s.name?'#22C55E':C.bdr),borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <div>
+                <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
+                {s.name ? <div style={{fontSize:14,fontStyle:'italic',color:C.w,marginTop:2}}>{s.name}</div> : <div style={{fontSize:11,color:C.g,marginTop:2}}>{s.key==='witness'?'Optional':'Not yet signed'}</div>}
+              </div>
+              <div style={{textAlign:'right'}}>
+                {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
+                {!s.name ? <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?'1px solid '+C.go:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
+                  : <button onClick={s.clear} style={{background:'transparent',border:'1px solid '+C.bdr,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
+        <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+        <Btn gold small onClick={handleSave} C={C}>{uploading ? 'Saving...' : 'Update Record'}</Btn>
       </div>
     </div>
   </div>)

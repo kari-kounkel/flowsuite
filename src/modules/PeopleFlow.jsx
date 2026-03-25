@@ -1708,9 +1708,10 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
             <Tag c={dt?dt.c:C.g}>{dt?dt.l:d.type}</Tag>
             {isProgressive && <span style={{
               display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
-              background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
-              color:active?'#22C55E':'#6B7280',border:'1px solid '+(active?'#22C55E':'#6B7280')
-            }}>{active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
+              background:(d.status||d.st)==='closed'?'rgba(107,114,128,0.15)':active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+              color:(d.status||d.st)==='closed'?'#6B7280':active?'#22C55E':'#6B7280',
+              border:'1px solid '+((d.status||d.st)==='closed'?'#6B7280':active?'#22C55E':'#6B7280')
+            }}>{(d.status||d.st)==='closed' ? '0d / Expired' : active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
@@ -1821,7 +1822,18 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
           <select value={f.type||''} onChange={e=>up('type',e.target.value)} style={inp}>
             <option value="">Select</option>{DISC_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
           </select></div>
+        <div><label style={lbl}>Current Step (Manual)</label>
+          <select value={f.step||''} onChange={e=>up('step',e.target.value)} style={inp}>
+            <option value="">-- Select Step --</option>
+            <option value="1">Step 1 — Verbal Warning</option>
+            <option value="2">Step 2 — Written Warning</option>
+            <option value="3">Step 3 — Final Written Warning</option>
+            <option value="4">Step 4 — Suspension</option>
+            <option value="5">Step 5 — Termination</option>
+          </select></div>
         <div><label style={lbl}>Prepared By</label><input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7}}/></div>
+        {f.type==='suspension' && <div><label style={{...lbl,color:'#B91C1C'}}>Suspension Return Date</label>
+          <input type="date" value={f.suspension_return_date||''} onChange={e=>up('suspension_return_date',e.target.value)} style={{...inp,borderColor:'#B91C1C'}}/></div>}
       </div>
 
       {/* Natures */}
@@ -2062,9 +2074,24 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           </select>
         </div>
         <div>
+          <label style={lbl}>Current Step (Manual)</label>
+          <select value={f.step||''} onChange={e=>up('step',e.target.value)} style={inp}>
+            <option value="">-- Select Step --</option>
+            <option value="1">Step 1 — Verbal Warning</option>
+            <option value="2">Step 2 — Written Warning</option>
+            <option value="3">Step 3 — Final Written Warning</option>
+            <option value="4">Step 4 — Suspension</option>
+            <option value="5">Step 5 — Termination</option>
+          </select>
+        </div>
+        <div>
           <label style={lbl}>Prepared By</label>
           <input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7,cursor:'default'}}/>
         </div>
+        {f.type==='suspension' && <div>
+          <label style={{...lbl,color:'#B91C1C'}}>Suspension Return Date</label>
+          <input type="date" value={f.suspension_return_date||''} onChange={e=>up('suspension_return_date',e.target.value)} style={{...inp,borderColor:'#B91C1C'}}/>
+        </div>}
       </div>
 
       {/* ── Prior History + Progression Suggestion ── */}
@@ -2098,9 +2125,9 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
                 <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
                 {d.natures||d.category||'—'}
                 <span style={{fontSize:8,padding:'1px 5px',borderRadius:99,fontWeight:700,
-                  background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
-                  color:active?'#22C55E':'#6B7280'
-                }}>{active?'Active - '+daysLeft+'d':'Retired'}</span>
+                  background:(d.status||d.st)==='closed'?'rgba(107,114,128,0.15)':active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+                  color:(d.status||d.st)==='closed'?'#6B7280':active?'#22C55E':'#6B7280'
+                }}>{(d.status||d.st)==='closed'?'0d / Expired':active?'Active - '+daysLeft+'d':'Retired'}</span>
               </span>
               <span style={{color:C.g}}>{fm(d.date||d.created_at)}</span>
             </div>

@@ -5720,6 +5720,8 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+  const [ccModal, setCcModal] = useState(false)
+  const [ccTab, setCcTab] = useState('submissions')
 
   const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
   const canEditSched = SCHED_EDITORS.includes((userEmail||'').toLowerCase())
@@ -5939,7 +5941,44 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
           {'Upload AP Aging CSV'}
           <input type="file" accept=".csv" style={{ display:'none' }} onChange={ev => handleCSVUpload(ev.target.files[0])} />
         </label>
+        <button onClick={() => { setCcModal(true); setCcTab('submissions') }} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+          {'💳 CC Pymts'}
+        </button>
       </div>
+
+      {ccModal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:3000, padding:16 }}>
+          <div style={{ background:C.bg2, border:'1px solid '+C.bdr, borderRadius:14, width:'100%', maxWidth:900, height:'80vh', display:'flex', flexDirection:'column', boxShadow:'0 8px 48px rgba(0,0,0,0.6)' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 20px', borderBottom:'1px solid '+C.bdr }}>
+              <div style={{ display:'flex', gap:6 }}>
+                <button onClick={() => setCcTab('submissions')} style={{ padding:'5px 16px', borderRadius:6, border:'1px solid '+(ccTab==='submissions'?C.go:C.bdrF), background:ccTab==='submissions'?C.gD:'transparent', color:ccTab==='submissions'?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+                  {'📋 Submissions'}
+                </button>
+                <button onClick={() => setCcTab('form')} style={{ padding:'5px 16px', borderRadius:6, border:'1px solid '+(ccTab==='form'?C.go:C.bdrF), background:ccTab==='form'?C.gD:'transparent', color:ccTab==='form'?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>
+                  {'✏️ Submit Entry'}
+                </button>
+              </div>
+              <button onClick={() => setCcModal(false)} style={{ background:'transparent', border:'none', color:C.g, fontSize:20, cursor:'pointer', lineHeight:1, padding:'0 4px' }}>{'✕'}</button>
+            </div>
+            <div style={{ flex:1, overflow:'hidden', borderRadius:'0 0 14px 14px' }}>
+              {ccTab === 'submissions' && (
+                <iframe
+                  src={'https://www.jotform.com/tables/260294525157055'}
+                  style={{ width:'100%', height:'100%', border:'none', borderRadius:'0 0 14px 14px' }}
+                  title={'CC Payment Submissions'}
+                />
+              )}
+              {ccTab === 'form' && (
+                <iframe
+                  src={'https://form.jotform.com/260294525157055'}
+                  style={{ width:'100%', height:'100%', border:'none', borderRadius:'0 0 14px 14px' }}
+                  title={'CC Payment Form'}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'Loading...'}</div>}
 

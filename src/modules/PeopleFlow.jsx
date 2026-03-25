@@ -1700,18 +1700,20 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
       const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
       const daysRemaining = Math.max(0, 365 - daysSince)
       const isProgressive = PROGRESSION_CHAIN.includes(d.type)
+      const isClosed = (d.status||d.st)==='closed'
       return <div key={d.id} onClick={()=>setViewRecord(d)} style={{cursor:'pointer'}}>
-        <Card C={C} style={{marginBottom:6,padding:'10px 14px'}}>
+        <Card C={C} style={{marginBottom:6,padding:'10px 14px',opacity:isClosed?0.45:1,filter:isClosed?'grayscale(0.6)':'none'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
-            <b style={{fontSize:13}}>{d.employee_name||'—'}</b>{' '}
-            <Tag c={dt?dt.c:C.g}>{dt?dt.l:d.type}</Tag>
-            {isProgressive && <span style={{
+            <b style={{fontSize:13,textDecoration:isClosed?'line-through':'none',color:isClosed?C.g:C.w}}>{d.employee_name||'—'}</b>{' '}
+            <Tag c={isClosed?'#6B7280':dt?dt.c:C.g}>{dt?dt.l:d.type}</Tag>
+            {isClosed && <span style={{display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,background:'rgba(107,114,128,0.2)',color:'#9CA3AF',border:'1px solid #6B7280',letterSpacing:1}}>CLOSED — does not count</span>}
+            {!isClosed && isProgressive && <span style={{
               display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,
-              background:(d.status||d.st)==='closed'?'rgba(107,114,128,0.15)':active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
-              color:(d.status||d.st)==='closed'?'#6B7280':active?'#22C55E':'#6B7280',
-              border:'1px solid '+((d.status||d.st)==='closed'?'#6B7280':active?'#22C55E':'#6B7280')
-            }}>{(d.status||d.st)==='closed' ? '0d / Expired' : active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
+              background:active?'rgba(34,197,94,0.15)':'rgba(107,114,128,0.15)',
+              color:active?'#22C55E':'#6B7280',
+              border:'1px solid '+(active?'#22C55E':'#6B7280')
+            }}>{active ? 'Active - '+daysRemaining+'d left' : 'Retired'}</span>}
             <div style={{fontSize:11,color:C.g}}>{d.category||d.natures||'—'} — {(d.description||d.specifics||'—').substring(0,60)}{((d.description||d.specifics)?.length||0)>60?'...':''}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
@@ -1774,6 +1776,85 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
 
   let atts = []
   try { atts = r.attachments ? (typeof r.attachments === 'string' ? JSON.parse(r.attachments) : r.attachments) : [] } catch(e) {}
+
+  const printNotice = () => {
+    const dt2 = DISC_TYPES.find(t=>t.v===r.type)
+    const stepLabels2 = {'1':'Step 1 — Verbal Warning','2':'Step 2 — Written Warning','3':'Step 3 — Final Written Warning','4':'Step 4 — Suspension','5':'Step 5 — Termination'}
+    const sigRow = (label, name, ts) => name ? (
+      '<tr><td style="padding:8px 12px;border:1px solid #ddd;font-weight:600;width:160px">' + label + '</td>' +
+      '<td style="padding:8px 12px;border:1px solid #ddd;font-style:italic">' + name + '</td>' +
+      '<td style="padding:8px 12px;border:1px solid #ddd;color:#666;font-size:11px">' + (ts ? new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '') + '</td></tr>'
+    ) : ''
+    const html = '<!DOCTYPE html><html><head><title>Discipline Notice — ' + (r.employee_name||'') + '</title>' +
+      '<style>body{font-family:Arial,sans-serif;max-width:750px;margin:40px auto;color:#111;font-size:13px}' +
+      'h1{font-size:18px;margin-bottom:4px}h2{font-size:14px;color:#555;margin:0 0 20px}' +
+      '.header{border-bottom:3px solid #111;padding-bottom:12px;margin-bottom:20px}' +
+      '.section{margin-bottom:16px}.label{font-size:10px;text-transform:uppercase;color:#888;font-weight:700;margin-bottom:2px}' +
+      '.value{font-size:13px;color:#111;white-space:pre-wrap}' +
+      '.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}' +
+      '.weingarten{background:#fffbeb;border:2px solid #f59e0b;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px}' +
+      '.future{background:#f9f9f9;border:1px solid #ddd;border-radius:4px;padding:10px 14px;margin-bottom:16px;font-size:12px}' +
+      'table{width:100%;border-collapse:collapse;margin-top:4px}' +
+      '@media print{body{margin:20px}}</style></head><body>' +
+      '<div class="header"><div style="font-size:10px;text-transform:uppercase;color:#888;letter-spacing:1px">Minuteman Press Uptown — PeopleFlow</div>' +
+      '<h1>Unsatisfactory Performance and/or Conduct Action Notice</h1>' +
+      '<h2>' + (dt2?.l||r.type||'') + (r.step ? ' · ' + (stepLabels2[r.step]||'Step '+r.step) : '') + '</h2></div>' +
+      '<div class="grid">' +
+      '<div><div class="label">Employee</div><div class="value">' + (r.employee_name||'—') + '</div></div>' +
+      '<div><div class="label">Date</div><div class="value">' + (r.date ? new Date(r.date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '—') + '</div></div>' +
+      '<div><div class="label">Prepared By</div><div class="value">' + (r.prepared_by||'—') + '</div></div>' +
+      (r.suspension_return_date ? '<div><div class="label">Return to Work Date</div><div class="value">' + new Date(r.suspension_return_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) + '</div></div>' : '') +
+      '</div>' +
+      (r.weingarten_offered||r.weingarten_rep_requested ? '<div class="weingarten">⚖ Weingarten rights offered' + (r.weingarten_rep_requested ? ' · Rep requested' + (r.weingarten_rep_name ? ': ' + r.weingarten_rep_name : '') : '') + '</div>' : '') +
+      (r.natures ? '<div class="section"><div class="label">Nature of Incident</div><div class="value">' + r.natures + '</div></div>' : '') +
+      (r.specifics ? '<div class="section"><div class="label">Specifics</div><div class="value">' + r.specifics + '</div></div>' : '') +
+      (r.current_action ? '<div class="section"><div class="label">Current Disciplinary Action</div><div class="value">' + r.current_action + '</div></div>' : '') +
+      (r.employee_comments ? '<div class="section"><div class="label">Employee Comments</div><div class="value">' + r.employee_comments + '</div></div>' : '') +
+      '<div class="future">If performance does not improve, it may result in further disciplinary action, up to and including termination of employment.<br><br><em>My signature below signifies that I have read and understand the above report.</em></div>' +
+      '<div class="section"><div class="label">Signatures</div>' +
+      '<table>' + sigRow('Employee', r.emp_signature, r.emp_sig_date) + sigRow('Employer', r.employer_signature, r.sup_sig_date) + sigRow('Witness', r.witness_name, r.witness_sig_date) + '</table></div>' +
+      '<script>window.onload=()=>window.print()<\/script></body></html>'
+    const w = window.open('','_blank')
+    w.document.write(html)
+    w.document.close()
+  }
+
+  const printSummary = () => {
+    const empDisc = [...disc].filter(d => d.employee_id === r.employee_id || d.employee_name === r.employee_name)
+      .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))
+    const rows = empDisc.map(d => {
+      const pdt = DISC_TYPES.find(t=>t.v===d.type)
+      const isCl = (d.status||d.st)==='closed'
+      const discDate = d.date || d.created_at
+      const daysSince = discDate ? Math.floor((new Date() - new Date(discDate)) / (1000*60*60*24)) : 0
+      const daysLeft = Math.max(0, 365 - daysSince)
+      const activeStr = isCl ? 'Closed' : isDiscActive(d) ? 'Active (' + daysLeft + 'd left)' : 'Retired'
+      return '<tr style="opacity:' + (isCl?'0.5':'1') + '">' +
+        '<td style="padding:7px 10px;border:1px solid #ddd">' + (d.date ? new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—') + '</td>' +
+        '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:600">' + (pdt?.l||d.type||'—') + '</td>' +
+        '<td style="padding:7px 10px;border:1px solid #ddd;font-size:11px">' + (d.natures||d.category||'—') + '</td>' +
+        '<td style="padding:7px 10px;border:1px solid #ddd;font-size:11px;color:#555">' + activeStr + '</td>' +
+        '<td style="padding:7px 10px;border:1px solid #ddd;font-size:11px">' + (d.prepared_by||'—') + '</td></tr>'
+    }).join('')
+    const activeCount = empDisc.filter(d => (d.status||d.st)!=='closed' && isDiscActive(d) && PROGRESSION_CHAIN.includes(d.type)).length
+    const html = '<!DOCTYPE html><html><head><title>Discipline Summary — ' + (r.employee_name||'') + '</title>' +
+      '<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;color:#111;font-size:13px}' +
+      'h1{font-size:18px;margin-bottom:4px}.header{border-bottom:3px solid #111;padding-bottom:12px;margin-bottom:20px}' +
+      'table{width:100%;border-collapse:collapse}th{background:#111;color:#fff;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase}' +
+      '.stat{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;font-size:13px;margin-right:10px;margin-bottom:16px}' +
+      '@media print{body{margin:20px}}</style></head><body>' +
+      '<div class="header"><div style="font-size:10px;text-transform:uppercase;color:#888;letter-spacing:1px">Minuteman Press Uptown — PeopleFlow</div>' +
+      '<h1>Discipline History Summary</h1>' +
+      '<div style="font-size:15px;font-weight:700;margin:4px 0">' + (r.employee_name||'—') + '</div>' +
+      '<div style="font-size:11px;color:#888">Printed ' + new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) + '</div></div>' +
+      '<div><span class="stat" style="background:#fee2e2;color:#991b1b">' + empDisc.length + ' Total Records</span>' +
+      '<span class="stat" style="background:#fef3c7;color:#92400e">' + activeCount + ' Active Progressive</span></div>' +
+      '<table><thead><tr><th>Date</th><th>Type</th><th>Nature</th><th>Status</th><th>Prepared By</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<script>window.onload=()=>window.print()<\/script></body></html>'
+    const w = window.open('','_blank')
+    w.document.write(html)
+    w.document.close()
+  }
 
   const stepLabels = {'1':'Step 1 — Verbal Warning','2':'Step 2 — Written Warning','3':'Step 3 — Final Written Warning','4':'Step 4 — Suspension','5':'Step 5 — Termination'}
 
@@ -1857,9 +1938,15 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
         })}
       </div>}
 
-      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
-        <Btn ghost small onClick={onClose} C={C}>Close</Btn>
-        <Btn gold small onClick={onEdit} C={C}>Edit Record</Btn>
+      <div style={{display:'flex',gap:8,justifyContent:'space-between',alignItems:'center',marginTop:8,flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:6}}>
+          <button onClick={printNotice} style={{fontSize:10,padding:'5px 12px',borderRadius:6,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}}>🖨 Print Notice</button>
+          <button onClick={printSummary} style={{fontSize:10,padding:'5px 12px',borderRadius:6,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit'}}>📋 Print Summary</button>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <Btn ghost small onClick={onClose} C={C}>Close</Btn>
+          <Btn gold small onClick={onEdit} C={C}>Edit Record</Btn>
+        </div>
       </div>
     </div>
   </div>)

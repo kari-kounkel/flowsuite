@@ -1763,157 +1763,103 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
     return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
   }
 
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2,fontWeight:700}
+  const val = {fontSize:13,color:C.w,marginBottom:10}
+  const row = (label, value) => value ? (
+    <div style={{marginBottom:10}}>
+      <div style={lbl}>{label}</div>
+      <div style={val}>{value}</div>
+    </div>
+  ) : null
 
-  const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
-  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
+  let atts = []
+  try { atts = r.attachments ? (typeof r.attachments === 'string' ? JSON.parse(r.attachments) : r.attachments) : [] } catch(e) {}
 
-  // Signature overlay
-  if (sigMode) {
-    const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
-    return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
-      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
-        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
-        <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
-        <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.</div>
-        <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
-          style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}} onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
-        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
-          <Btn ghost small onClick={()=>{setSigMode(null);setSigName('')}} C={C}>Cancel</Btn>
-          <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
-        </div>
-      </div>
-    </div>)
-  }
+  const stepLabels = {'1':'Step 1 — Verbal Warning','2':'Step 2 — Written Warning','3':'Step 3 — Final Written Warning','4':'Step 4 — Suspension','5':'Step 5 — Termination'}
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
     <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
       <div style={{display:'flex',justifyContent:'space-between',marginBottom:12}}>
         <div>
-          <div style={{fontSize:9,color:C.am,textTransform:'uppercase',letterSpacing:2}}>Editing Record</div>
-          <h3 style={{margin:'2px 0 0',fontSize:16}}>{f.employee_name||'Discipline Record'}</h3>
+          <div style={{fontSize:9,color:C.go,textTransform:'uppercase',letterSpacing:2}}>Discipline Record</div>
+          <h3 style={{margin:'2px 0 0',fontSize:16}}>{r.employee_name||'—'}</h3>
         </div>
         <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18,flexShrink:0}}>✕</button>
       </div>
 
+      {/* Type + Date + Step */}
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:14,alignItems:'center'}}>
+        {dt && <Tag c={dt.c}>{dt.l}</Tag>}
+        <span style={{fontSize:11,color:C.g}}>{r.date ? new Date(r.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+        {r.step && <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,background:'rgba(59,130,246,0.15)',color:'#3B82F6',border:'1px solid #3B82F6',fontWeight:700}}>{stepLabels[r.step]||'Step '+r.step}</span>}
+        <span style={{fontSize:10,padding:'2px 8px',borderRadius:99,fontWeight:700,
+          background:(r.status||r.st)==='closed'?'rgba(107,114,128,0.15)':(r.status||r.st)==='open'?'rgba(245,158,11,0.15)':'rgba(107,114,128,0.15)',
+          color:(r.status||r.st)==='closed'?'#6B7280':(r.status||r.st)==='open'?'#F59E0B':'#6B7280',
+          border:'1px solid '+((r.status||r.st)==='closed'?'#6B7280':(r.status||r.st)==='open'?'#F59E0B':'#6B7280')
+        }}>{(r.status||r.st||'open').toUpperCase()}</span>
+      </div>
+
       {/* Weingarten */}
-      <div style={{background:'#FFFBEB',border:'2px solid #F59E0B',borderRadius:8,padding:'12px 16px',marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:700,color:'#92400E',marginBottom:6}}>⚖ WEINGARTEN RIGHTS NOTICE</div>
-        <div style={{fontSize:11,color:'#78350F',lineHeight:1.6,marginBottom:10}}>You have the right to request union representation during any investigatory interview that you reasonably believe may result in disciplinary action.</div>
-        <div style={{display:'flex',gap:16,alignItems:'center',flexWrap:'wrap'}}>
-          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
-            <input type="checkbox" checked={f.weingarten_offered||false} onChange={e=>up('weingarten_offered',e.target.checked)} style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rights Offered
-          </label>
-          <label style={{fontSize:12,display:'flex',alignItems:'center',gap:5,cursor:'pointer',color:'#92400E',fontWeight:600}}>
-            <input type="checkbox" checked={f.weingarten_rep_requested||false} onChange={e=>up('weingarten_rep_requested',e.target.checked)} style={{width:16,height:16,accentColor:'#F59E0B'}}/> Rep Requested
-          </label>
-          {f.weingarten_rep_requested && <input value={f.weingarten_rep_name||''} onChange={e=>up('weingarten_rep_name',e.target.value)} placeholder="Union Rep Name"
-            style={{padding:'5px 10px',background:'#FEF3C7',border:'1px solid #F59E0B',borderRadius:4,fontSize:12,color:'#78350F',fontFamily:'inherit',flex:1,minWidth:140}}/>}
-        </div>
-      </div>
+      {(r.weingarten_offered || r.weingarten_rep_requested) && <div style={{background:'#FFFBEB',border:'1px solid #F59E0B',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:11,color:'#92400E'}}>
+        ⚖ Weingarten rights offered{r.weingarten_rep_requested ? ' · Rep requested' + (r.weingarten_rep_name ? ': '+r.weingarten_rep_name : '') : ''}
+      </div>}
 
-      {/* Fields */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
-        <div><label style={lbl}>Employee Name</label>
-          <select value={f.employee_id||''} onChange={e=>{const emp=emps.find(x=>x.id===e.target.value);up('employee_id',e.target.value);up('employee_name',emp?gn(emp):'')}} style={inp}>
-            <option value="">Select</option>{emps.map(e=><option key={e.id} value={e.id}>{gn(e)}</option>)}
-          </select></div>
-        <div><label style={lbl}>Date</label><input type="date" value={f.date||''} onChange={e=>up('date',e.target.value)} style={inp}/></div>
-        <div><label style={lbl}>Type</label>
-          <select value={f.type||''} onChange={e=>up('type',e.target.value)} style={inp}>
-            <option value="">Select</option>{DISC_TYPES.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
-          </select></div>
-        <div><label style={lbl}>Current Step (Manual)</label>
-          <select value={f.step||''} onChange={e=>up('step',e.target.value)} style={inp}>
-            <option value="">-- Select Step --</option>
-            <option value="1">Step 1 — Verbal Warning</option>
-            <option value="2">Step 2 — Written Warning</option>
-            <option value="3">Step 3 — Final Written Warning</option>
-            <option value="4">Step 4 — Suspension</option>
-            <option value="5">Step 5 — Termination</option>
-          </select></div>
-        <div><label style={lbl}>Prepared By</label><input value={f.prepared_by||''} readOnly style={{...inp,opacity:0.7}}/></div>
-        {f.type==='suspension' && <div><label style={{...lbl,color:'#B91C1C'}}>Suspension Return Date</label>
-          <input type="date" value={f.suspension_return_date||''} onChange={e=>up('suspension_return_date',e.target.value)} style={{...inp,borderColor:'#B91C1C'}}/></div>}
-      </div>
-
-      {/* Natures */}
-      <label style={{...lbl,marginBottom:6}}>Nature of Incident</label>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:4,marginBottom:12}}>
-        {INCIDENT_NATURES.map(n=>(<button key={n} onClick={()=>toggleNature(n)} style={{
-          padding:'6px 10px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',textAlign:'left',
-          background:selNatures.includes(n)?'#FEE2E2':'transparent',border:'1px solid '+(selNatures.includes(n)?'#DC2626':C.bdr),color:selNatures.includes(n)?'#DC2626':C.g
-        }}>{selNatures.includes(n)?'☑':'☐'} {n}</button>))}
-      </div>
-
-      <label style={lbl}>Specifics</label>
-      <textarea value={f.specifics||''} onChange={e=>up('specifics',e.target.value)} rows={4} style={{...inp,resize:'vertical',marginBottom:10}}/>
-
-      <label style={lbl}>Current Disciplinary Action</label>
-      <textarea value={f.current_action||''} onChange={e=>up('current_action',e.target.value)} rows={2} style={{...inp,resize:'vertical',marginBottom:10}}/>
-
-      <label style={lbl}>Employee's Comments</label>
-      <textarea value={f.employee_comments||''} onChange={e=>up('employee_comments',e.target.value)} rows={2} style={{...inp,resize:'vertical',marginBottom:10}}/>
-
-      {/* Attachments */}
-      <label style={{...lbl,marginBottom:6}}>Attachments ({existingAtts.length + attachments.length}/7)</label>
-      <div style={{border:'1px dashed '+C.bdr,borderRadius:8,padding:'12px 14px',marginBottom:12,background:C.nL}}>
-        {existingAtts.map((att,i) => (
-          <div key={'ex'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid '+C.bdr,marginBottom:4}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
-              <span style={{fontSize:12}}>📎</span>
-              <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</span>
-            </div>
-            <button onClick={()=>removeExistingAtt(i)} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,padding:'0 4px'}}>×</button>
-          </div>
-        ))}
-        {attachments.map((file,i) => (
-          <div key={'new'+i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 8px',background:C.bg2,borderRadius:4,border:'1px solid #22C55E',marginBottom:4}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,overflow:'hidden'}}>
-              <span style={{fontSize:12}}>📎</span>
-              <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{file.name}</span>
-              <span style={{fontSize:8,color:'#22C55E'}}>NEW</span>
-            </div>
-            <button onClick={()=>removeNewFile(i)} style={{background:'none',border:'none',color:'#DC2626',cursor:'pointer',fontSize:14,padding:'0 4px'}}>×</button>
-          </div>
-        ))}
-        {(existingAtts.length + attachments.length) < 7 && <label style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 0',cursor:'pointer',color:C.go,fontSize:11,fontWeight:600}}>
-          <span>+ Add File</span><input type="file" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt,.xlsx,.xls,.csv" onChange={handleFileAdd} style={{display:'none'}}/>
-        </label>}
-      </div>
-
-      {/* Future Action */}
-      <div style={{background:C.nL,borderRadius:6,padding:'10px 12px',marginBottom:14,fontSize:12,color:C.w,lineHeight:1.5,border:'1px solid '+C.bdr}}>
-        If Performance doesn't improve, it may result in further disciplinary action, up to and including termination of employment.
-        <div style={{marginTop:6,fontSize:11,fontWeight:600,fontStyle:'italic'}}>My signature below signifies that I have read and understand the above report.</div>
-      </div>
+      {row('Prepared By', r.prepared_by)}
+      {r.suspension_return_date && row('Suspension Return Date', new Date(r.suspension_return_date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}))}
+      {r.natures && row('Nature of Incident', r.natures)}
+      {row('Specifics', r.specifics||r.description)}
+      {row('Current Action', r.current_action)}
+      {row('Employee Comments', r.employee_comments)}
 
       {/* Signatures */}
-      <label style={{...lbl,marginBottom:8,fontSize:11}}>Signatures</label>
-      <div style={{display:'grid',gap:8,marginBottom:16}}>
+      {(r.emp_signature || r.employer_signature || r.witness_name) && <div style={{borderTop:'1px solid '+C.bdr,paddingTop:10,marginTop:4,marginBottom:12}}>
+        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',fontWeight:700,marginBottom:8}}>Signatures</div>
         {[
-          {key:'employee',label:'Employee Signature',name:f.emp_signature,ts:f.emp_sig_date,clear:()=>{up('emp_signature','');up('emp_sig_date','')}},
-          {key:'employer',label:'Employer Signature',name:f.employer_signature,ts:f.sup_sig_date,clear:()=>{up('employer_signature','');up('sup_sig_date','')}},
-          {key:'witness',label:'Witness Signature',name:f.witness_name&&f.witness_sig_date?f.witness_name:null,ts:f.witness_sig_date,clear:()=>{up('witness_name','');up('witness_sig_date','')}}
-        ].map((s,i)=>(
-          <div key={i} style={{border:'1px solid '+(s.name?'#22C55E':C.bdr),borderRadius:8,padding:'10px 14px',background:s.name?'rgba(34,197,94,0.05)':'transparent'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div>
-                <div style={{fontSize:10,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
-                {s.name ? <div style={{fontSize:14,fontStyle:'italic',color:C.w,marginTop:2}}>{s.name}</div> : <div style={{fontSize:11,color:C.g,marginTop:2}}>{s.key==='witness'?'Optional':'Not yet signed'}</div>}
-              </div>
-              <div style={{textAlign:'right'}}>
-                {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
-                {!s.name ? <button onClick={()=>setSigMode(s.key)} style={{background:s.key==='witness'?'transparent':C.go,color:s.key==='witness'?C.go:'#000',border:s.key==='witness'?'1px solid '+C.go:'none',padding:'5px 12px',borderRadius:6,fontSize:10,cursor:'pointer',fontFamily:'inherit',fontWeight:600,marginTop:2}}>Tap to Sign</button>
-                  : <button onClick={s.clear} style={{background:'transparent',border:'1px solid '+C.bdr,color:C.g,padding:'3px 8px',borderRadius:4,fontSize:9,cursor:'pointer',fontFamily:'inherit',marginTop:2}}>Clear</button>}
-              </div>
+          {label:'Employee',name:r.emp_signature,ts:r.emp_sig_date},
+          {label:'Employer',name:r.employer_signature,ts:r.sup_sig_date},
+          {label:'Witness',name:r.witness_name,ts:r.witness_sig_date}
+        ].filter(s=>s.name).map((s,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 10px',background:'rgba(34,197,94,0.05)',border:'1px solid #22C55E',borderRadius:6,marginBottom:4}}>
+            <div>
+              <div style={{fontSize:9,color:C.g,textTransform:'uppercase'}}>{s.label}</div>
+              <div style={{fontSize:13,fontStyle:'italic',color:C.w}}>{s.name}</div>
             </div>
+            {s.ts && <div style={{fontSize:9,color:C.g}}>{fmSigTs(s.ts)}</div>}
           </div>
         ))}
-      </div>
+      </div>}
+
+      {/* Attachments */}
+      {atts.length > 0 && <div style={{borderTop:'1px solid '+C.bdr,paddingTop:10,marginBottom:12}}>
+        <div style={{fontSize:10,color:C.g,textTransform:'uppercase',fontWeight:700,marginBottom:6}}>Attachments ({atts.length})</div>
+        {atts.map((att,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 8px',background:C.ch,borderRadius:4,border:'1px solid '+C.bdr,marginBottom:4}}>
+            <span>📎</span>
+            {att.url
+              ? <a href={att.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.go,textDecoration:'none',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</a>
+              : <span style={{fontSize:11,color:C.w,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{att.name||'File'}</span>}
+          </div>
+        ))}
+      </div>}
+
+      {/* Prior history */}
+      {priorDisc.length > 0 && <div style={{borderTop:'1px solid '+C.bdr,paddingTop:10,marginBottom:12}}>
+        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',fontWeight:700,marginBottom:6}}>Prior Records ({priorDisc.length})</div>
+        {priorDisc.map((d,i)=>{
+          const pdt = DISC_TYPES.find(t=>t.v===d.type)
+          return <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,padding:'3px 0'}}>
+            <span style={{display:'flex',alignItems:'center',gap:4}}>
+              <Tag c={pdt?.c||C.g}>{pdt?.l||d.type}</Tag>
+              <span style={{color:C.g,fontSize:10}}>{d.natures||d.category||''}</span>
+            </span>
+            <span style={{color:C.g,fontSize:10}}>{d.date ? new Date(d.date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
+          </div>
+        })}
+      </div>}
 
       <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}}>
-        <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
-        <Btn gold small onClick={handleSave} C={C}>{uploading ? 'Saving...' : 'Update Record'}</Btn>
+        <Btn ghost small onClick={onClose} C={C}>Close</Btn>
+        <Btn gold small onClick={onEdit} C={C}>Edit Record</Btn>
       </div>
     </div>
   </div>)

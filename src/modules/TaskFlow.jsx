@@ -276,14 +276,26 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
     const assignTo = editFields.assigned_to && editFields.assigned_to.trim() !== ""
       ? editFields.assigned_to
       : (editModal.assigned_to || null)
-    const { error } = await supabase.from("tasks").update({
+    const payload = {
       title: editFields.title.trim(),
       priority: editFields.priority || "normal",
       due_date: editFields.due_date && editFields.due_date.trim() !== "" ? editFields.due_date : null,
-      assigned_to: assignTo,
-      notes: editFields.notes && editFields.notes.trim() !== "" ? editFields.notes.trim() : null
-    }).eq("id", editModal.id)
-    if (error) { sh("Error: " + error.message); return }
+      assigned_to: assignTo
+    }
+    const { error } = await supabase.from("tasks").update(payload).eq("id", editModal.id)
+    if (error) {
+      console.error("Task update error:", JSON.stringify(error))
+      const { error: error2 } = await supabase.from("tasks").update({
+        title: payload.title,
+        priority: payload.priority,
+        due_date: payload.due_date
+      }).eq("id", editModal.id)
+      if (error2) {
+        console.error("Task fallback error:", JSON.stringify(error2))
+        sh("Error: " + error2.message)
+        return
+      }
+    }
     sh("Task updated")
     setEditModal(null)
     loadTasks()

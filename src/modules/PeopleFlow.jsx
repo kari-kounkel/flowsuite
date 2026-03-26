@@ -2134,7 +2134,6 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   const [sigMode, setSigMode] = useState(null)
   const [sigName, setSigName] = useState('')
   const [sigTab, setSigTab] = useState('type')
-  const [sigTab, setSigTab] = useState('type')
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
   const up = (k,v) => setF(p=>({...p,[k]:v}))
@@ -2208,65 +2207,59 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
-  // ── Signature Overlay ──
-  if (sigMode) {
-    const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
-    const canvasRef = React.useRef(null)
-    const isDrawing = React.useRef(false)
-    const lastPos = React.useRef(null)
+  const sigLabels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+  const canvasRef = React.useRef(null)
+  const isDrawing = React.useRef(false)
 
-    const getPos = (e, canvas) => {
-      const r = canvas.getBoundingClientRect()
-      if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
-      return {x: e.clientX - r.left, y: e.clientY - r.top}
-    }
-    const startDraw = (e) => {
-      e.preventDefault()
-      isDrawing.current = true
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      const pos = getPos(e, canvas)
-      ctx.beginPath()
-      ctx.moveTo(pos.x, pos.y)
-      lastPos.current = pos
-    }
-    const draw = (e) => {
-      e.preventDefault()
-      if (!isDrawing.current) return
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      ctx.strokeStyle = '#111'
-      ctx.lineWidth = 2
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      const pos = getPos(e, canvas)
-      ctx.lineTo(pos.x, pos.y)
-      ctx.stroke()
-      lastPos.current = pos
-    }
-    const stopDraw = () => { isDrawing.current = false }
-    const clearCanvas = () => {
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-    const applyDrawn = () => {
-      const canvas = canvasRef.current
-      const dataUrl = canvas.toDataURL('image/png')
-      const ts = new Date().toISOString()
-      if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
-      else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
-      else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
-      setSigMode(null); setSigName(''); setSigTab('type')
-    }
+  const getPos = (e, canvas) => {
+    const r = canvas.getBoundingClientRect()
+    if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
+    return {x: e.clientX - r.left, y: e.clientY - r.top}
+  }
+  const startDraw = (e) => {
+    e.preventDefault()
+    isDrawing.current = true
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const pos = getPos(e, canvas)
+    ctx.beginPath(); ctx.moveTo(pos.x, pos.y)
+  }
+  const draw = (e) => {
+    e.preventDefault()
+    if (!isDrawing.current) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+    const pos = getPos(e, canvas)
+    ctx.lineTo(pos.x, pos.y); ctx.stroke()
+  }
+  const stopDraw = () => { isDrawing.current = false }
+  const clearCanvas = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+  }
+  const applyDrawn = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const ts = new Date().toISOString()
+    if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
+    else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
+    else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
+    setSigMode(null); setSigName(''); setSigTab('type')
+  }
 
-    return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
+  if (sigMode) return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
       <div style={{background:C.bg2,borderRadius:16,padding:32,width:480,border:'2px solid '+C.go,textAlign:'center'}}>
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Signature</div>
-        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{sigLabels[sigMode]}</h3>
         <div style={{display:'flex',gap:0,marginBottom:16,borderRadius:8,overflow:'hidden',border:'1px solid '+C.bdr}}>
-          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>✏ Type</button>
-          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>🖊 Draw</button>
+          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>\u270f Type</button>
+          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>\u2712 Draw</button>
         </div>
         {sigTab === 'type' && (<div>
           <div style={{fontSize:11,color:C.g,marginBottom:12,lineHeight:1.5}}>Typing your name constitutes your electronic signature.</div>
@@ -2291,8 +2284,9 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
           </div>
         </div>)}
       </div>
-    </div>)
-  }
+    </div>
+  )
+
 
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
@@ -2632,64 +2626,59 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
   const inp = {width:'100%',padding:8,background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
-  if (sigMode) {
-    const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
-    const canvasRef = React.useRef(null)
-    const isDrawing = React.useRef(false)
-    const lastPos = React.useRef(null)
+  const sigLabels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+  const canvasRef = React.useRef(null)
+  const isDrawing = React.useRef(false)
 
-    const getPos = (e, canvas) => {
-      const r = canvas.getBoundingClientRect()
-      if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
-      return {x: e.clientX - r.left, y: e.clientY - r.top}
-    }
-    const startDraw = (e) => {
-      e.preventDefault()
-      isDrawing.current = true
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      const pos = getPos(e, canvas)
-      ctx.beginPath()
-      ctx.moveTo(pos.x, pos.y)
-      lastPos.current = pos
-    }
-    const draw = (e) => {
-      e.preventDefault()
-      if (!isDrawing.current) return
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      ctx.strokeStyle = '#111'
-      ctx.lineWidth = 2
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      const pos = getPos(e, canvas)
-      ctx.lineTo(pos.x, pos.y)
-      ctx.stroke()
-      lastPos.current = pos
-    }
-    const stopDraw = () => { isDrawing.current = false }
-    const clearCanvas = () => {
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-    const applyDrawn = () => {
-      const canvas = canvasRef.current
-      const dataUrl = canvas.toDataURL('image/png')
-      const ts = new Date().toISOString()
-      if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
-      else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
-      else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
-      setSigMode(null); setSigName(''); setSigTab('type')
-    }
+  const getPos = (e, canvas) => {
+    const r = canvas.getBoundingClientRect()
+    if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
+    return {x: e.clientX - r.left, y: e.clientY - r.top}
+  }
+  const startDraw = (e) => {
+    e.preventDefault()
+    isDrawing.current = true
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    const pos = getPos(e, canvas)
+    ctx.beginPath(); ctx.moveTo(pos.x, pos.y)
+  }
+  const draw = (e) => {
+    e.preventDefault()
+    if (!isDrawing.current) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+    const pos = getPos(e, canvas)
+    ctx.lineTo(pos.x, pos.y); ctx.stroke()
+  }
+  const stopDraw = () => { isDrawing.current = false }
+  const clearCanvas = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+  }
+  const applyDrawn = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const dataUrl = canvas.toDataURL('image/png')
+    const ts = new Date().toISOString()
+    if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
+    else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
+    else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
+    setSigMode(null); setSigName(''); setSigTab('type')
+  }
 
-    return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
+  if (sigMode) return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
       <div style={{background:C.bg2,borderRadius:16,padding:32,width:480,border:'2px solid '+C.go,textAlign:'center'}}>
         <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Signature</div>
-        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{sigLabels[sigMode]}</h3>
         <div style={{display:'flex',gap:0,marginBottom:16,borderRadius:8,overflow:'hidden',border:'1px solid '+C.bdr}}>
-          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>✏ Type</button>
-          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>🖊 Draw</button>
+          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>\u270f Type</button>
+          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>\u2712 Draw</button>
         </div>
         {sigTab === 'type' && (<div>
           <div style={{fontSize:11,color:C.g,marginBottom:12,lineHeight:1.5}}>Typing your name constitutes your electronic signature.</div>
@@ -2714,8 +2703,9 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
           </div>
         </div>)}
       </div>
-    </div>)
-  }
+    </div>
+  )
+
 
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>

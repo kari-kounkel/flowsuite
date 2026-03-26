@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase.js'
 import { Card, Tag, Btn, fm, dbt, td } from '../theme.jsx'
 import { generateLetterPDF, buildOfferLetterHTML, buildUnionLetterHTML } from './letterHelpers.js'
@@ -1690,7 +1690,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
     setViewRecord(null)
   }
 
-  const [suspModal, setSuspModal] = React.useState(null)
+  const [suspModal, setSuspModal] = useState(null)
 
   const handleSuspComplete = async (suspId, stepsToRetire) => {
     const now = new Date().toISOString()
@@ -1798,7 +1798,7 @@ function SuspensionCompleteModal({suspension, disc, onConfirm, onClose, C}) {
     (d.status||d.st) !== 'retired'
   ).sort((a,b) => new Date(a.date||a.created_at) - new Date(b.date||b.created_at))
 
-  const [selected, setSelected] = React.useState([])
+  const [selected, setSelected] = useState([])
   const toggle = (id) => setSelected(p => p.includes(id) ? p.filter(x=>x!==id) : [...p, id])
   const typeLabels = {verbal:'Verbal Warning',written:'Written Warning',final_written:'Final Written Warning'}
 
@@ -2208,8 +2208,8 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
   const sigLabels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
-  const canvasRef = React.useRef(null)
-  const isDrawing = React.useRef(false)
+  const canvasRef = useRef(null)
+  const isDrawing = useRef(false)
 
   const getPos = (e, canvas) => {
     const r = canvas.getBoundingClientRect()
@@ -2627,8 +2627,8 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
   const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:2}
 
   const sigLabels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
-  const canvasRef = React.useRef(null)
-  const isDrawing = React.useRef(false)
+  const canvasRef = useRef(null)
+  const isDrawing = useRef(false)
 
   const getPos = (e, canvas) => {
     const r = canvas.getBoundingClientRect()

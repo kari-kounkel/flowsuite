@@ -1896,8 +1896,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       '.future{background:#f9f9f9;border:1px solid #ddd;border-radius:4px;padding:12px 14px;margin-bottom:20px;font-size:14px}' +
       'table{width:100%;border-collapse:collapse;margin-top:4px}td{font-size:14px}' +
       '.sig-table td{padding:8px 12px;font-size:13px}' +
-      '.page-break{page-break-before:always;padding-top:40px}' +
-      '.stat{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;font-size:14px;margin-right:10px;margin-bottom:16px}' +
+            '.stat{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;font-size:14px;margin-right:10px;margin-bottom:16px}' +
       'th{background:#111;color:#fff;padding:9px 10px;text-align:left;font-size:12px;text-transform:uppercase}' +
       '@media print{body{margin:20px}.no-print{display:none}}</style></head><body>' +
       '<div class="header"><img class="logo" src="' + logo + '" alt="Minuteman Press Uptown"/>' +
@@ -1917,14 +1916,14 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       '<div class="future">' + futureAction + '<br><br><em>My signature below signifies that I have read and understand the above report.</em></div>' +
       '<div class="section"><div class="label">Signatures</div>' +
       '<table class="sig-table"><tbody>' + sigLine('Employee Signature') + sigLine('Employer / Supervisor') + sigLine('Witness (optional)') + '</tbody></table></div>' +
-      '<div class="page-break">' +
+      '<hr style="margin:32px 0;border:none;border-top:2px solid #111"/>' +
       '<div class="header"><img class="logo" src="' + logo + '" alt="Minuteman Press Uptown"/>' +
       '<div class="header-text"><h1>Discipline History Summary</h1>' +
       '<div style="font-size:15px;font-weight:700;margin:4px 0">' + (r.employee_name||'—') + '</div>' +
       '<div style="font-size:12px;color:#888">Printed ' + new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) + '</div></div></div>' +
       '<div><span class="stat" style="background:#fee2e2;color:#991b1b">' + empDisc.length + ' Total Records</span>' +
       '<span class="stat" style="background:#fef3c7;color:#92400e">' + activeCount + ' Active Progressive</span></div>' +
-      '<table><thead><tr><th>Date</th><th>Type</th><th>Nature of Incident</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<table><thead><tr><th>Date</th><th>Type</th><th>Nature of Incident</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       '<script>window.onload=()=>window.print()<\/script></body></html>'
     const w = window.open('','_blank')
     w.document.write(html)

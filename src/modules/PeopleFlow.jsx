@@ -1782,7 +1782,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
     const stepLabels2 = {'1':'Step 1 — Verbal Warning','2':'Step 2 — Written Warning','3':'Step 3 — Final Written Warning','4':'Step 4 — Suspension','5':'Step 5 — Termination'}
     const sigRow = (label, name, ts) => name ? (
       '<tr><td style="padding:8px 12px;border:1px solid #ddd;font-weight:600;width:160px">' + label + '</td>' +
-      '<td style="padding:8px 12px;border:1px solid #ddd;font-style:italic">' + name + '</td>' +
+      '<td style="padding:8px 12px;border:1px solid #ddd">' + (name.startsWith('data:image') ? '<img src="' + name + '" style="height:36px;max-width:220px;display:block"/>' : '<span style="font-style:italic">' + name + '</span>') + '</td>' +
       '<td style="padding:8px 12px;border:1px solid #ddd;color:#666;font-size:11px">' + (ts ? new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '') + '</td></tr>'
     ) : ''
     const html = '<!DOCTYPE html><html><head><title>Discipline Notice — ' + (r.employee_name||'') + '</title>' +
@@ -1916,7 +1916,7 @@ function DisciplineViewModal({record,onClose,C,disc,onEdit}){
       '<div class="future">' + futureAction + '<br><br><em>My signature below signifies that I have read and understand the above report.</em></div>' +
       '<div class="section"><div class="label">Signatures</div>' +
       '<table class="sig-table"><tbody>' + sigLine('Employee Signature') + sigLine('Employer / Supervisor') + sigLine('Witness (optional)') + '</tbody></table></div>' +
-      '<hr style="margin:32px 0;border:none;border-top:2px solid #111"/>' +
+      
       '<div class="header"><img class="logo" src="' + logo + '" alt="Minuteman Press Uptown"/>' +
       '<div class="header-text"><h1>Discipline History Summary</h1>' +
       '<div style="font-size:15px;font-weight:700;margin:4px 0">' + (r.employee_name||'—') + '</div>' +
@@ -2051,6 +2051,8 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   const [priorDisc, setPriorDisc] = useState([])
   const [sigMode, setSigMode] = useState(null)
   const [sigName, setSigName] = useState('')
+  const [sigTab, setSigTab] = useState('type')
+  const [sigTab, setSigTab] = useState('type')
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
   const up = (k,v) => setF(p=>({...p,[k]:v}))
@@ -2127,23 +2129,89 @@ function FormalDisciplineModal({onSave,onClose,C,emps,disc,userEmail,userEmpReco
   // ── Signature Overlay ──
   if (sigMode) {
     const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+    const canvasRef = React.useRef(null)
+    const isDrawing = React.useRef(false)
+    const lastPos = React.useRef(null)
+
+    const getPos = (e, canvas) => {
+      const r = canvas.getBoundingClientRect()
+      if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
+      return {x: e.clientX - r.left, y: e.clientY - r.top}
+    }
+    const startDraw = (e) => {
+      e.preventDefault()
+      isDrawing.current = true
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      const pos = getPos(e, canvas)
+      ctx.beginPath()
+      ctx.moveTo(pos.x, pos.y)
+      lastPos.current = pos
+    }
+    const draw = (e) => {
+      e.preventDefault()
+      if (!isDrawing.current) return
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      ctx.strokeStyle = '#111'
+      ctx.lineWidth = 2
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      const pos = getPos(e, canvas)
+      ctx.lineTo(pos.x, pos.y)
+      ctx.stroke()
+      lastPos.current = pos
+    }
+    const stopDraw = () => { isDrawing.current = false }
+    const clearCanvas = () => {
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    const applyDrawn = () => {
+      const canvas = canvasRef.current
+      const dataUrl = canvas.toDataURL('image/png')
+      const ts = new Date().toISOString()
+      if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
+      else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
+      else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
+      setSigMode(null); setSigName(''); setSigTab('type')
+    }
+
     return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
-      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
-        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
-        <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
-        <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>
-          By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:480,border:'2px solid '+C.go,textAlign:'center'}}>
+        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Signature</div>
+        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <div style={{display:'flex',gap:0,marginBottom:16,borderRadius:8,overflow:'hidden',border:'1px solid '+C.bdr}}>
+          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>✏ Type</button>
+          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>🖊 Draw</button>
         </div>
-        <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
-          style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}}
-          onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
-        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
-          <Btn ghost small onClick={()=>{setSigMode(null);setSigName('')}} C={C}>Cancel</Btn>
-          <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
-        </div>
+        {sigTab === 'type' && (<div>
+          <div style={{fontSize:11,color:C.g,marginBottom:12,lineHeight:1.5}}>Typing your name constitutes your electronic signature.</div>
+          <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
+            style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}}
+            onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
+          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+            <Btn ghost small onClick={()=>{setSigMode(null);setSigName('');setSigTab('type')}} C={C}>Cancel</Btn>
+            <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
+          </div>
+        </div>)}
+        {sigTab === 'draw' && (<div>
+          <div style={{fontSize:11,color:C.g,marginBottom:8,lineHeight:1.5}}>Sign with your finger or mouse below.</div>
+          <canvas ref={canvasRef} width={400} height={140}
+            style={{background:'#fff',borderRadius:8,border:'1px solid '+C.bdr,cursor:'crosshair',touchAction:'none',display:'block',margin:'0 auto 8px'}}
+            onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+            onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw}/>
+          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+            <Btn ghost small onClick={()=>{setSigMode(null);setSigName('');setSigTab('type')}} C={C}>Cancel</Btn>
+            <button onClick={clearCanvas} style={{padding:'6px 14px',borderRadius:6,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Clear</button>
+            <Btn gold small onClick={applyDrawn} C={C}>Apply Signature</Btn>
+          </div>
+        </div>)}
       </div>
     </div>)
   }
+
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
     <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
@@ -2483,20 +2551,89 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
 
   if (sigMode) {
     const labels = {employee:'Employee Signature',employer:'Employer Signature',witness:'Witness Signature'}
+    const canvasRef = React.useRef(null)
+    const isDrawing = React.useRef(false)
+    const lastPos = React.useRef(null)
+
+    const getPos = (e, canvas) => {
+      const r = canvas.getBoundingClientRect()
+      if (e.touches) return {x: e.touches[0].clientX - r.left, y: e.touches[0].clientY - r.top}
+      return {x: e.clientX - r.left, y: e.clientY - r.top}
+    }
+    const startDraw = (e) => {
+      e.preventDefault()
+      isDrawing.current = true
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      const pos = getPos(e, canvas)
+      ctx.beginPath()
+      ctx.moveTo(pos.x, pos.y)
+      lastPos.current = pos
+    }
+    const draw = (e) => {
+      e.preventDefault()
+      if (!isDrawing.current) return
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      ctx.strokeStyle = '#111'
+      ctx.lineWidth = 2
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      const pos = getPos(e, canvas)
+      ctx.lineTo(pos.x, pos.y)
+      ctx.stroke()
+      lastPos.current = pos
+    }
+    const stopDraw = () => { isDrawing.current = false }
+    const clearCanvas = () => {
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    const applyDrawn = () => {
+      const canvas = canvasRef.current
+      const dataUrl = canvas.toDataURL('image/png')
+      const ts = new Date().toISOString()
+      if (sigMode === 'employee') { up('emp_signature', dataUrl); up('emp_sig_date', ts) }
+      else if (sigMode === 'employer') { up('employer_signature', dataUrl); up('sup_sig_date', ts) }
+      else if (sigMode === 'witness') { up('witness_name', dataUrl); up('witness_sig_date', ts) }
+      setSigMode(null); setSigName(''); setSigTab('type')
+    }
+
     return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1001}}>
-      <div style={{background:C.bg2,borderRadius:16,padding:32,width:420,border:'2px solid '+C.go,textAlign:'center'}}>
-        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Electronic Signature</div>
-        <h3 style={{margin:'0 0 6px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
-        <div style={{fontSize:11,color:C.g,marginBottom:20,lineHeight:1.5}}>By typing your name below, you acknowledge this constitutes your electronic signature and has the same legal effect as a handwritten signature.</div>
-        <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
-          style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}} onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
-        <div style={{display:'flex',gap:8,justifyContent:'center'}}>
-          <Btn ghost small onClick={()=>{setSigMode(null);setSigName('')}} C={C}>Cancel</Btn>
-          <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
+      <div style={{background:C.bg2,borderRadius:16,padding:32,width:480,border:'2px solid '+C.go,textAlign:'center'}}>
+        <div style={{fontSize:10,color:C.am,textTransform:'uppercase',letterSpacing:2,marginBottom:8}}>Signature</div>
+        <h3 style={{margin:'0 0 16px',fontSize:18,color:C.w}}>{labels[sigMode]}</h3>
+        <div style={{display:'flex',gap:0,marginBottom:16,borderRadius:8,overflow:'hidden',border:'1px solid '+C.bdr}}>
+          <button onClick={()=>setSigTab('type')} style={{flex:1,padding:'8px 0',background:sigTab==='type'?C.go:'transparent',color:sigTab==='type'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>✏ Type</button>
+          <button onClick={()=>setSigTab('draw')} style={{flex:1,padding:'8px 0',background:sigTab==='draw'?C.go:'transparent',color:sigTab==='draw'?'#000':C.g,border:'none',cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:12}}>🖊 Draw</button>
         </div>
+        {sigTab === 'type' && (<div>
+          <div style={{fontSize:11,color:C.g,marginBottom:12,lineHeight:1.5}}>Typing your name constitutes your electronic signature.</div>
+          <input value={sigName} onChange={e=>setSigName(e.target.value)} placeholder="Type full legal name" autoFocus
+            style={{...inp,fontSize:16,padding:12,textAlign:'center',marginBottom:16}}
+            onKeyDown={e=>{if(e.key==='Enter')applySignature()}}/>
+          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+            <Btn ghost small onClick={()=>{setSigMode(null);setSigName('');setSigTab('type')}} C={C}>Cancel</Btn>
+            <Btn gold small onClick={applySignature} C={C}>Apply Signature</Btn>
+          </div>
+        </div>)}
+        {sigTab === 'draw' && (<div>
+          <div style={{fontSize:11,color:C.g,marginBottom:8,lineHeight:1.5}}>Sign with your finger or mouse below.</div>
+          <canvas ref={canvasRef} width={400} height={140}
+            style={{background:'#fff',borderRadius:8,border:'1px solid '+C.bdr,cursor:'crosshair',touchAction:'none',display:'block',margin:'0 auto 8px'}}
+            onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+            onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw}/>
+          <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+            <Btn ghost small onClick={()=>{setSigMode(null);setSigName('');setSigTab('type')}} C={C}>Cancel</Btn>
+            <button onClick={clearCanvas} style={{padding:'6px 14px',borderRadius:6,border:'1px solid '+C.bdr,background:'transparent',color:C.g,cursor:'pointer',fontFamily:'inherit',fontSize:12}}>Clear</button>
+            <Btn gold small onClick={applyDrawn} C={C}>Apply Signature</Btn>
+          </div>
+        </div>)}
       </div>
     </div>)
   }
+
 
   return(<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1e3}} onClick={onClose}>
     <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>

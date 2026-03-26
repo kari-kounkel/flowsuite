@@ -1680,9 +1680,12 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
   const sorted=[...disc].sort((a,b)=>new Date(b.date||b.created_at)-new Date(a.date||a.created_at))
 
   const handleUpdate = async (updated) => {
-    const {error} = await supabase.from('disciplines').update(updated).eq('id', updated.id)
+    const {id, org_id: _org, ...rest} = updated
+    const payload = {}
+    Object.entries(rest).forEach(([k,v]) => { if (v !== undefined) payload[k] = v })
+    const {error} = await supabase.from('disciplines').update(payload).eq('id', id)
     if (error) { console.error('Update error:', error); return }
-    setDisc(p => p.map(x => x.id === updated.id ? {...x, ...updated} : x))
+    setDisc(p => p.map(x => x.id === id ? {...x, ...payload, id} : x))
     setEditRecord(null)
     setViewRecord(null)
   }

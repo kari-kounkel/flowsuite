@@ -2574,6 +2574,7 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
   })
   const [sigMode, setSigMode] = useState(null)
   const [sigName, setSigName] = useState('')
+  const [sigTab, setSigTab] = useState('type')
   const [existingAtts, setExistingAtts] = useState(() => {
     try { return record.attachments ? (typeof record.attachments === 'string' ? JSON.parse(record.attachments) : record.attachments) : [] } catch(e) { return [] }
   })
@@ -2617,6 +2618,7 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
       const allAtts = [...existingAtts, ...uploaded]
       const updated = {...f, natures:selNatures.join(', '), attachments:allAtts.length>0?JSON.stringify(allAtts):null}
       onSave(updated)
+      onClose()
     } catch(err) { console.error('Save error:',err) }
     setUploading(false)
   }

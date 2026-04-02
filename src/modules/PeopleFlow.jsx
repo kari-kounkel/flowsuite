@@ -1687,7 +1687,7 @@ function DisciplineSubView({disc,setDisc,saveDisc,emps,ac,mod,setMod,C,userEmail
     if (error) { console.error('Update error:', error); return }
     setDisc(p => p.map(x => x.id === id ? {...x, ...payload, id} : x))
     setEditRecord(null)
-    setViewRecord(null)
+    setViewRecord(prev => prev ? {...prev, ...payload, id} : null)
   }
 
   const [suspModal, setSuspModal] = useState(null)
@@ -1836,7 +1836,7 @@ function SuspensionCompleteModal({suspension, disc, onConfirm, onClose, C}) {
 }
 
 function DisciplineViewModal({record,onClose,C,disc,onEdit}){
-  const r = record
+  const r = disc.find(d=>d.id===record.id) || record
   const dt = DISC_TYPES.find(t=>t.v===r.type)
   const priorDisc = disc.filter(d => d.id !== r.id && (d.employee_id === r.employee_id || d.employee_name === r.employee_name))
     .sort((a,b) => new Date(b.date||b.created_at) - new Date(a.date||a.created_at))

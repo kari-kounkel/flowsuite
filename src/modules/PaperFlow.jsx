@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase.js'
 import { Card, Tag, Btn, fm, td } from '../theme.jsx'
+import EmployeeRequestWizard from './peopleflow/EmployeeRequestWizard.jsx'
+import HRFormsWizard from './peopleflow/HRFormsWizard.jsx'
 
 const DOC_TYPES = [
   { k: 'contract', l: 'Union Contract', i: '§', desc: 'Local 1-B CBA — Jan 2024–Dec 2026' },
@@ -19,6 +21,7 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const [catFilter, setCatFilter] = useState('')
   const [docType, setDocType] = useState('contract')
   const [expandedSubs, setExpandedSubs] = useState({})
+  const [requestsView, setRequestsView] = useState('employee')
 
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
@@ -44,11 +47,15 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const ac = employees.filter(e => e.status !== 'Terminated' && e.status !== 'Inactive')
   const gn = e => `${e.pn || e.preferred_name || e.first_name || ''} ${e.ln || e.last_name || ''}`
 
+  const HR_EMAILS = ['kari@karikounkel.com', 'operationsmanager@mpuptown.com']
+  const isHR = HR_EMAILS.includes(user?.email)
+
   const tabs = [
-    { k: 'sections', l: 'Browse', i: '§' },
+    { k: 'sections',  l: 'Browse',   i: '§' },
     { k: 'negotiate', l: 'Negotiate', i: '✎' },
-    { k: 'push', l: 'Push', i: '▶' },
-    { k: 'acks', l: 'Acks', i: '✓' }
+    { k: 'push',      l: 'Push',      i: '▶' },
+    { k: 'acks',      l: 'Acks',      i: '✓' },
+    { k: 'requests',  l: 'Requests',  i: '📋' },
   ]
 
   const saveNote = async (sectionId, text, noteType = 'general') => {
@@ -181,6 +188,47 @@ export default function PaperFlowModule({ orgId, C, user }) {
     {view === 'negotiate' && <NegotiateView sections={sections} notes={notes} saveNote={saveNote} C={C} />}
     {view === 'push' && <PushView sections={sections} ac={ac} gn={gn} pushSection={pushSection} pushes={pushes} acks={acks} C={C} />}
     {view === 'acks' && <AcksView pushes={pushes} acks={acks} sections={sections} acknowledge={acknowledge} C={C} />}
+
+    {view === 'requests' && (
+      <div>
+        {/* HR toggle — only visible to HR_EMAILS */}
+        {isHR && (
+          <div style={{
+            display: 'flex', gap: 2, marginBottom: 20,
+            padding: 4, borderRadius: 8,
+            background: C.ch, border: `1px solid ${C.bdr}`,
+            width: 'fit-content'
+          }}>
+            {[
+              { k: 'employee', l: '📋 Submit a Request' },
+              { k: 'hr',       l: '🔵 HR Forms' },
+            ].map(t => (
+              <button
+                key={t.k}
+                onClick={() => setRequestsView(t.k)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6,
+                  fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                  background: requestsView === t.k ? C.go : 'transparent',
+                  color: requestsView === t.k ? C.bg : C.g,
+                }}
+              >{t.l}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Employee wizard — everyone sees this by default */}
+        {(!isHR || requestsView === 'employee') && (
+          <EmployeeRequestWizard orgId={orgId} C={C} user={user} />
+        )}
+
+        {/* HR forms — gated */}
+        {isHR && requestsView === 'hr' && (
+          <HRFormsWizard orgId={orgId} C={C} user={user} />
+        )}
+      </div>
+    )}
 
     {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{toast}</div>}
   </div>)

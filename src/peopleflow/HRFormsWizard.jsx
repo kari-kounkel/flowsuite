@@ -66,6 +66,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [expandedReq, setExpandedReq]   = useState(null)
+  const [empHistory, setEmpHistory]     = useState({}) // { empId: [requests] }
+  const [loadingHistory, setLoadingHistory] = useState(null)
   const [approvingId, setApprovingId]   = useState(null)
   const [approveNote, setApproveNote]   = useState('')
   const [payingId, setPayingId]         = useState(null)
@@ -156,6 +158,20 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
   const shA = (msg) => { setActionToast(msg); setTimeout(() => setActionToast(''), 3000) }
 
+  const loadEmpHistory = async (eId) => {
+    if (!eId || empHistory[eId]) return
+    setLoadingHistory(eId)
+    const { data } = await supabase
+      .from('employee_requests')
+      .select('id,type,status,created_at,approved_at,paid_at,payment_method')
+      .eq('org_id', orgId)
+      .eq('employee_id', eId)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setEmpHistory(p => ({ ...p, [eId]: data || [] }))
+    setLoadingHistory(null)
+  }
+
   const getEmpName = (empId) => {
     const e = employees.find(x => x.id === empId)
     if (!e) return '—'
@@ -240,7 +256,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const addWHRow    = () => setWhRows(p => [...p, emptyWHRow()])
   const removeWHRow = (id) => whRows.length > 1 && setWhRows(p => p.filter(r => r.id !== id))
 
-  const canNext1 = empId !== ''
+  const canNext1 = empId !== '' || formType === 'nec_1099'
   const canNext2 = formType !== ''
   const necTotal = ((parseFloat(necHourlyRate) || 0) * (parseFloat(necHours) || 0)).toFixed(2)
   const selectedNecContact = necContacts.find(c => c.id === necContactId)
@@ -367,6 +383,28 @@ export default function HRFormsWizard({ orgId, C, user }) {
           const token = necTokenUrl.split('?nec=')[1]
           if (token) await supabase.from('nec_tokens').update({ request_id: form.id }).eq('token', token)
         }
+
+        // Create MoneyFlow AP task for this contractor payment
+        const contactId = necSavedContactId || necContactId
+        const contactRec = necContacts.find(c => c.id === contactId)
+        const contactName = contactRec
+          ? `${contactRec.first_name} ${contactRec.last_name}`
+          : (necFirstName && necLastName ? `${necFirstName} ${necLastName}` : 'Contractor')
+        const hours = parseFloat(necHours) || 0
+        const rate  = parseFloat(necHourlyRate) || 0
+        await supabase.from('moneyflow_tasks').insert([{
+          org_id: orgId,
+          entity: 'omega',
+          type: 'AP',
+          source: 'hr_form_nec',
+          name: `1099 NEC — ${contactName} — $${(hours * rate).toFixed(2)}`,
+          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${hours} hrs @ $${rate}/hr\nPayment: ${contactRec?.banking_on_file ? 'ACH Direct Deposit' : 'Check'}`,
+          due_date: new Date().toISOString().split('T')[0],
+          status: 'open',
+          is_recurring: false,
+          recur_interval: 0,
+          paperflow_request_id: form.id,
+        }])
       }
 
       setStep(5)
@@ -459,7 +497,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
             return (
               <div key={req.id} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${isExp ? C.go : C.bdr}`, background: C.ch, overflow: 'hidden', transition: 'border-color 0.2s' }}>
                 {/* Row header */}
-                <div onClick={() => setExpandedReq(isExp ? null : req.id)} style={{ padding: '12px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next); if (!isExp && req.employee_id) loadEmpHistory(req.employee_id) }} style={{ padding: '12px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{name}</span>
@@ -579,6 +617,38 @@ export default function HRFormsWizard({ orgId, C, user }) {
                         </div>
                       </div>
                     )}
+
+                    {/* ── Employee request history ── */}
+                    {req.employee_id && (
+                      <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${C.bdr}` }}>
+                        <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontWeight: 700 }}>
+                          All Requests — {getEmpName(req.employee_id)}
+                        </div>
+                        {loadingHistory === req.employee_id && (
+                          <div style={{ fontSize: 11, color: C.g }}>Loading...</div>
+                        )}
+                        {!loadingHistory && (empHistory[req.employee_id] || []).length === 0 && (
+                          <div style={{ fontSize: 11, color: C.g }}>No other requests on file.</div>
+                        )}
+                        {(empHistory[req.employee_id] || []).map(h => {
+                          const sc = STATUS_COLORS[h.status] || C.g
+                          const isThis = h.id === req.id
+                          return (
+                            <div key={h.id} style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              padding: '5px 8px', borderRadius: 5, marginBottom: 4,
+                              background: isThis ? 'rgba(245,158,11,0.08)' : C.ch,
+                              border: `1px solid ${isThis ? C.go : C.bdr}`,
+                              fontSize: 11,
+                            }}>
+                              <span style={{ color: C.w }}>{TYPE_LABELS[h.type] || h.type}{isThis ? ' ← this one' : ''}</span>
+                              <span style={{ color: C.g, fontSize: 10 }}>{new Date(h.created_at).toLocaleDateString()}</span>
+                              <span style={{ color: sc, fontWeight: 700, fontSize: 10, textTransform: 'uppercase' }}>{h.status}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -629,17 +699,24 @@ export default function HRFormsWizard({ orgId, C, user }) {
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>Select Employee</div>
           <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>Which employee is this form for?</div>
-          <Field C={C} l="Employee" req>
+          <Field C={C} l="Employee">
             <select value={empId} onChange={e => setEmpId(e.target.value)} style={inp(C)}>
               <option value="">— Select employee —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{gn(e)} — {e.dept}</option>)}
             </select>
           </Field>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={() => setStep(2)} disabled={!canNext1} style={{
+          <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', fontSize: 11, color: '#0EA5E9', marginBottom: 18 }}>
+            💡 For <strong>1099 NEC contractor payments</strong>, no employee selection is needed — you can skip this step.
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <button onClick={() => { setFormType('nec_1099'); setStep(3) }} style={{
+              padding: '8px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+              background: 'transparent', border: '1px solid rgba(14,165,233,0.4)', color: '#0EA5E9', cursor: 'pointer',
+            }}>Skip → 1099 NEC</button>
+            <button onClick={() => setStep(2)} disabled={!empId} style={{
               padding: '8px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
-              background: canNext1 ? (C.go || '#F59E0B') : C.bdr, color: canNext1 ? C.bg : C.g,
-              border: 'none', cursor: canNext1 ? 'pointer' : 'not-allowed',
+              background: empId ? (C.go || '#F59E0B') : C.bdr, color: empId ? C.bg : C.g,
+              border: 'none', cursor: empId ? 'pointer' : 'not-allowed',
             }}>Next →</button>
           </div>
         </div>

@@ -97,6 +97,7 @@ const MONTHS = [
 const ENTITY_COLORS = {
   omega: { bg: '#7a4f3a', light: '#c4956a', label: 'Omega' },
   iaz:   { bg: '#3a5c7a', light: '#6a9ec4', label: 'I A Z' },
+  hub:   { bg: '#3a6b4a', light: '#6ac48a', label: 'Hub'   },
 }
 const TYPE_COLORS = {
   AP:    '#c4956a',
@@ -310,6 +311,7 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
             <select value={form.entity} onChange={e => set('entity', e.target.value)} style={inputStyle}>
               <option value="omega">Omega</option>
               <option value="iaz">I A Z</option>
+              <option value="hub">Hub</option>
             </select>
           </div>
           <div style={{ flex: 1 }}>
@@ -7055,7 +7057,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           {jeSubTab === 'tasks' && (
             <div>
               <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                {['all','omega','iaz'].map(e => pill(
+                {['all','omega','iaz','hub'].map(e => pill(
                   e === 'all' ? 'All Entities' : ENTITY_COLORS[e].label,
                   filterEntity === e,
                   () => setFilterEntity(e)

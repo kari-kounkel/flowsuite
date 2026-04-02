@@ -6,8 +6,18 @@ import TaskFlowModule from './modules/TaskFlow.jsx'
 import MoneyFlowModule from './modules/MoneyFlow.jsx'
 import AdminPanel from './modules/AdminPanel.jsx'
 import ScanFlowModule from './scanflow/index.jsx'
+import NecConfirm from './nec-confirm/NecConfirm.jsx'
 
 export default function App({ user, orgCtx, onLogout }) {
+  // ── NEC token intercept — render public banking page if ?nec=TOKEN in URL ──
+  const necToken = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search)
+      return p.get('nec') || null
+    } catch { return null }
+  })()
+  if (necToken) return <NecConfirm token={necToken} />
+
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('fs-theme') || 'brown' } catch { return 'brown' }
   })

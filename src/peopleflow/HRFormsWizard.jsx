@@ -14,6 +14,7 @@ const FORM_TYPES = [
   { v: 'withholding',        l: 'Payroll Withholding Notification', i: '📋', desc: 'Notify employee of required payroll withholdings' },
   { v: 'deduction',          l: 'Payroll Deduction Authorization',  i: '✂️',  desc: 'Authorize a voluntary or required deduction' },
   { v: 'cash_reimbursement', l: 'Cash Reimbursement',               i: '💵', desc: 'Acknowledge a cash reimbursement to employee' },
+  { v: 'nec_1099',           l: '1099 NEC — Non-Employee Compensation', i: '📄', desc: 'Issue payment to a contractor; collect ACH if needed' },
 ]
 
 const TYPE_LABELS = {
@@ -73,7 +74,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [payNote, setPayNote]           = useState('')
   const [actionToast, setActionToast]   = useState('')
 
-  const [employees, setEmployees]   = useState([])
   const [step, setStep]             = useState(1)
   const [empId, setEmpId]           = useState('')
   const [formType, setFormType]     = useState('')
@@ -100,6 +100,27 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [cashPurpose, setCashPurpose] = useState('')
   const [cashMode, setCashMode]       = useState('payroll')
 
+  // 1099 NEC fields
+  const [necContacts, setNecContacts]         = useState([])
+  const [necContactId, setNecContactId]       = useState('')   // selected existing contact
+  const [necMode, setNecMode]                 = useState('existing') // 'existing' | 'new'
+  const [necFirstName, setNecFirstName]       = useState('')
+  const [necLastName, setNecLastName]         = useState('')
+  const [necEmail, setNecEmail]               = useState('')
+  const [necAddress1, setNecAddress1]         = useState('')
+  const [necCity, setNecCity]                 = useState('')
+  const [necState, setNecState]               = useState('')
+  const [necZip, setNecZip]                   = useState('')
+  const [necSsnLast4, setNecSsnLast4]         = useState('')
+  const [necHourlyRate, setNecHourlyRate]     = useState('')
+  const [necHours, setNecHours]               = useState('')
+  const [necPeriodStart, setNecPeriodStart]   = useState('')
+  const [necPeriodEnd, setNecPeriodEnd]       = useState('')
+  const [necDescription, setNecDescription]   = useState('')
+  const [necTokenUrl, setNecTokenUrl]         = useState('')
+  const [generatingToken, setGeneratingToken] = useState(false)
+  const [necSavedContactId, setNecSavedContactId] = useState(null)
+
   // Signatures
   const [empSigUrl, setEmpSigUrl]   = useState('')
   const [hrSigUrl, setHrSigUrl]     = useState('')
@@ -111,6 +132,12 @@ export default function HRFormsWizard({ orgId, C, user }) {
     supabase.from('employees').select('id,first_name,preferred_name,last_name,dept,email,status')
       .eq('org_id', orgId).not('status', 'in', '("Terminated","Inactive")').order('last_name')
       .then(({ data }) => setEmployees(data || []))
+  }, [orgId, isHR])
+
+  useEffect(() => {
+    if (!orgId || !isHR) return
+    supabase.from('nec_contacts').select('*').eq('org_id', orgId).order('last_name')
+      .then(({ data }) => setNecContacts(data || []))
   }, [orgId, isHR])
 
   const loadQueue = async () => {
@@ -215,13 +242,61 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
   const canNext1 = empId !== ''
   const canNext2 = formType !== ''
+  const necTotal = ((parseFloat(necHourlyRate) || 0) * (parseFloat(necHours) || 0)).toFixed(2)
+  const selectedNecContact = necContacts.find(c => c.id === necContactId)
   const canNext3 = (() => {
     if (formType === 'withholding') return totalWithholdings > 0 || whRows.some(r => r.type && r.amount)
     if (formType === 'deduction') return dedType && dedAmount && dedSchedule
     if (formType === 'cash_reimbursement') return cashAmount && cashPurpose
+    if (formType === 'nec_1099') {
+      const contactReady = necMode === 'existing' ? !!necContactId : (necFirstName && necLastName)
+      return contactReady && necHourlyRate && necHours && necPeriodStart && necPeriodEnd && necDescription
+    }
     return false
   })()
   const canSubmit = empSigUrl && hrSigUrl
+
+  const generateNecToken = async () => {
+    setGeneratingToken(true)
+    try {
+      let contactId = necContactId
+
+      // If new contact, upsert first
+      if (necMode === 'new') {
+        const { data: contact, error: cErr } = await supabase.from('nec_contacts').insert({
+          org_id: orgId,
+          first_name: necFirstName,
+          last_name: necLastName,
+          email: necEmail || null,
+          address_line1: necAddress1 || null,
+          city: necCity || null,
+          state: necState || null,
+          zip: necZip || null,
+          ssn_last4: necSsnLast4 || null,
+          banking_on_file: false,
+        }).select().single()
+        if (cErr) { shA('Contact save failed: ' + cErr.message); return }
+        contactId = contact.id
+        setNecSavedContactId(contactId)
+        setNecContacts(p => [...p, contact])
+      }
+
+      const { data: tok, error: tErr } = await supabase.from('nec_tokens').insert({
+        org_id: orgId,
+        nec_contact_id: contactId,
+        created_by: user.email,
+      }).select().single()
+      if (tErr) { shA('Token generation failed: ' + tErr.message); return }
+
+      const url = `${window.location.origin}?nec=${tok.token}`
+      setNecTokenUrl(url)
+      shA('Token link generated ✓')
+    } catch (e) {
+      shA('Error: ' + e.message)
+    } finally {
+      setGeneratingToken(false)
+    }
+  }
 
   // ── Upload signature ──
   const uploadSig = async (dataUrl, role) => {
@@ -273,6 +348,25 @@ export default function HRFormsWizard({ orgId, C, user }) {
           hr_form_id: form.id, amount: parseFloat(cashAmount),
           purpose: cashPurpose, refund_method: cashMode,
         })
+      } else if (formType === 'nec_1099') {
+        const hours = parseFloat(necHours) || 0
+        const rate  = parseFloat(necHourlyRate) || 0
+        const contactId = necSavedContactId || necContactId
+        await supabase.from('advance_details').insert({
+          request_id: form.id,
+          amount: parseFloat((hours * rate).toFixed(2)),
+          reason: `1099 NEC (HR) — ${necDescription}`,
+          payment_method: selectedNecContact?.banking_on_file ? 'ACH / Direct Deposit' : 'Check',
+          nec_hourly_rate: rate,
+          nec_hours: hours,
+          nec_period_start: necPeriodStart,
+          nec_period_end: necPeriodEnd,
+        })
+        // Link token to this form if one was generated
+        if (necTokenUrl) {
+          const token = necTokenUrl.split('?nec=')[1]
+          if (token) await supabase.from('nec_tokens').update({ request_id: form.id }).eq('token', token)
+        }
       }
 
       setStep(5)
@@ -289,6 +383,10 @@ export default function HRFormsWizard({ orgId, C, user }) {
     setChildSupport(''); setTaxLevy(''); setOtherDesc(''); setOtherAmt('')
     setDedType(''); setDedAmount(''); setDedSchedule('')
     setCashAmount(''); setCashPurpose(''); setCashMode('payroll')
+    setNecContactId(''); setNecMode('existing'); setNecFirstName(''); setNecLastName('')
+    setNecEmail(''); setNecAddress1(''); setNecCity(''); setNecState(''); setNecZip('')
+    setNecSsnLast4(''); setNecHourlyRate(''); setNecHours(''); setNecPeriodStart('')
+    setNecPeriodEnd(''); setNecDescription(''); setNecTokenUrl(''); setNecSavedContactId(null)
     setEmpSigUrl(''); setHrSigUrl('')
   }
 
@@ -394,6 +492,18 @@ export default function HRFormsWizard({ orgId, C, user }) {
                             <span style={{ fontWeight: 700, color: C.go }}>${parseFloat(r.amount).toFixed(2)}</span>
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* 1099 NEC detail */}
+                    {req.type === '1099' && adv && (
+                      <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)' }}>
+                        <div style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>1099 NEC Detail</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+                          {adv.nec_hours && <div><span style={{ color: C.g }}>Hours: </span><span style={{ color: C.w, fontWeight: 600 }}>{adv.nec_hours} hrs @ ${adv.nec_hourly_rate}/hr</span></div>}
+                          {adv.nec_period_start && <div><span style={{ color: C.g }}>Period: </span><span style={{ color: C.w, fontWeight: 600 }}>{adv.nec_period_start} → {adv.nec_period_end}</span></div>}
+                          <div><span style={{ color: C.g }}>Payment: </span><span style={{ color: C.w, fontWeight: 600 }}>{adv.payment_method || 'Check'}</span></div>
+                        </div>
                       </div>
                     )}
 
@@ -686,6 +796,133 @@ export default function HRFormsWizard({ orgId, C, user }) {
             </div>
           )}
 
+          {/* 1099 NEC */}
+          {formType === 'nec_1099' && (
+            <div>
+              <div style={{ fontSize: 11, color: C.g, marginBottom: 14, padding: '8px 12px', background: C.ch, borderRadius: 6, border: `1px solid ${C.bdr}` }}>
+                Select an existing contractor or add a new one. Generate a secure link to collect their banking info if needed.
+              </div>
+
+              {/* Contact mode toggle */}
+              <div style={{ display: 'flex', gap: 2, marginBottom: 14, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
+                {[{ k: 'existing', l: '👤 Existing Contractor' }, { k: 'new', l: '➕ New Contractor' }].map(t => (
+                  <button key={t.k} onClick={() => setNecMode(t.k)} style={{
+                    padding: '5px 14px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                    border: 'none', cursor: 'pointer',
+                    background: necMode === t.k ? C.go : 'transparent',
+                    color: necMode === t.k ? C.bg : C.g,
+                  }}>{t.l}</button>
+                ))}
+              </div>
+
+              {/* Existing contact picker */}
+              {necMode === 'existing' && (
+                <Field C={C} l="Select Contractor" req>
+                  <select value={necContactId} onChange={e => setNecContactId(e.target.value)} style={inp(C)}>
+                    <option value="">— Select contractor —</option>
+                    {necContacts.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.first_name} {c.last_name}{c.banking_on_file ? ' ✓ ACH on file' : ' — no ACH'}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+
+              {/* New contact fields */}
+              {necMode === 'new' && (
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <Field C={C} l="First Name" req><input type="text" value={necFirstName} onChange={e => setNecFirstName(e.target.value)} style={inp(C)} /></Field>
+                    <Field C={C} l="Last Name" req><input type="text" value={necLastName} onChange={e => setNecLastName(e.target.value)} style={inp(C)} /></Field>
+                  </div>
+                  <Field C={C} l="Email"><input type="email" value={necEmail} onChange={e => setNecEmail(e.target.value)} placeholder="used for token link" style={inp(C)} /></Field>
+                  <Field C={C} l="Address"><input type="text" value={necAddress1} onChange={e => setNecAddress1(e.target.value)} style={inp(C)} /></Field>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
+                    <Field C={C} l="City"><input type="text" value={necCity} onChange={e => setNecCity(e.target.value)} style={inp(C)} /></Field>
+                    <Field C={C} l="State"><input type="text" value={necState} onChange={e => setNecState(e.target.value)} maxLength={2} placeholder="MN" style={inp(C)} /></Field>
+                    <Field C={C} l="ZIP"><input type="text" value={necZip} onChange={e => setNecZip(e.target.value)} maxLength={10} style={inp(C)} /></Field>
+                  </div>
+                  <Field C={C} l="SSN Last 4">
+                    <input type="text" inputMode="numeric" maxLength={4} value={necSsnLast4} onChange={e => setNecSsnLast4(e.target.value.replace(/\D/g, ''))} placeholder="••••" style={{ ...inp(C), width: 80 }} />
+                  </Field>
+                </div>
+              )}
+
+              {/* Banking status banner */}
+              {necMode === 'existing' && selectedNecContact && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 12,
+                  background: selectedNecContact.banking_on_file ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.08)',
+                  border: `1px solid ${selectedNecContact.banking_on_file ? '#22C55E' : (C.go || '#F59E0B')}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: selectedNecContact.banking_on_file ? '#22C55E' : (C.go || '#F59E0B') }}>
+                    {selectedNecContact.banking_on_file ? '✓ ACH banking on file — payment will be direct deposit' : '⚠ No banking on file — generate a link to collect ACH info'}
+                  </div>
+                  {selectedNecContact.banking_on_file && (
+                    <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{selectedNecContact.bank_name} — {selectedNecContact.bank_account_type}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Generate token link */}
+              {((necMode === 'existing' && necContactId && !selectedNecContact?.banking_on_file) || necMode === 'new') && (
+                <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.25)', marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: '#0EA5E9', marginBottom: 6 }}>🔗 Generate ACH Collection Link</div>
+                  <div style={{ fontSize: 10, color: C.g, marginBottom: 10, lineHeight: 1.5 }}>
+                    Send this one-time link to the contractor. They'll enter their banking info securely — no login required. Expires in 7 days.
+                  </div>
+                  {!necTokenUrl ? (
+                    <button onClick={generateNecToken} disabled={generatingToken || (necMode === 'new' && !(necFirstName && necLastName))} style={{
+                      padding: '7px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
+                      background: '#0EA5E9', color: '#fff', border: 'none',
+                      cursor: generatingToken ? 'wait' : 'pointer', opacity: generatingToken ? 0.7 : 1,
+                    }}>{generatingToken ? 'Generating...' : 'Generate Link'}</button>
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 10, color: C.g, marginBottom: 4 }}>Share this link with the contractor:</div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input readOnly value={necTokenUrl} style={{ ...inp(C), fontSize: 10, flex: 1 }} onClick={e => e.target.select()} />
+                        <button onClick={() => { navigator.clipboard.writeText(necTokenUrl); shA('Copied ✓') }} style={{
+                          padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
+                          background: C.go, color: C.bg, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}>Copy</button>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#22C55E', marginTop: 6 }}>✓ Link generated — expires in 7 days</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Hours / Rate / Period */}
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.go, marginBottom: 8, marginTop: 4 }}>Work Details</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field C={C} l="Hourly Rate (USD)" req>
+                  <input type="number" min="0" step="0.01" value={necHourlyRate} onChange={e => setNecHourlyRate(e.target.value)} placeholder="0.00" style={inp(C)} />
+                </Field>
+                <Field C={C} l="Hours Worked" req>
+                  <input type="number" min="0" step="0.25" value={necHours} onChange={e => setNecHours(e.target.value)} placeholder="0.00" style={inp(C)} />
+                </Field>
+              </div>
+              {necHourlyRate && necHours && (
+                <div style={{ padding: '10px 14px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}`, marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Due</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: C.go }}>${necTotal}</div>
+                  <div style={{ fontSize: 10, color: C.g }}>{necHours} hrs × ${necHourlyRate}/hr</div>
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field C={C} l="Work Period Start" req>
+                  <input type="date" value={necPeriodStart} onChange={e => setNecPeriodStart(e.target.value)} style={inp(C)} />
+                </Field>
+                <Field C={C} l="Work Period End" req>
+                  <input type="date" value={necPeriodEnd} onChange={e => setNecPeriodEnd(e.target.value)} style={inp(C)} />
+                </Field>
+              </div>
+              <Field C={C} l="Description of Work" req>
+                <textarea value={necDescription} onChange={e => setNecDescription(e.target.value)} rows={3} placeholder="Describe the work performed during this period..." style={{ ...inp(C), resize: 'vertical' }} />
+              </Field>
+            </div>
+          )}
+
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
             <button onClick={() => setStep(2)} style={{ padding: '8px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>← Back</button>
             <button onClick={() => setStep(4)} disabled={!canNext3} style={{
@@ -708,6 +945,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
             {formType === 'withholding' && 'I have been notified of the above payroll withholdings. I understand these deductions are either legally required or previously authorized. By signing, I acknowledge receipt and authorize Minuteman Press to withhold the specified amounts.'}
             {formType === 'deduction' && 'By signing this Payroll Deduction Authorization electronically, I agree that: my signature is being collected digitally; this deduction is being made with my full knowledge and consent; this authorization is revocable in writing except for amounts already deducted; deductions will not reduce my pay below any applicable minimum wage or overtime required by law.'}
             {formType === 'cash_reimbursement' && 'I acknowledge that I have received the above-described reimbursement from Minuteman Press. I confirm that the amount and purpose stated above are accurate.'}
+            {formType === 'nec_1099' && 'By signing, HR certifies that the above non-employee compensation is accurate and authorized. The contractor will receive payment as described. If annual compensation exceeds $600, IRS Form 1099-NEC will be issued.'}
           </div>
 
           <SignaturePad C={C} label={`${selectedEmp ? gn(selectedEmp) : 'Employee'} Signature`} required onSign={setEmpSigUrl} onClear={() => setEmpSigUrl('')} />

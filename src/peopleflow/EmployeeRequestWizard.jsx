@@ -72,6 +72,14 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
   const [advReason, setAdvReason]   = useState('')
   const [advMethod, setAdvMethod]   = useState('')
 
+  // Repayment schedule
+  const [repayPlan, setRepayPlan]   = useState('') // 'lump' | 'split' | 'custom'
+  const [repayInstallments, setRepayInstallments] = useState([
+    { id: 1, amount: '', date: '' },
+    { id: 2, amount: '', date: '' },
+    { id: 3, amount: '', date: '' },
+  ])
+
   // ACH banking fields (collected only on first ACH request)
   const [bankRoutingNo, setBankRoutingNo] = useState('')
   const [bankAccountNo, setBankAccountNo] = useState('')
@@ -186,12 +194,19 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
           }))
         if (rows.length) await supabase.from('mileage_logs').insert(rows)
       } else if (type === 'advance') {
+        const amt = parseFloat(advAmount)
+        const schedule = repayPlan === 'lump'
+          ? [{ amount: amt, date: repayInstallments[0].date }]
+          : repayPlan === 'split'
+            ? [{ amount: parseFloat(repayInstallments[0].amount), date: repayInstallments[0].date }, { amount: parseFloat(repayInstallments[1].amount), date: repayInstallments[1].date }]
+            : repayInstallments.filter(r => r.amount && r.date).map(r => ({ amount: parseFloat(r.amount), date: r.date }))
         await supabase.from('advance_details').insert({
           request_id: req.id,
-          amount: parseFloat(advAmount),
+          amount: amt,
           reason: advReason,
           payment_method: advMethod,
-          // Save banking info if this is first ACH request
+          repayment_plan: repayPlan,
+          repayment_schedule: schedule,
           ...(needsBankingInfo ? {
             bank_name: bankName,
             bank_routing_no: bankRoutingNo,
@@ -227,6 +242,8 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
     setExpAmount(''); setExpPurpose(''); setExpRefund('payroll'); setExpFile(null); setExpFileUrl('')
     setMileageRows([{ id: crypto.randomUUID(), log_date: '', destination: '', description: '', miles: '' }])
     setAdvAmount(''); setAdvReason(''); setAdvMethod('')
+    setRepayPlan('')
+    setRepayInstallments([{ id: 1, amount: '', date: '' }, { id: 2, amount: '', date: '' }, { id: 3, amount: '', date: '' }])
     setBankRoutingNo(''); setBankAccountNo(''); setBankName(''); setBankAccountType('checking')
     setNec1099HourlyRate(''); setNec1099Hours(''); setNec1099Description(''); setNec1099PeriodStart(''); setNec1099PeriodEnd('')
     setSigDataUrl(''); setSigUrl('')
@@ -240,8 +257,25 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
     if (type === 'advance') {
       const baseOk = advAmount && advReason && advMethod
       if (!baseOk) return false
-      if (needsBankingInfo) return bankRoutingNo && bankAccountNo && bankName
-      return true
+      if (needsBankingInfo && !(bankRoutingNo && bankAccountNo && bankName)) return false
+      if (!repayPlan) return false
+      const amt = parseFloat(advAmount) || 0
+      if (repayPlan === 'lump') {
+        const r = repayInstallments[0]
+        return r.date !== ''
+      }
+      if (repayPlan === 'split') {
+        const [a, b] = repayInstallments
+        const total = (parseFloat(a.amount) || 0) + (parseFloat(b.amount) || 0)
+        return a.date && b.date && Math.abs(total - amt) < 0.01
+      }
+      if (repayPlan === 'custom') {
+        const active = repayInstallments.filter(r => r.amount || r.date)
+        if (active.length < 2) return false
+        const total = active.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+        return active.every(r => r.amount && r.date) && Math.abs(total - amt) < 0.01
+      }
+      return false
     }
     if (type === '1099') return nec1099HourlyRate && nec1099Hours && nec1099Description && nec1099PeriodStart && nec1099PeriodEnd
     return false
@@ -435,8 +469,118 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
                   </Field>
                 </div>
               )}
-            </div>
-          )}
+
+              {/* Repayment Schedule */}
+              {advAmount && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>
+                    Repayment Plan <span style={{ color: '#EF4444', marginLeft: 2 }}>*</span>
+                  </div>
+                  <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+                    {[
+                      { v: 'lump',   l: 'Full lump sum',              d: 'Repay the full amount on one date' },
+                      { v: 'split',  l: '50 / 50 split',              d: 'Half on one paycheck, half on the next' },
+                      { v: 'custom', l: 'Custom (up to 3 payments)',   d: 'Set your own amounts and dates' },
+                    ].map(opt => (
+                      <div key={opt.v} onClick={() => setRepayPlan(opt.v)} style={{
+                        padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
+                        background: repayPlan === opt.v ? 'rgba(245,158,11,0.08)' : C.ch,
+                        border: `1.5px solid ${repayPlan === opt.v ? (C.go || '#F59E0B') : (C.bdr || '#374151')}`,
+                        display: 'flex', alignItems: 'center', gap: 12, transition: 'all 0.15s',
+                      }}>
+                        <div style={{ fontSize: 14, color: repayPlan === opt.v ? (C.go || '#F59E0B') : C.bdr }}>
+                          {repayPlan === opt.v ? '◉' : '○'}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: repayPlan === opt.v ? (C.go || '#F59E0B') : C.w }}>{opt.l}</div>
+                          <div style={{ fontSize: 10, color: C.g }}>{opt.d}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* LUMP SUM */}
+                  {repayPlan === 'lump' && (
+                    <div style={{ padding: '12px 14px', borderRadius: 8, background: C.ch, border: `1px solid ${C.bdr}` }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <Field C={C} l="Full Amount" req>
+                          <input type="number" value={advAmount} disabled style={{ ...inp(C), opacity: 0.6 }} />
+                        </Field>
+                        <Field C={C} l="Repayment Date" req>
+                          <input type="date" value={repayInstallments[0].date}
+                            onChange={e => setRepayInstallments(p => p.map((r, i) => i === 0 ? { ...r, date: e.target.value } : r))}
+                            style={inp(C)} />
+                        </Field>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 50/50 SPLIT */}
+                  {repayPlan === 'split' && (() => {
+                    const half = advAmount ? (parseFloat(advAmount) / 2).toFixed(2) : ''
+                    const total = (parseFloat(repayInstallments[0].amount) || 0) + (parseFloat(repayInstallments[1].amount) || 0)
+                    const advAmt = parseFloat(advAmount) || 0
+                    const balanced = Math.abs(total - advAmt) < 0.01
+                    return (
+                      <div style={{ padding: '12px 14px', borderRadius: 8, background: C.ch, border: `1px solid ${C.bdr}` }}>
+                        {[0, 1].map(i => (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: i === 0 ? 10 : 0 }}>
+                            <Field C={C} l={`Payment ${i + 1} Amount`} req>
+                              <input type="number" min="0" step="0.01"
+                                value={repayInstallments[i].amount || half}
+                                onChange={e => setRepayInstallments(p => p.map((r, idx) => idx === i ? { ...r, amount: e.target.value } : r))}
+                                placeholder={half} style={inp(C)} />
+                            </Field>
+                            <Field C={C} l={`Payment ${i + 1} Date`} req>
+                              <input type="date" value={repayInstallments[i].date}
+                                onChange={e => setRepayInstallments(p => p.map((r, idx) => idx === i ? { ...r, date: e.target.value } : r))}
+                                style={inp(C)} />
+                            </Field>
+                          </div>
+                        ))}
+                        {!balanced && repayInstallments[0].amount && repayInstallments[1].amount && (
+                          <div style={{ fontSize: 10, color: '#EF4444', marginTop: 6 }}>
+                            ⚠ Amounts must total ${parseFloat(advAmount).toFixed(2)} — currently ${total.toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
+                  {/* CUSTOM */}
+                  {repayPlan === 'custom' && (() => {
+                    const total = repayInstallments.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+                    const advAmt = parseFloat(advAmount) || 0
+                    const balanced = Math.abs(total - advAmt) < 0.01
+                    const active = repayInstallments.filter(r => r.amount || r.date)
+                    return (
+                      <div style={{ padding: '12px 14px', borderRadius: 8, background: C.ch, border: `1px solid ${C.bdr}` }}>
+                        {repayInstallments.map((r, i) => (
+                          <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: i < 2 ? 10 : 0 }}>
+                            <Field C={C} l={`Payment ${i + 1} Amount`}>
+                              <input type="number" min="0" step="0.01" value={r.amount}
+                                onChange={e => setRepayInstallments(p => p.map((x, idx) => idx === i ? { ...x, amount: e.target.value } : x))}
+                                placeholder="0.00" style={inp(C)} />
+                            </Field>
+                            <Field C={C} l={`Payment ${i + 1} Date`}>
+                              <input type="date" value={r.date}
+                                onChange={e => setRepayInstallments(p => p.map((x, idx) => idx === i ? { ...x, date: e.target.value } : x))}
+                                style={inp(C)} />
+                            </Field>
+                          </div>
+                        ))}
+                        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 11, color: C.g }}>
+                            Total: <strong style={{ color: balanced ? C.gr : '#EF4444' }}>${total.toFixed(2)}</strong>
+                            {' '}/ ${parseFloat(advAmount).toFixed(2)} required
+                          </span>
+                          {balanced && <span style={{ fontSize: 10, color: C.gr }}>✓ balanced</span>}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
 
           {/* 1099 NON-EMPLOYEE COMPENSATION */}
           {type === '1099' && (
@@ -509,6 +653,25 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
                 {needsBankingInfo && bankName && (
                   <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: 9, color: C.g }}>BANK</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{bankName} ({bankAccountType}) — routing on file</div></div>
                 )}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 9, color: C.g, marginBottom: 4 }}>REPAYMENT SCHEDULE</div>
+                  {repayPlan === 'lump' && (
+                    <div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>Full ${parseFloat(advAmount || 0).toFixed(2)} on {repayInstallments[0].date || '—'}</div>
+                  )}
+                  {repayPlan === 'split' && (
+                    <div style={{ fontSize: 12, color: C.w }}>
+                      <div>${repayInstallments[0].amount || (parseFloat(advAmount)/2).toFixed(2)} on {repayInstallments[0].date || '—'}</div>
+                      <div>${repayInstallments[1].amount || (parseFloat(advAmount)/2).toFixed(2)} on {repayInstallments[1].date || '—'}</div>
+                    </div>
+                  )}
+                  {repayPlan === 'custom' && (
+                    <div style={{ fontSize: 12, color: C.w }}>
+                      {repayInstallments.filter(r => r.amount && r.date).map((r, i) => (
+                        <div key={i}>${parseFloat(r.amount).toFixed(2)} on {r.date}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </>}
               {type === '1099' && <>
                 <div><div style={{ fontSize: 9, color: C.g }}>HOURS</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{nec1099Hours} hrs @ ${nec1099HourlyRate}/hr</div></div>

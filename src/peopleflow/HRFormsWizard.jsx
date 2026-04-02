@@ -16,6 +16,22 @@ const FORM_TYPES = [
   { v: 'cash_reimbursement', l: 'Cash Reimbursement',               i: '💵', desc: 'Acknowledge a cash reimbursement to employee' },
 ]
 
+const TYPE_LABELS = {
+  expense: '🧾 Expense',
+  mileage: '🚗 Mileage',
+  advance: '💵 Advance',
+  '1099':  '📄 1099 NEC',
+}
+
+const STATUS_COLORS = {
+  pending:  '#F59E0B',
+  approved: '#3B82F6',
+  paid:     '#22C55E',
+  rejected: '#EF4444',
+}
+
+const PAYMENT_MODES_HR = ['Check', 'ACH / Direct Deposit', 'Cash', 'Payroll']
+
 const DEDUCTION_TYPES = ['Health Insurance', 'Dental Insurance', 'Vision Insurance', 'Union Dues', 'Pension/Retirement', 'LegalShield', 'Sam\'s Club Membership', 'Other']
 const SCHEDULES       = [{ v: 'one_time', l: 'One time, from next paycheck' }, { v: 'two_installments', l: 'Two installments beginning next paycheck' }]
 const WITHHOLDING_TYPES = ['Union Dues', 'Pension/Retirement', 'Health Insurance', 'Dental Insurance', 'Vision Insurance', 'Garnishment', 'Child Support', 'Tax Levy', 'Other']
@@ -42,6 +58,20 @@ const emptyWHRow = () => ({ id: crypto.randomUUID(), type: '', amount: '', frequ
 
 export default function HRFormsWizard({ orgId, C, user }) {
   const isHR = HR_EMAILS.includes(user?.email)
+
+  const [hrView, setHrView]             = useState('queue') // 'queue' | 'form'
+  const [employees, setEmployees]       = useState([])
+  const [requests, setRequests]         = useState([])
+  const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
+  const [loadingQueue, setLoadingQueue] = useState(false)
+  const [expandedReq, setExpandedReq]   = useState(null)
+  const [approvingId, setApprovingId]   = useState(null)
+  const [approveNote, setApproveNote]   = useState('')
+  const [payingId, setPayingId]         = useState(null)
+  const [payMethod, setPayMethod]       = useState('')
+  const [payDate, setPayDate]           = useState('')
+  const [payNote, setPayNote]           = useState('')
+  const [actionToast, setActionToast]   = useState('')
 
   const [employees, setEmployees]   = useState([])
   const [step, setStep]             = useState(1)
@@ -82,6 +112,95 @@ export default function HRFormsWizard({ orgId, C, user }) {
       .eq('org_id', orgId).not('status', 'in', '("Terminated","Inactive")').order('last_name')
       .then(({ data }) => setEmployees(data || []))
   }, [orgId, isHR])
+
+  const loadQueue = async () => {
+    if (!orgId) return
+    setLoadingQueue(true)
+    const { data } = await supabase
+      .from('employee_requests')
+      .select('*, advance_details(*), expense_details(*), mileage_logs(*)')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
+    setRequests(data || [])
+    setLoadingQueue(false)
+  }
+
+  useEffect(() => { if (isHR) loadQueue() }, [orgId, isHR])
+
+  const shA = (msg) => { setActionToast(msg); setTimeout(() => setActionToast(''), 3000) }
+
+  const getEmpName = (empId) => {
+    const e = employees.find(x => x.id === empId)
+    if (!e) return '—'
+    return `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
+  }
+
+  const getAmount = (req) => {
+    if (req.type === 'expense') return req.expense_details?.[0]?.amount
+    if (req.type === 'mileage') {
+      const total = (req.mileage_logs || []).reduce((s, r) => s + (r.miles || 0), 0)
+      return (total * 0.725).toFixed(2)
+    }
+    if (req.type === 'advance' || req.type === '1099') return req.advance_details?.[0]?.amount
+    return null
+  }
+
+  const handleApprove = async (reqId) => {
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('employee_requests')
+      .update({ status: 'approved', approved_at: now, approved_by: user.email, approval_note: approveNote })
+      .eq('id', reqId)
+    if (error) { shA('Approve failed: ' + error.message); return }
+
+    // Create MoneyFlow task
+    const req = requests.find(r => r.id === reqId)
+    const amt = getAmount(req)
+    const empName = getEmpName(req.employee_id)
+    await supabase.from('moneyflow_tasks').insert([{
+      org_id: orgId,
+      entity: 'omega',
+      type: 'AP',
+      source: 'paperflow_request',
+      name: `${TYPE_LABELS[req.type] || req.type} — ${empName}${amt ? ' — $' + parseFloat(amt).toFixed(2) : ''}`,
+      description: `Approved by ${user.email}. ${approveNote || ''}`.trim(),
+      due_date: new Date().toISOString().split('T')[0],
+      status: 'open',
+      is_recurring: false,
+      recur_interval: 0,
+      paperflow_request_id: reqId,
+    }])
+
+    setRequests(p => p.map(r => r.id === reqId ? { ...r, status: 'approved', approved_at: now, approved_by: user.email } : r))
+    setApprovingId(null)
+    setApproveNote('')
+    shA('Approved ✓ — task created in MoneyFlow')
+  }
+
+  const handleReject = async (reqId) => {
+    const now = new Date().toISOString()
+    await supabase.from('employee_requests')
+      .update({ status: 'rejected', approved_at: now, approved_by: user.email, approval_note: approveNote })
+      .eq('id', reqId)
+    setRequests(p => p.map(r => r.id === reqId ? { ...r, status: 'rejected' } : r))
+    setApprovingId(null)
+    setApproveNote('')
+    shA('Request rejected')
+  }
+
+  const handleMarkPaid = async (reqId) => {
+    if (!payMethod || !payDate) { shA('Payment method and date required'); return }
+    const now = new Date().toISOString()
+    await supabase.from('employee_requests')
+      .update({ status: 'paid', paid_at: now, paid_by: user.email, payment_method: payMethod, payment_date: payDate, payment_note: payNote })
+      .eq('id', reqId)
+    // Also mark the linked moneyflow task done
+    await supabase.from('moneyflow_tasks')
+      .update({ status: 'done' })
+      .eq('paperflow_request_id', reqId)
+    setRequests(p => p.map(r => r.id === reqId ? { ...r, status: 'paid', paid_at: now, payment_method: payMethod, payment_date: payDate } : r))
+    setPayingId(null); setPayMethod(''); setPayDate(''); setPayNote('')
+    shA('Marked paid ✓ — MoneyFlow task closed')
+  }
 
   const gn = (e) => `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
   const selectedEmp = employees.find(e => e.id === empId)
@@ -179,7 +298,189 @@ export default function HRFormsWizard({ orgId, C, user }) {
     </div>
   )
 
-  const StepDot = ({ n }) => (
+  const openReqs      = requests.filter(r => ['pending', 'approved'].includes(r.status))
+  const completedReqs = requests.filter(r => ['paid', 'rejected'].includes(r.status))
+  const displayReqs   = queueTab === 'open' ? openReqs : completedReqs
+
+  return (
+    <div style={{ maxWidth: 680, margin: '0 auto' }}>
+
+      {/* HR badge */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)' }}>
+          <span style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>HR</span>
+          <span style={{ fontSize: 10, color: C.g }}>{user?.email}</span>
+        </div>
+        <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}` }}>
+          {[{ k: 'queue', l: '📥 Request Queue' }, { k: 'form', l: '✎ New HR Form' }].map(t => (
+            <button key={t.k} onClick={() => setHrView(t.k)} style={{
+              padding: '5px 14px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+              border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+              background: hrView === t.k ? C.go : 'transparent',
+              color: hrView === t.k ? C.bg : C.g,
+            }}>{t.l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── QUEUE VIEW ── */}
+      {hrView === 'queue' && (
+        <div>
+          {/* Open / Completed tabs */}
+          <div style={{ display: 'flex', gap: 2, marginBottom: 16, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
+            {[
+              { k: 'open',      l: `Open (${openReqs.length})` },
+              { k: 'completed', l: `Completed (${completedReqs.length})` },
+            ].map(t => (
+              <button key={t.k} onClick={() => setQueueTab(t.k)} style={{
+                padding: '5px 16px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                background: queueTab === t.k ? C.go : 'transparent',
+                color: queueTab === t.k ? C.bg : C.g,
+              }}>{t.l}</button>
+            ))}
+          </div>
+
+          {loadingQueue && <div style={{ fontSize: 12, color: C.g, padding: 20, textAlign: 'center' }}>Loading...</div>}
+
+          {!loadingQueue && displayReqs.length === 0 && (
+            <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
+              {queueTab === 'open' ? 'No open requests.' : 'No completed requests yet.'}
+            </div>
+          )}
+
+          {displayReqs.map(req => {
+            const amt   = getAmount(req)
+            const name  = getEmpName(req.employee_id)
+            const sc    = STATUS_COLORS[req.status] || C.g
+            const isExp = expandedReq === req.id
+            const adv   = req.advance_details?.[0]
+            const isApprovingThis = approvingId === req.id
+            const isPayingThis    = payingId === req.id
+
+            return (
+              <div key={req.id} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${isExp ? C.go : C.bdr}`, background: C.ch, overflow: 'hidden', transition: 'border-color 0.2s' }}>
+                {/* Row header */}
+                <div onClick={() => setExpandedReq(isExp ? null : req.id)} style={{ padding: '12px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{name}</span>
+                      <span style={{ fontSize: 10, color: C.g }}>{TYPE_LABELS[req.type] || req.type}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: C.g }}>
+                      {new Date(req.created_at).toLocaleDateString()}
+                      {req.approved_at && <span style={{ marginLeft: 8 }}>· Approved {new Date(req.approved_at).toLocaleDateString()}</span>}
+                      {req.paid_at && <span style={{ marginLeft: 8, color: STATUS_COLORS.paid }}>· Paid {new Date(req.payment_date || req.paid_at).toLocaleDateString()} via {req.payment_method}</span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    {amt && <div style={{ fontSize: 14, fontWeight: 700, color: C.go }}>${parseFloat(amt).toFixed(2)}</div>}
+                    <div style={{ fontSize: 10, fontWeight: 700, color: sc, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{req.status}</div>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.g }}>{isExp ? '▾' : '▸'}</div>
+                </div>
+
+                {/* Expanded detail */}
+                {isExp && (
+                  <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
+
+                    {/* Advance repayment schedule */}
+                    {req.type === 'advance' && adv?.repayment_schedule && (
+                      <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.06)', border: `1px solid ${C.bdr}` }}>
+                        <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Repayment Schedule</div>
+                        {adv.repayment_schedule.map((r, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.w, marginBottom: 3 }}>
+                            <span>Payment {i + 1} — {r.date}</span>
+                            <span style={{ fontWeight: 700, color: C.go }}>${parseFloat(r.amount).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Approve / Reject panel */}
+                    {req.status === 'pending' && !isApprovingThis && (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                        <button onClick={() => { setApprovingId(req.id); setApproveNote('') }} style={{
+                          flex: 1, padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                          background: C.go, color: C.bg, border: 'none', cursor: 'pointer',
+                        }}>✓ Approve</button>
+                        <button onClick={() => { setApprovingId(req.id + '_reject'); setApproveNote('') }} style={{
+                          flex: 1, padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                          background: 'transparent', color: '#EF4444', border: '1px solid #EF4444', cursor: 'pointer',
+                        }}>✕ Reject</button>
+                      </div>
+                    )}
+
+                    {/* Approve note form */}
+                    {(approvingId === req.id || approvingId === req.id + '_reject') && (
+                      <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 8, background: 'rgba(245,158,11,0.05)', border: `1px solid ${C.bdr}` }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: approvingId === req.id ? C.go : '#EF4444', marginBottom: 8 }}>
+                          {approvingId === req.id ? 'Approve Request' : 'Reject Request'}
+                        </div>
+                        <textarea value={approveNote} onChange={e => setApproveNote(e.target.value)} rows={2}
+                          placeholder="Note (optional)..."
+                          style={{ width: '100%', padding: 8, background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }} />
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <button onClick={() => setApprovingId(null)} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                          {approvingId === req.id
+                            ? <button onClick={() => handleApprove(req.id)} style={{ padding: '6px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer' }}>Confirm Approve</button>
+                            : <button onClick={() => handleReject(req.id)} style={{ padding: '6px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer' }}>Confirm Reject</button>
+                          }
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Mark Paid panel */}
+                    {req.status === 'approved' && !isPayingThis && (
+                      <div style={{ marginTop: 14 }}>
+                        <button onClick={() => { setPayingId(req.id); setPayMethod(''); setPayDate(''); setPayNote('') }} style={{
+                          width: '100%', padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                          background: STATUS_COLORS.paid, color: '#fff', border: 'none', cursor: 'pointer',
+                        }}>💳 Mark as Paid</button>
+                      </div>
+                    )}
+
+                    {isPayingThis && (
+                      <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 8, background: 'rgba(34,197,94,0.05)', border: `1px solid ${C.bdr}` }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: STATUS_COLORS.paid, marginBottom: 10 }}>Record Payment</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                          <div>
+                            <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Payment Method <span style={{ color: '#EF4444' }}>*</span></div>
+                            <select value={payMethod} onChange={e => setPayMethod(e.target.value)}
+                              style={{ width: '100%', padding: '7px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: 'inherit' }}>
+                              <option value="">— Select —</option>
+                              {PAYMENT_MODES_HR.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Payment Date <span style={{ color: '#EF4444' }}>*</span></div>
+                            <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
+                              style={{ width: '100%', padding: '7px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Note</div>
+                          <input type="text" value={payNote} onChange={e => setPayNote(e.target.value)} placeholder="Check #, confirmation #, etc..."
+                            style={{ width: '100%', padding: '7px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 12, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => setPayingId(null)} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                          <button onClick={() => handleMarkPaid(req.id)} style={{ padding: '6px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: STATUS_COLORS.paid, color: '#fff', border: 'none', cursor: 'pointer' }}>Confirm Payment</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
+        </div>
+      )}
+
+      {/* ── FORM VIEW ── */}
+      {hrView === 'form' && (<div>
     <div style={{
       width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: 10, fontWeight: 700,
@@ -442,6 +743,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
           }}>Start Another Form</button>
         </div>
       )}
+    </div>)}
+
     </div>
   )
 }

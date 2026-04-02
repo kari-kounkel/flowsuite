@@ -4,19 +4,21 @@ import SignaturePad from './SignaturePad.jsx'
 import MileageLogRows from './MileageLogRows.jsx'
 
 // ── EmployeeRequestWizard ─────────────────────────────────────────────────────
-// Employee-facing request wizard: Expense / Mileage / Payroll Advance
+// Employee-facing request wizard: Expense / Mileage / Payroll Advance / 1099
 // Lives in PaperFlow → Requests tab
 // Props: orgId, C, user
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TYPES = [
-  { v: 'expense',  l: 'Expense Reimbursement', i: '🧾', desc: 'Submit a receipt for reimbursement' },
-  { v: 'mileage',  l: 'Mileage Reimbursement',  i: '🚗', desc: 'Log trips for mileage reimbursement' },
-  { v: 'advance',  l: 'Payroll Advance',         i: '💵', desc: 'Request an advance on your paycheck' },
+  { v: 'expense',  l: 'Expense Reimbursement',         i: '🧾', desc: 'Submit a receipt for reimbursement' },
+  { v: 'mileage',  l: 'Mileage Reimbursement',          i: '🚗', desc: 'Log trips for mileage reimbursement' },
+  { v: 'advance',  l: 'Payroll Advance',                i: '💵', desc: 'Request an advance on your paycheck' },
+  { v: '1099',     l: 'Non-Employee Compensation (1099)', i: '📄', desc: 'Invoice for hourly work as a contractor' },
 ]
 
-const PAYMENT_METHODS = ['Direct Deposit', 'Check', 'Payroll']
-const REFUND_METHODS  = [
+const ADVANCE_METHODS = ['Check', 'ACH / Direct Deposit']
+
+const REFUND_METHODS = [
   { v: 'payroll', l: 'Reimburse on Payroll (default)' },
   { v: 'cash',    l: 'Cash Reimbursement' },
 ]
@@ -47,31 +49,47 @@ const Field = ({ C, l, req, children, style }) => (
 )
 
 export default function EmployeeRequestWizard({ orgId, C, user }) {
-  const [employees, setEmployees]     = useState([])
-  const [step, setStep]               = useState(1)   // 1=who, 2=type, 3=details, 4=sign, 5=done
-  const [empId, setEmpId]             = useState('')
-  const [type, setType]               = useState('')
-  const [submitting, setSubmitting]   = useState(false)
-  const [toast, setToast]             = useState('')
+  const [employees, setEmployees]         = useState([])
+  const [step, setStep]                   = useState(1)   // 1=who, 2=type, 3=details, 4=sign, 5=done
+  const [empId, setEmpId]                 = useState('')
+  const [type, setType]                   = useState('')
+  const [submitting, setSubmitting]       = useState(false)
+  const [toast, setToast]                 = useState('')
+  const [priorRequests, setPriorRequests] = useState([])
 
   // Expense fields
-  const [expAmount, setExpAmount]     = useState('')
-  const [expPurpose, setExpPurpose]   = useState('')
-  const [expRefund, setExpRefund]     = useState('payroll')
-  const [expFile, setExpFile]         = useState(null)
-  const [expFileUrl, setExpFileUrl]   = useState('')
+  const [expAmount, setExpAmount]   = useState('')
+  const [expPurpose, setExpPurpose] = useState('')
+  const [expRefund, setExpRefund]   = useState('payroll')
+  const [expFile, setExpFile]       = useState(null)
+  const [expFileUrl, setExpFileUrl] = useState('')
 
   // Mileage fields
   const [mileageRows, setMileageRows] = useState([{ id: crypto.randomUUID(), log_date: '', destination: '', description: '', miles: '' }])
 
   // Advance fields
-  const [advAmount, setAdvAmount]     = useState('')
-  const [advReason, setAdvReason]     = useState('')
-  const [advMethod, setAdvMethod]     = useState('')
+  const [advAmount, setAdvAmount]   = useState('')
+  const [advReason, setAdvReason]   = useState('')
+  const [advMethod, setAdvMethod]   = useState('')
+
+  // ACH banking fields (collected only on first ACH request)
+  const [bankRoutingNo, setBankRoutingNo] = useState('')
+  const [bankAccountNo, setBankAccountNo] = useState('')
+  const [bankName, setBankName]           = useState('')
+  const [bankAccountType, setBankAccountType] = useState('checking')
+  const [hasBankingOnFile, setHasBankingOnFile] = useState(false)
+  const [checkingBanking, setCheckingBanking] = useState(false)
+
+  // 1099 / Non-Employee Compensation fields
+  const [nec1099HourlyRate, setNec1099HourlyRate]   = useState('')
+  const [nec1099Hours, setNec1099Hours]             = useState('')
+  const [nec1099Description, setNec1099Description] = useState('')
+  const [nec1099PeriodStart, setNec1099PeriodStart] = useState('')
+  const [nec1099PeriodEnd, setNec1099PeriodEnd]     = useState('')
 
   // Signature
-  const [sigDataUrl, setSigDataUrl]   = useState('')
-  const [sigUrl, setSigUrl]           = useState('')
+  const [sigDataUrl, setSigDataUrl] = useState('')
+  const [sigUrl, setSigUrl]         = useState('')
 
   const sh = (msg) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -83,6 +101,28 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
       .order('last_name')
       .then(({ data }) => setEmployees(data || []))
   }, [orgId])
+
+  // When employee changes, check if they have prior ACH requests (banking on file)
+  useEffect(() => {
+    if (!empId || !orgId) { setHasBankingOnFile(false); setPriorRequests([]); return }
+    setCheckingBanking(true)
+    supabase
+      .from('employee_requests')
+      .select('id, type, advance_details(payment_method, bank_routing_no)')
+      .eq('org_id', orgId)
+      .eq('employee_id', empId)
+      .then(({ data }) => {
+        const reqs = data || []
+        setPriorRequests(reqs)
+        // Check if any prior advance used ACH and had banking info saved
+        const hasACH = reqs.some(r =>
+          r.type === 'advance' &&
+          r.advance_details?.some(d => d.payment_method === 'ACH / Direct Deposit' && d.bank_routing_no)
+        )
+        setHasBankingOnFile(hasACH)
+        setCheckingBanking(false)
+      })
+  }, [empId, orgId])
 
   const gn = (e) => `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
 
@@ -100,13 +140,15 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
   // ── Upload signature ──
   const uploadSignature = async () => {
     if (!sigDataUrl) return null
-    const blob   = await fetch(sigDataUrl).then(r => r.blob())
-    const path   = `signatures/${orgId}/${Date.now()}.png`
+    const blob = await fetch(sigDataUrl).then(r => r.blob())
+    const path = `signatures/${orgId}/${Date.now()}.png`
     const { error } = await supabase.storage.from('reimbursement-receipts').upload(path, blob, { contentType: 'image/png' })
     if (error) { sh('Signature upload failed'); return null }
     const { data } = supabase.storage.from('reimbursement-receipts').getPublicUrl(path)
     return data.publicUrl
   }
+
+  const needsBankingInfo = advMethod === 'ACH / Direct Deposit' && !hasBankingOnFile
 
   // ── Submit ──
   const handleSubmit = async () => {
@@ -145,8 +187,30 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
         if (rows.length) await supabase.from('mileage_logs').insert(rows)
       } else if (type === 'advance') {
         await supabase.from('advance_details').insert({
-          request_id: req.id, amount: parseFloat(advAmount),
-          reason: advReason, payment_method: advMethod,
+          request_id: req.id,
+          amount: parseFloat(advAmount),
+          reason: advReason,
+          payment_method: advMethod,
+          // Save banking info if this is first ACH request
+          ...(needsBankingInfo ? {
+            bank_name: bankName,
+            bank_routing_no: bankRoutingNo,
+            bank_account_no: bankAccountNo,
+            bank_account_type: bankAccountType,
+          } : {}),
+        })
+      } else if (type === '1099') {
+        const hours = parseFloat(nec1099Hours) || 0
+        const rate  = parseFloat(nec1099HourlyRate) || 0
+        await supabase.from('advance_details').insert({
+          request_id: req.id,
+          amount: parseFloat((hours * rate).toFixed(2)),
+          reason: `1099 NEC — ${nec1099Description}`,
+          payment_method: 'Check',
+          nec_hourly_rate: rate,
+          nec_hours: hours,
+          nec_period_start: nec1099PeriodStart,
+          nec_period_end: nec1099PeriodEnd,
         })
       }
 
@@ -163,6 +227,8 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
     setExpAmount(''); setExpPurpose(''); setExpRefund('payroll'); setExpFile(null); setExpFileUrl('')
     setMileageRows([{ id: crypto.randomUUID(), log_date: '', destination: '', description: '', miles: '' }])
     setAdvAmount(''); setAdvReason(''); setAdvMethod('')
+    setBankRoutingNo(''); setBankAccountNo(''); setBankName(''); setBankAccountType('checking')
+    setNec1099HourlyRate(''); setNec1099Hours(''); setNec1099Description(''); setNec1099PeriodStart(''); setNec1099PeriodEnd('')
     setSigDataUrl(''); setSigUrl('')
   }
 
@@ -171,12 +237,19 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
   const canNext3 = (() => {
     if (type === 'expense') return expAmount && expPurpose
     if (type === 'mileage') return mileageRows.some(r => r.miles && r.log_date)
-    if (type === 'advance') return advAmount && advReason && advMethod
+    if (type === 'advance') {
+      const baseOk = advAmount && advReason && advMethod
+      if (!baseOk) return false
+      if (needsBankingInfo) return bankRoutingNo && bankAccountNo && bankName
+      return true
+    }
+    if (type === '1099') return nec1099HourlyRate && nec1099Hours && nec1099Description && nec1099PeriodStart && nec1099PeriodEnd
     return false
   })()
 
-  const selectedEmp = employees.find(e => e.id === empId)
+  const selectedEmp  = employees.find(e => e.id === empId)
   const selectedType = TYPES.find(t => t.v === type)
+  const nec1099Total = ((parseFloat(nec1099Hours) || 0) * (parseFloat(nec1099HourlyRate) || 0)).toFixed(2)
 
   // ── Step indicator ──
   const StepDot = ({ n }) => (
@@ -321,10 +394,81 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
                 <textarea value={advReason} onChange={e => setAdvReason(e.target.value)} rows={3} placeholder="Please explain why you are requesting this advance..." style={{ ...inp(C), resize: 'vertical' }} />
               </Field>
               <Field C={C} l="Preferred Payment Method" req>
-                <select value={advMethod} onChange={e => setAdvMethod(e.target.value)} style={inp(C)}>
-                  <option value="">— Select method —</option>
-                  {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+                {ADVANCE_METHODS.map(m => (
+                  <label key={m} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
+                    <input type="radio" name="advMethod" value={m} checked={advMethod === m} onChange={() => setAdvMethod(m)} style={{ accentColor: C.go || '#F59E0B' }} />
+                    <span style={{ fontSize: 12, color: C.w }}>{m}</span>
+                    {m === 'ACH / Direct Deposit' && hasBankingOnFile && (
+                      <span style={{ fontSize: 10, color: C.gr, marginLeft: 4 }}>✓ banking on file</span>
+                    )}
+                  </label>
+                ))}
+              </Field>
+
+              {/* ACH banking collection — only if first-time ACH */}
+              {needsBankingInfo && (
+                <div style={{ marginTop: 4, padding: '14px 16px', borderRadius: 8, background: 'rgba(59,130,246,0.07)', border: `1px solid ${C.bl || '#3B82F6'}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.bl || '#3B82F6', marginBottom: 10 }}>
+                    🏦 First-time ACH — Banking Information Required
+                  </div>
+                  <div style={{ fontSize: 10, color: C.g, marginBottom: 12, lineHeight: 1.5 }}>
+                    We'll save this securely so you won't need to enter it again on future requests.
+                  </div>
+                  <Field C={C} l="Bank Name" req>
+                    <input type="text" value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Wells Fargo" style={inp(C)} />
+                  </Field>
+                  <Field C={C} l="Account Type" req>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      {['checking', 'savings'].map(t => (
+                        <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <input type="radio" name="bankAccountType" value={t} checked={bankAccountType === t} onChange={() => setBankAccountType(t)} style={{ accentColor: C.go || '#F59E0B' }} />
+                          <span style={{ fontSize: 12, color: C.w, textTransform: 'capitalize' }}>{t}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field C={C} l="Routing Number (9 digits)" req>
+                    <input type="text" inputMode="numeric" maxLength={9} value={bankRoutingNo} onChange={e => setBankRoutingNo(e.target.value.replace(/\D/g, ''))} placeholder="123456789" style={inp(C)} />
+                  </Field>
+                  <Field C={C} l="Account Number" req>
+                    <input type="text" inputMode="numeric" value={bankAccountNo} onChange={e => setBankAccountNo(e.target.value.replace(/\D/g, ''))} placeholder="••••••••••" style={inp(C)} />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 1099 NON-EMPLOYEE COMPENSATION */}
+          {type === '1099' && (
+            <div>
+              <div style={{ fontSize: 11, color: C.g, marginBottom: 12, padding: '8px 12px', background: C.ch, borderRadius: 6, border: `1px solid ${C.bdr}` }}>
+                For contractors and non-employees paid hourly. Payment is by check. A 1099-NEC will be issued if your annual total exceeds $600.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field C={C} l="Hourly Rate (USD)" req>
+                  <input type="number" min="0" step="0.01" value={nec1099HourlyRate} onChange={e => setNec1099HourlyRate(e.target.value)} placeholder="0.00" style={inp(C)} />
+                </Field>
+                <Field C={C} l="Hours Worked" req>
+                  <input type="number" min="0" step="0.25" value={nec1099Hours} onChange={e => setNec1099Hours(e.target.value)} placeholder="0.00" style={inp(C)} />
+                </Field>
+              </div>
+              {nec1099HourlyRate && nec1099Hours && (
+                <div style={{ padding: '10px 14px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}`, marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Due</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: C.go }}>${nec1099Total}</div>
+                  <div style={{ fontSize: 10, color: C.g }}>{nec1099Hours} hrs × ${nec1099HourlyRate}/hr</div>
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field C={C} l="Work Period Start" req>
+                  <input type="date" value={nec1099PeriodStart} onChange={e => setNec1099PeriodStart(e.target.value)} style={inp(C)} />
+                </Field>
+                <Field C={C} l="Work Period End" req>
+                  <input type="date" value={nec1099PeriodEnd} onChange={e => setNec1099PeriodEnd(e.target.value)} style={inp(C)} />
+                </Field>
+              </div>
+              <Field C={C} l="Description of Work" req>
+                <textarea value={nec1099Description} onChange={e => setNec1099Description(e.target.value)} rows={3} placeholder="Describe the work performed during this period..." style={{ ...inp(C), resize: 'vertical' }} />
               </Field>
             </div>
           )}
@@ -351,15 +495,34 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <div><div style={{ fontSize: 9, color: C.g }}>EMPLOYEE</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{selectedEmp ? gn(selectedEmp) : '—'}</div></div>
               <div><div style={{ fontSize: 9, color: C.g }}>TYPE</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{selectedType?.l}</div></div>
-              {type === 'expense' && <><div><div style={{ fontSize: 9, color: C.g }}>AMOUNT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${parseFloat(expAmount || 0).toFixed(2)}</div></div><div><div style={{ fontSize: 9, color: C.g }}>REFUND VIA</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{expRefund === 'payroll' ? 'Payroll' : 'Cash'}</div></div></>}
-              {type === 'mileage' && <><div><div style={{ fontSize: 9, color: C.g }}>TOTAL MILES</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{mileageRows.reduce((s, r) => s + (parseFloat(r.miles) || 0), 0).toFixed(1)}</div></div><div><div style={{ fontSize: 9, color: C.g }}>REIMBURSEMENT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${(mileageRows.reduce((s, r) => s + (parseFloat(r.miles) || 0), 0) * 0.725).toFixed(2)}</div></div></>}
-              {type === 'advance' && <><div><div style={{ fontSize: 9, color: C.g }}>AMOUNT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${parseFloat(advAmount || 0).toFixed(2)}</div></div><div><div style={{ fontSize: 9, color: C.g }}>PAYMENT</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{advMethod}</div></div></>}
+              {type === 'expense' && <>
+                <div><div style={{ fontSize: 9, color: C.g }}>AMOUNT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${parseFloat(expAmount || 0).toFixed(2)}</div></div>
+                <div><div style={{ fontSize: 9, color: C.g }}>REFUND VIA</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{expRefund === 'payroll' ? 'Payroll' : 'Cash'}</div></div>
+              </>}
+              {type === 'mileage' && <>
+                <div><div style={{ fontSize: 9, color: C.g }}>TOTAL MILES</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{mileageRows.reduce((s, r) => s + (parseFloat(r.miles) || 0), 0).toFixed(1)}</div></div>
+                <div><div style={{ fontSize: 9, color: C.g }}>REIMBURSEMENT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${(mileageRows.reduce((s, r) => s + (parseFloat(r.miles) || 0), 0) * 0.725).toFixed(2)}</div></div>
+              </>}
+              {type === 'advance' && <>
+                <div><div style={{ fontSize: 9, color: C.g }}>AMOUNT</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${parseFloat(advAmount || 0).toFixed(2)}</div></div>
+                <div><div style={{ fontSize: 9, color: C.g }}>PAYMENT</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{advMethod}</div></div>
+                {needsBankingInfo && bankName && (
+                  <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: 9, color: C.g }}>BANK</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{bankName} ({bankAccountType}) — routing on file</div></div>
+                )}
+              </>}
+              {type === '1099' && <>
+                <div><div style={{ fontSize: 9, color: C.g }}>HOURS</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{nec1099Hours} hrs @ ${nec1099HourlyRate}/hr</div></div>
+                <div><div style={{ fontSize: 9, color: C.g }}>TOTAL DUE</div><div style={{ fontSize: 12, color: C.go, fontWeight: 700 }}>${nec1099Total}</div></div>
+                <div style={{ gridColumn: '1 / -1' }}><div style={{ fontSize: 9, color: C.g }}>PERIOD</div><div style={{ fontSize: 12, color: C.w, fontWeight: 600 }}>{nec1099PeriodStart} → {nec1099PeriodEnd}</div></div>
+              </>}
             </div>
           </div>
 
           {/* Consent text */}
           <div style={{ fontSize: 11, color: C.g, lineHeight: 1.6, marginBottom: 16, padding: '10px 12px', borderRadius: 6, background: C.ch, border: `1px solid ${C.bdr}` }}>
-            By signing below, I certify that this {selectedType?.l.toLowerCase()} is accurate and legitimate, submitted in accordance with company policy, and authorized for reimbursement or advance against my payroll.
+            By signing below, I certify that this {selectedType?.l.toLowerCase()} is accurate and legitimate, submitted in accordance with company policy
+            {type === 'advance' ? ', and authorized for advance against my payroll.' : '.'}
+            {type === '1099' ? ' I understand that non-employee compensation may be reported on IRS Form 1099-NEC.' : ''}
           </div>
 
           <SignaturePad

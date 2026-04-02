@@ -15,7 +15,7 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const [pushes, setPushes] = useState([])
   const [acks, setAcks] = useState([])
   const [employees, setEmployees] = useState([])
-  const [view, setView] = useState('sections')
+  const [view, setView] = useState('requests')
   const [selSection, setSelSection] = useState(null)
   const [toast, setToast] = useState('')
   const [catFilter, setCatFilter] = useState('')
@@ -51,11 +51,11 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const isHR = HR_EMAILS.includes(user?.email)
 
   const tabs = [
+    { k: 'requests',  l: 'Requests',  i: '📋' },
     { k: 'sections',  l: 'Browse',   i: '§' },
     { k: 'negotiate', l: 'Negotiate', i: '✎' },
     { k: 'push',      l: 'Push',      i: '▶' },
     { k: 'acks',      l: 'Acks',      i: '✓' },
-    { k: 'requests',  l: 'Requests',  i: '📋' },
   ]
 
   const saveNote = async (sectionId, text, noteType = 'general') => {
@@ -112,6 +112,42 @@ export default function PaperFlowModule({ orgId, C, user }) {
         fontSize: 10, fontWeight: 500, fontFamily: 'inherit'
       }}>{t.i} {t.l}</button>)}
     </div>
+
+    {view === 'requests' && (
+      <div>
+        {isHR && (
+          <div style={{
+            display: 'flex', gap: 2, marginBottom: 20,
+            padding: 4, borderRadius: 8,
+            background: C.ch, border: `1px solid ${C.bdr}`,
+            width: 'fit-content'
+          }}>
+            {[
+              { k: 'employee', l: '📋 Submit a Request' },
+              { k: 'hr',       l: '🔵 HR Forms' },
+            ].map(t => (
+              <button
+                key={t.k}
+                onClick={() => setRequestsView(t.k)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6,
+                  fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+                  background: requestsView === t.k ? C.go : 'transparent',
+                  color: requestsView === t.k ? C.bg : C.g,
+                }}
+              >{t.l}</button>
+            ))}
+          </div>
+        )}
+        {(!isHR || requestsView === 'employee') && (
+          <EmployeeRequestWizard orgId={orgId} C={C} user={user} />
+        )}
+        {isHR && requestsView === 'hr' && (
+          <HRFormsWizard orgId={orgId} C={C} user={user} />
+        )}
+      </div>
+    )}
 
     {view === 'sections' && <div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -188,42 +224,6 @@ export default function PaperFlowModule({ orgId, C, user }) {
     {view === 'negotiate' && <NegotiateView sections={sections} notes={notes} saveNote={saveNote} C={C} />}
     {view === 'push' && <PushView sections={sections} ac={ac} gn={gn} pushSection={pushSection} pushes={pushes} acks={acks} C={C} />}
     {view === 'acks' && <AcksView pushes={pushes} acks={acks} sections={sections} acknowledge={acknowledge} C={C} />}
-
-    {view === 'requests' && (
-      <div>
-        {isHR && (
-          <div style={{
-            display: 'flex', gap: 2, marginBottom: 20,
-            padding: 4, borderRadius: 8,
-            background: C.ch, border: `1px solid ${C.bdr}`,
-            width: 'fit-content'
-          }}>
-            {[
-              { k: 'employee', l: '📋 Submit a Request' },
-              { k: 'hr',       l: '🔵 HR Forms' },
-            ].map(t => (
-              <button
-                key={t.k}
-                onClick={() => setRequestsView(t.k)}
-                style={{
-                  padding: '6px 16px', borderRadius: 6,
-                  fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
-                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                  background: requestsView === t.k ? C.go : 'transparent',
-                  color: requestsView === t.k ? C.bg : C.g,
-                }}
-              >{t.l}</button>
-            ))}
-          </div>
-        )}
-        {(!isHR || requestsView === 'employee') && (
-          <EmployeeRequestWizard orgId={orgId} C={C} user={user} />
-        )}
-        {isHR && requestsView === 'hr' && (
-          <HRFormsWizard orgId={orgId} C={C} user={user} />
-        )}
-      </div>
-    )}
 
     {toast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{toast}</div>}
   </div>)

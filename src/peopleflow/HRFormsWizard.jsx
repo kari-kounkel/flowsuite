@@ -83,7 +83,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [hrView, setHrView]             = useState('queue') // 'queue' | 'form' | 'contractors'
   const [employees, setEmployees]       = useState([])
   const [requests, setRequests]         = useState([])
-  const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
+  const [queueTab, setQueueTab]         = useState('pending')
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [expandedReq, setExpandedReq]   = useState(null)
   const [selectedPushIds, setSelectedPushIds] = useState([]) // ids checked for pay run
@@ -117,6 +117,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [loadingHistory, setLoadingHistory] = useState(null)
   const [approvingId, setApprovingId]   = useState(null)
   const [approveNote, setApproveNote]   = useState('')
+  const [approvePeriods, setApprovePeriods] = useState(['', '', ''])
+  const [approveStopAfter, setApproveStopAfter] = useState('')
   const [payingId, setPayingId]         = useState(null)
   const [payMethod, setPayMethod]       = useState('')
   const [payDate, setPayDate]           = useState('')
@@ -290,33 +292,37 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
   const handleApprove = async (reqId) => {
     const now = new Date().toISOString()
+    const periods = approvePeriods.filter(Boolean)
     const { error } = await supabase.from('employee_requests')
       .update({ status: 'approved', approved_at: now, approved_by: user.email, approval_note: approveNote })
       .eq('id', reqId)
     if (error) { shA('Approve failed: ' + error.message); return }
 
-    // Create MoneyFlow task
-    const req = requests.find(r => r.id === reqId)
-    const amt = getAmount(req)
-    const empName = getEmpName(req.employee_id)
-    await supabase.from('moneyflow_tasks').insert([{
-      org_id: orgId,
-      entity: 'omega',
-      type: 'AP',
-      source: 'paperflow_request',
-      name: `${TYPE_LABELS[req.type] || req.type} — ${empName}${amt ? ' — $' + parseFloat(amt).toFixed(2) : ''}`,
-      description: `Approved by ${user.email}. ${approveNote || ''}`.trim(),
-      due_date: new Date().toISOString().split('T')[0],
-      status: 'open',
-      is_recurring: false,
-      recur_interval: 0,
-      paperflow_request_id: reqId,
-    }])
-
-    setRequests(p => p.map(r => r.id === reqId ? { ...r, status: 'approved', approved_at: now, approved_by: user.email } : r))
+    setRequests(p => p.map(r => r.id === reqId ? {
+      ...r, status: 'approved', approved_at: now, approved_by: user.email,
+      _payroll_periods: periods, _stop_after: approveStopAfter,
+    } : r))
     setApprovingId(null)
     setApproveNote('')
-    shA('Approved ✓ — task created in MoneyFlow')
+    setApprovePeriods(['', '', ''])
+    setApproveStopAfter('')
+    shA('Approved ✓ — check Pay Run tab to push to MoneyFlow')
+  }
+
+  const handleDelete = async (req) => {
+    if (!window.confirm('Delete this request permanently?')) return
+    if (req._is_payroll_note) {
+      await supabase.from('employee_payroll_notes').delete().eq('id', req.id)
+    } else if (req._is_hr_form) {
+      await supabase.from('hr_forms').delete().eq('id', req.id)
+    } else {
+      await supabase.from('mileage_logs').delete().eq('request_id', req.id)
+      await supabase.from('advance_details').delete().eq('request_id', req.id)
+      await supabase.from('expense_details').delete().eq('request_id', req.id)
+      await supabase.from('employee_requests').delete().eq('id', req.id)
+    }
+    setRequests(p => p.filter(r => r.id !== req.id))
+    shA('Deleted ✓')
   }
 
   const handleReject = async (reqId) => {
@@ -564,9 +570,18 @@ export default function HRFormsWizard({ orgId, C, user }) {
     </div>
   )
 
-  const openReqs      = requests.filter(r => ['pending', 'approved', 'pending_payrun', 'open'].includes(r.status))
-  const completedReqs = requests.filter(r => ['paid', 'rejected', 'complete'].includes(r.status))
-  const displayReqs   = queueTab === 'open' ? openReqs : completedReqs
+  const pendingReqs   = requests.filter(r => r.status === 'pending')
+  const approvedReqs  = requests.filter(r => r.status === 'approved')
+  const payrunReqs    = requests.filter(r => ['pending_payrun', 'open'].includes(r.status))
+  const completedReqs = requests.filter(r => ['paid', 'complete'].includes(r.status))
+  const rejectedReqs  = requests.filter(r => r.status === 'rejected')
+
+  const displayReqs = queueTab === 'pending'   ? pendingReqs
+                    : queueTab === 'approved'  ? approvedReqs
+                    : queueTab === 'payrun'    ? payrunReqs
+                    : queueTab === 'completed' ? completedReqs
+                    : queueTab === 'rejected'  ? rejectedReqs
+                    : pendingReqs
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
@@ -592,15 +607,17 @@ export default function HRFormsWizard({ orgId, C, user }) {
       {/* ── QUEUE VIEW ── */}
       {hrView === 'queue' && (
         <div>
-          {/* Open / Completed tabs + Refresh */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
             {[
-              { k: 'open',      l: `Open (${openReqs.length})` },
+              { k: 'pending',   l: `Pending (${pendingReqs.length})` },
+              { k: 'approved',  l: `Approved (${approvedReqs.length})` },
+              { k: 'payrun',    l: `Pay Run (${payrunReqs.length})` },
               { k: 'completed', l: `Completed (${completedReqs.length})` },
+              { k: 'rejected',  l: `Rejected (${rejectedReqs.length})` },
             ].map(t => (
               <button key={t.k} onClick={() => setQueueTab(t.k)} style={{
-                padding: '5px 16px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                padding: '5px 14px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
                 border: 'none', cursor: 'pointer', transition: 'all 0.15s',
                 background: queueTab === t.k ? C.go : 'transparent',
                 color: queueTab === t.k ? C.bg : C.g,
@@ -618,13 +635,11 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           {!loadingQueue && displayReqs.length === 0 && (
             <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
-              {queueTab === 'open' ? 'No open requests.' : 'No completed requests yet.'}
-            </div>
-          )}
-
-          {!loadingQueue && displayReqs.length === 0 && (
-            <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
-              {queueTab === 'open' ? 'No open requests.' : 'No completed requests yet.'}
+              {queueTab === 'pending' ? 'No pending requests.' 
+              : queueTab === 'approved' ? 'Nothing approved yet.'
+              : queueTab === 'payrun' ? 'Nothing queued for pay run.'
+              : queueTab === 'completed' ? 'No completed requests yet.'
+              : 'No rejected requests.'}
             </div>
           )}
 
@@ -946,9 +961,24 @@ export default function HRFormsWizard({ orgId, C, user }) {
                         </div>
                         <textarea value={approveNote} onChange={e => setApproveNote(e.target.value)} rows={2}
                           placeholder="Note (optional)..."
-                          style={{ width: '100%', padding: 8, background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }} />
+                          style={{ width: '100%', padding: 8, background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical', marginBottom: 10 }} />
+                        {approvingId === req.id && (
+                          <div>
+                            <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Pay Period(s) — up to 3</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                              {[0,1,2].map(i => (
+                                <input key={i} type="date" value={approvePeriods[i]}
+                                  onChange={e => setApprovePeriods(p => { const n = [...p]; n[i] = e.target.value; return n })}
+                                  style={inp(C)} />
+                              ))}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>🛑 Do Not Apply After</div>
+                            <input type="date" value={approveStopAfter} onChange={e => setApproveStopAfter(e.target.value)}
+                              style={{ ...inp(C), marginBottom: 10, borderColor: approveStopAfter ? '#EF4444' : C.bdr }} />
+                          </div>
+                        )}
                         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                          <button onClick={() => setApprovingId(null)} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                          <button onClick={() => { setApprovingId(null); setApproveNote(''); setApprovePeriods(['','','']); setApproveStopAfter('') }} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
                           {approvingId === req.id
                             ? <button onClick={() => handleApprove(req.id)} style={{ padding: '6px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer' }}>Confirm Approve</button>
                             : <button onClick={() => handleReject(req.id)} style={{ padding: '6px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: '#EF4444', color: '#fff', border: 'none', cursor: 'pointer' }}>Confirm Reject</button>
@@ -956,6 +986,11 @@ export default function HRFormsWizard({ orgId, C, user }) {
                         </div>
                       </div>
                     )}
+
+                    {/* Delete button — available on all statuses */}
+                    <div style={{ marginTop: 10, textAlign: 'right' }}>
+                      <button onClick={() => handleDelete(req)} style={{ fontSize: 10, color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>Delete this record</button>
+                    </div>
 
                     {/* Mark Paid panel */}
                     {req.status === 'approved' && !isPayingThis && (

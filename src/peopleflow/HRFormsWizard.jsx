@@ -86,7 +86,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [expandedReq, setExpandedReq]   = useState(null)
-  const [selectedNecIds, setSelectedNecIds] = useState([]) // ids checked for pay run
+  const [selectedPushIds, setSelectedPushIds] = useState([]) // ids checked for pay run
   const [necItemNotes, setNecItemNotes]     = useState({}) // { id: noteText }
   const [necItemPeriod, setNecItemPeriod]   = useState({}) // { id: 'YYYY-MM-DD' } — which payroll this belongs to
   const [pushingPayRun, setPushingPayRun]   = useState(false)
@@ -629,8 +629,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
           )}
 
           {/* ── Bulk Pay Run bar ── */}
-          {selectedNecIds.length > 0 && (() => {
-            const selectedReqs = requests.filter(r => selectedNecIds.includes(r.id))
+          {selectedPushIds.length > 0 && (() => {
+            const selectedReqs = requests.filter(r => selectedPushIds.includes(r.id))
             const total = selectedReqs.reduce((s, r) => {
               try { return s + parseFloat(JSON.parse(r.notes || '{}').total || 0) } catch { return s }
             }, 0)
@@ -638,10 +638,10 @@ export default function HRFormsWizard({ orgId, C, user }) {
               <div style={{ marginBottom: 12, padding: '14px 16px', borderRadius: 8, background: 'rgba(14,165,233,0.1)', border: '2px solid #0EA5E9' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedNecIds.length} contractor payment{selectedNecIds.length > 1 ? 's' : ''} selected</div>
-                    <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Total: <strong>${total.toFixed(2)}</strong></div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedPushIds.length} item{selectedPushIds.length > 1 ? 's' : ''} selected for pay run</div>
+                    {total > 0 && <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Payments total: <strong>${total.toFixed(2)}</strong></div>}
                   </div>
-                  <button onClick={() => { setSelectedNecIds([]); setPayRunPeriods(['','','']); setPayRunStopAfter('') }} style={{ padding: '5px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
+                  <button onClick={() => { setSelectedPushIds([]); setPayRunPeriods(['','','']); setPayRunStopAfter('') }} style={{ padding: '5px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
                 </div>
 
                 <div style={{ marginBottom: 10 }}>
@@ -662,10 +662,17 @@ export default function HRFormsWizard({ orgId, C, user }) {
                   setPushingPayRun(true)
                   try {
                     const lines = selectedReqs.map(r => {
+                      if (r._is_payroll_note) {
+                        const noteLine = necItemNotes[r.id] ? `\n  ⚠ RUN NOTE: ${necItemNotes[r.id]}` : ''
+                        const periods = r.affects_payrolls?.filter(Boolean).join(', ') || '—'
+                        const stop = r.stop_after ? ` 🛑 stop after ${r.stop_after}` : ''
+                        return `• PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note} (periods: ${periods}${stop})${noteLine}`
+                      }
                       let d = {}
                       try { d = JSON.parse(r.notes || '{}') } catch {}
-                      const note = necItemNotes[r.id] ? `\n  ⚠ NOTE: ${necItemNotes[r.id]}` : ''
-                      return `• ${d.contact_name || 'Contractor'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || 'Check'}) · ${d.period_start} → ${d.period_end}${note}`
+                      const note = necItemNotes[r.id] ? `\n  ⚠ RUN NOTE: ${necItemNotes[r.id]}` : ''
+                      if (r._is_hr_form) return `• ${TYPE_LABELS[r.type] || r.type} — ${d.contact_name || getEmpName(r.employee_id) || 'Unknown'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || '—'})${note}`
+                      return `• ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${note}`
                     }).join('\n')
 
                     const periods = payRunPeriods.filter(Boolean)
@@ -673,23 +680,26 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     const stopLine = payRunStopAfter ? `\n🛑 DO NOT APPLY AFTER: ${payRunStopAfter}` : ''
 
                     await supabase.from('moneyflow_tasks').insert([{
-                      org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
-                      name: `1099 NEC Pay Run — ${selectedNecIds.length} contractor${selectedNecIds.length > 1 ? 's' : ''} — $${total.toFixed(2)}`,
-                      description: `Contractor payments for this pay run:\n\n${lines}${periodLine}${stopLine}`,
+                      org_id: orgId, entity: 'omega', type: 'AP', source: 'paperflow_payrun',
+                      name: `Pay Run — ${selectedPushIds.length} item${selectedPushIds.length > 1 ? 's' : ''}${total > 0 ? ' — $' + total.toFixed(2) : ''}`,
+                      description: `Payroll run items:\n\n${lines}${periodLine}${stopLine}`,
                       due_date: periods[0] || new Date().toISOString().split('T')[0],
                       status: 'open', is_recurring: false, recur_interval: 0,
                     }])
 
-                    await Promise.all(selectedReqs.map(r =>
-                      supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
-                    ))
+                    // Mark NEC and HR forms as paid, payroll notes as resolved
+                    await Promise.all(selectedReqs.map(r => {
+                      if (r._is_payroll_note) return supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', r.id)
+                      if (r._is_hr_form) return supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
+                      return supabase.from('employee_requests').update({ status: 'paid' }).eq('id', r.id)
+                    }))
 
-                    setRequests(p => p.map(r => selectedNecIds.includes(r.id) ? { ...r, status: 'paid' } : r))
-                    setSelectedNecIds([])
+                    setRequests(p => p.filter(r => !selectedPushIds.includes(r.id)))
+                    setSelectedPushIds([])
                     setNecItemNotes({})
                     setPayRunPeriods(['','',''])
                     setPayRunStopAfter('')
-                    shA(`Pay run pushed ✓ — ${selectedReqs.length} payment${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
+                    shA(`Pay run pushed ✓ — ${selectedReqs.length} item${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
                   } catch(e) {
                     shA('Push failed: ' + e.message)
                   } finally {
@@ -719,8 +729,17 @@ export default function HRFormsWizard({ orgId, C, user }) {
             return (
               <div key={req.id} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${isExp ? C.go : C.bdr}`, background: C.ch, overflow: 'hidden', transition: 'border-color 0.2s' }}>
                 {/* Row header */}
-                <div onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next); if (!isExp && req.employee_id) loadEmpHistory(req.employee_id) }} style={{ padding: '12px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ flex: 1 }}>
+                <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {/* Checkbox for open items */}
+                  {['pending','approved','pending_payrun','open'].includes(req.status) && (
+                    <input type="checkbox"
+                      checked={selectedPushIds.includes(req.id)}
+                      onChange={e => setSelectedPushIds(p => e.target.checked ? [...p, req.id] : p.filter(x => x !== req.id))}
+                      onClick={e => e.stopPropagation()}
+                      style={{ accentColor: '#0EA5E9', width: 16, height: 16, flexShrink: 0 }}
+                    />
+                  )}
+                  <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next); if (!isExp && req.employee_id) loadEmpHistory(req.employee_id) }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{name}</span>
                       <span style={{ fontSize: 10, color: C.g }}>{TYPE_LABELS[req.type] || req.type}</span>
@@ -730,12 +749,32 @@ export default function HRFormsWizard({ orgId, C, user }) {
                       {req.approved_at && <span style={{ marginLeft: 8 }}>· Approved {new Date(req.approved_at).toLocaleDateString()}</span>}
                       {req.paid_at && <span style={{ marginLeft: 8, color: STATUS_COLORS.paid }}>· Paid {new Date(req.payment_date || req.paid_at).toLocaleDateString()} via {req.payment_method}</span>}
                     </div>
+                    {/* Payroll dates visible on card face */}
+                    {req._is_payroll_note && req.affects_payrolls?.length > 0 && (
+                      <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {req.affects_payrolls.map(d => (
+                          <span key={d} style={{ fontSize: 9, fontWeight: 700, color: '#0EA5E9', background: 'rgba(14,165,233,0.1)', padding: '2px 6px', borderRadius: 4 }}>📅 {d}</span>
+                        ))}
+                        {req.stop_after && <span style={{ fontSize: 9, fontWeight: 700, color: '#EF4444', background: 'rgba(239,68,68,0.1)', padding: '2px 6px', borderRadius: 4 }}>🛑 stop {req.stop_after}</span>}
+                      </div>
+                    )}
+                    {req._is_hr_form && req.notes && (() => {
+                      try {
+                        const d = JSON.parse(req.notes)
+                        const periods = payRunPeriods.filter(Boolean)
+                        return periods.length > 0 ? (
+                          <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {periods.map(p => <span key={p} style={{ fontSize: 9, fontWeight: 700, color: '#0EA5E9', background: 'rgba(14,165,233,0.1)', padding: '2px 6px', borderRadius: 4 }}>📅 {p}</span>)}
+                          </div>
+                        ) : null
+                      } catch { return null }
+                    })()}
                   </div>
-                  <div style={{ textAlign: 'right' }}>
+                  <div style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next) }}>
                     {amt && <div style={{ fontSize: 14, fontWeight: 700, color: C.go }}>${parseFloat(amt).toFixed(2)}</div>}
                     <div style={{ fontSize: 10, fontWeight: 700, color: sc, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{req.status}</div>
                   </div>
-                  <div style={{ fontSize: 12, color: C.g }}>{isExp ? '▾' : '▸'}</div>
+                  <div style={{ fontSize: 12, color: C.g, cursor: 'pointer' }} onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next) }}>{isExp ? '▾' : '▸'}</div>
                 </div>
 
                 {/* Expanded detail */}
@@ -811,7 +850,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     {req._is_hr_form && (() => {
                       let d = {}
                       try { d = JSON.parse(req.notes || '{}') } catch {}
-                      const isSelected = selectedNecIds.includes(req.id)
                       return (
                         <div style={{ marginTop: 12 }}>
                           {req.notes && (
@@ -845,16 +883,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
                                   style={{ width: '100%', padding: '8px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
                                 />
                               </div>
-                              {/* Include in pay run checkbox */}
-                              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '10px 12px', borderRadius: 6, background: isSelected ? 'rgba(14,165,233,0.08)' : 'transparent', border: `1px solid ${isSelected ? '#0EA5E9' : C.bdr}` }}>
-                                <input type="checkbox" checked={isSelected} onChange={e => {
-                                  setSelectedNecIds(p => e.target.checked ? [...p, req.id] : p.filter(x => x !== req.id))
-                                }} style={{ accentColor: '#0EA5E9', width: 16, height: 16 }} />
-                                <div>
-                                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? '#0EA5E9' : C.w }}>Include in Pay Run</div>
-                                  <div style={{ fontSize: 10, color: C.g, marginTop: 1 }}>Check to add to the next bulk push to MoneyFlow</div>
-                                </div>
-                              </label>
                             </div>
                           )}
                         </div>

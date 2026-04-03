@@ -670,18 +670,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
       )}
 
       {/* ── FORM VIEW ── */}
-      {hrView === 'form' && (<div>
-    <div style={{
-      width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: 10, fontWeight: 700,
-      background: step > n ? (C.go || '#F59E0B') : step === n ? 'rgba(245,158,11,0.2)' : C.ch,
-      border: `1.5px solid ${step >= n ? (C.go || '#F59E0B') : (C.bdr || '#374151')}`,
-      color: step > n ? C.bg : step === n ? (C.go || '#F59E0B') : C.g,
-    }}>{step > n ? '✓' : n}</div>
-  )
-
-  return (
-    <div style={{ maxWidth: 680, margin: '0 auto' }}>
+      {hrView === 'form' && (
+        <div style={{ maxWidth: 680, margin: '0 auto' }}>
 
       {/* HR badge */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, padding: '6px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(14,165,233,0.2)', width: 'fit-content' }}>

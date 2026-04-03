@@ -184,7 +184,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     // Pull HR-initiated NEC forms — normalize to same shape as employee_requests
     const { data: necForms } = await supabase
       .from('hr_forms')
-      .select('*, nec_form_details(*)')
+      .select('*')
       .eq('org_id', orgId)
       .eq('form_type', 'nec_1099')
       .order('created_at', { ascending: false })
@@ -195,7 +195,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
       type: '1099_nec_hr',
       status: f.status === 'complete' ? 'pending_payrun' : f.status,
       employee_id: null,
-      nec_detail: f.nec_form_details?.[0] || null,
     }))
 
     setRequests([...(empReqs || []), ...normalizedNec]

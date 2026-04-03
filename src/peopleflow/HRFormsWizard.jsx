@@ -1086,11 +1086,18 @@ export default function HRFormsWizard({ orgId, C, user }) {
               </div>
             )}
             {!showAddNote && (
-              <button onClick={() => setShowAddNote(true)} style={{
-                fontSize: 11, fontWeight: 600, color: C.go, background: 'rgba(245,158,11,0.08)',
-                border: `1px solid ${C.go}`, borderRadius: 6, padding: '7px 16px',
-                cursor: 'pointer', fontFamily: 'inherit',
-              }}>+ Add Payroll Note for {selectedEmp ? gn(selectedEmp) : '—'}</button>
+              <div onClick={() => setShowAddNote(true)} style={{
+                padding: '14px 16px', borderRadius: 8, cursor: 'pointer',
+                background: 'transparent', border: `1.5px solid ${C.bdr || '#374151'}`,
+                display: 'flex', alignItems: 'center', gap: 14, transition: 'all 0.15s',
+              }}>
+                <div style={{ fontSize: 22 }}>📝</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.w }}>Add Payroll Note</div>
+                  <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>Raise, reminder, stop-after warning — anything payroll needs to know</div>
+                </div>
+                <div style={{ marginLeft: 'auto', fontSize: 16, color: C.bdr }}>○</div>
+              </div>
             )}
             {showAddNote && (
               <div style={{ padding: '14px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch }}>

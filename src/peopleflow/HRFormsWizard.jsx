@@ -771,12 +771,12 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     {req._is_hr_form && req.notes && (() => {
                       try {
                         const d = JSON.parse(req.notes)
-                        const periods = payRunPeriods.filter(Boolean)
-                        return periods.length > 0 ? (
+                        if (d.period_start) return (
                           <div style={{ marginTop: 3, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {periods.map(p => <span key={p} style={{ fontSize: 9, fontWeight: 700, color: '#0EA5E9', background: 'rgba(14,165,233,0.1)', padding: '2px 6px', borderRadius: 4 }}>📅 {p}</span>)}
+                            <span style={{ fontSize: 9, fontWeight: 700, color: '#0EA5E9', background: 'rgba(14,165,233,0.1)', padding: '2px 6px', borderRadius: 4 }}>📅 {d.period_start} → {d.period_end}</span>
                           </div>
-                        ) : null
+                        )
+                        return null
                       } catch { return null }
                     })()}
                   </div>

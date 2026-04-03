@@ -82,6 +82,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [expandedReq, setExpandedReq]   = useState(null)
   const [selectedNecIds, setSelectedNecIds] = useState([]) // ids checked for pay run
   const [necItemNotes, setNecItemNotes]     = useState({}) // { id: noteText }
+  const [necItemPeriod, setNecItemPeriod]   = useState({}) // { id: 'YYYY-MM-DD' } — which payroll this belongs to
   const [pushingPayRun, setPushingPayRun]   = useState(false)
 
   // Payroll notes
@@ -1043,79 +1044,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
             </select>
           </Field>
 
-          {/* Payroll notes for selected employee */}
-          {empId && (
-            <div style={{ marginBottom: 18 }}>
-              {/* Existing notes */}
-              {empPayrollNotes.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>⚠ Active Payroll Notes</div>
-                  {empPayrollNotes.map(n => (
-                    <div key={n.id} style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}`, marginBottom: 6 }}>
-                      <div style={{ fontSize: 12, color: C.w, marginBottom: 4 }}>{n.note}</div>
-                      {n.affects_payrolls?.length > 0 && (
-                        <div style={{ fontSize: 10, color: C.g }}>Applies to: {n.affects_payrolls.join(', ')}</div>
-                      )}
-                      {n.stop_after && (
-                        <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginTop: 2 }}>🛑 DO NOT apply after {n.stop_after}</div>
-                      )}
-                      <button onClick={async () => {
-                        await supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', n.id)
-                        setEmpPayrollNotes(p => p.filter(x => x.id !== n.id))
-                      }} style={{ marginTop: 6, fontSize: 10, color: C.g, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Mark resolved</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add note toggle */}
-              {!showAddNote && (
-                <button onClick={() => setShowAddNote(true)} style={{ fontSize: 11, color: '#0EA5E9', background: 'none', border: '1px dashed rgba(14,165,233,0.4)', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>
-                  + Add Payroll Note for {gn(employees.find(e => e.id === empId) || {})}
-                </button>
-              )}
-
-              {/* Add note form */}
-              {showAddNote && (
-                <div style={{ padding: '14px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>New Payroll Note</div>
-                  <Field C={C} l="Note" req>
-                    <textarea value={newNoteText} onChange={e => setNewNoteText(e.target.value)} rows={2}
-                      placeholder="e.g. Raise to $18/hr effective this payroll — or — Do not deduct advance again after 5/9..."
-                      style={{ ...inp(C), resize: 'vertical' }} />
-                  </Field>
-                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Applies to Pay Period(s) — up to 3</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
-                    {[0,1,2].map(i => (
-                      <input key={i} type="date" value={newNotePayrolls[i]} onChange={e => setNewNotePayrolls(p => { const n = [...p]; n[i] = e.target.value; return n })}
-                        style={inp(C)} />
-                    ))}
-                  </div>
-                  <Field C={C} l="🛑 Stop After (DO NOT apply after this date)">
-                    <input type="date" value={newNoteStopAfter} onChange={e => setNewNoteStopAfter(e.target.value)} style={inp(C)} />
-                  </Field>
-                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-                    <button onClick={() => setShowAddNote(false)} style={{ padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
-                    <button disabled={!newNoteText || savingNote} onClick={async () => {
-                      setSavingNote(true)
-                      const { data } = await supabase.from('employee_payroll_notes').insert({
-                        org_id: orgId, employee_id: empId, note: newNoteText,
-                        affects_payrolls: newNotePayrolls.filter(Boolean),
-                        stop_after: newNoteStopAfter || null,
-                        created_by: user.email,
-                      }).select().single()
-                      setEmpPayrollNotes(p => [data, ...p])
-                      setNewNoteText(''); setNewNotePayrolls(['','','']); setNewNoteStopAfter('')
-                      setShowAddNote(false); setSavingNote(false)
-                    }} style={{ padding: '6px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: newNoteText ? C.go : C.bdr, color: newNoteText ? C.bg : C.g, border: 'none', cursor: newNoteText ? 'pointer' : 'not-allowed' }}>
-                      {savingNote ? 'Saving...' : 'Save Note'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', fontSize: 11, color: '#0EA5E9', marginBottom: 18 }}>
             💡 For <strong>1099 NEC contractor payments</strong>, no employee selection is needed — you can skip this step.
           </div>
@@ -1137,7 +1065,68 @@ export default function HRFormsWizard({ orgId, C, user }) {
       {step === 2 && (
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>Select Form Type</div>
-          <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>For {selectedEmp ? gn(selectedEmp) : '—'}</div>
+          <div style={{ fontSize: 12, color: C.g, marginBottom: 14 }}>For {selectedEmp ? gn(selectedEmp) : '—'}</div>
+
+          {/* Payroll notes */}
+          <div style={{ marginBottom: 18 }}>
+            {empPayrollNotes.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>⚠ Active Payroll Notes</div>
+                {empPayrollNotes.map(n => (
+                  <div key={n.id} style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}`, marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, color: C.w, marginBottom: 4 }}>{n.note}</div>
+                    {n.affects_payrolls?.length > 0 && <div style={{ fontSize: 10, color: C.g }}>Applies to: {n.affects_payrolls.join(', ')}</div>}
+                    {n.stop_after && <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginTop: 2 }}>🛑 DO NOT apply after {n.stop_after}</div>}
+                    <button onClick={async () => {
+                      await supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', n.id)
+                      setEmpPayrollNotes(p => p.filter(x => x.id !== n.id))
+                    }} style={{ marginTop: 6, fontSize: 10, color: C.g, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Mark resolved</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!showAddNote && (
+              <button onClick={() => setShowAddNote(true)} style={{ fontSize: 11, color: '#0EA5E9', background: 'none', border: '1px dashed rgba(14,165,233,0.4)', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                + Add Payroll Note for {selectedEmp ? gn(selectedEmp) : '—'}
+              </button>
+            )}
+            {showAddNote && (
+              <div style={{ padding: '14px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>New Payroll Note</div>
+                <Field C={C} l="Note" req>
+                  <textarea value={newNoteText} onChange={e => setNewNoteText(e.target.value)} rows={2}
+                    placeholder="e.g. Raise to $18/hr effective this payroll — or — Do not deduct advance again after 5/9..."
+                    style={{ ...inp(C), resize: 'vertical' }} />
+                </Field>
+                <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Applies to Pay Period(s) — up to 3</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  {[0,1,2].map(i => (
+                    <input key={i} type="date" value={newNotePayrolls[i]} onChange={e => setNewNotePayrolls(p => { const n = [...p]; n[i] = e.target.value; return n })} style={inp(C)} />
+                  ))}
+                </div>
+                <Field C={C} l="🛑 Stop After (DO NOT apply after this date)">
+                  <input type="date" value={newNoteStopAfter} onChange={e => setNewNoteStopAfter(e.target.value)} style={inp(C)} />
+                </Field>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button onClick={() => setShowAddNote(false)} style={{ padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                  <button disabled={!newNoteText || savingNote} onClick={async () => {
+                    setSavingNote(true)
+                    const { data } = await supabase.from('employee_payroll_notes').insert({
+                      org_id: orgId, employee_id: empId, note: newNoteText,
+                      affects_payrolls: newNotePayrolls.filter(Boolean),
+                      stop_after: newNoteStopAfter || null,
+                      created_by: user.email,
+                    }).select().single()
+                    setEmpPayrollNotes(p => [data, ...p])
+                    setNewNoteText(''); setNewNotePayrolls(['','','']); setNewNoteStopAfter('')
+                    setShowAddNote(false); setSavingNote(false)
+                  }} style={{ padding: '6px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: newNoteText ? C.go : C.bdr, color: newNoteText ? C.bg : C.g, border: 'none', cursor: newNoteText ? 'pointer' : 'not-allowed' }}>
+                    {savingNote ? 'Saving...' : 'Save Note'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <div style={{ display: 'grid', gap: 10, marginBottom: 18 }}>
             {FORM_TYPES.map(f => (
               <div key={f.v} onClick={() => setFormType(f.v)} style={{

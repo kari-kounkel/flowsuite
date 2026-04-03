@@ -47,8 +47,8 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const ac = employees.filter(e => e.status !== 'Terminated' && e.status !== 'Inactive')
   const gn = e => `${e.pn || e.preferred_name || e.first_name || ''} ${e.ln || e.last_name || ''}`
 
-  const HR_EMAILS = ['kari@karikounkel.com', 'operationsmanager@mpuptown.com', 'des@caresconsultinginc.com', 'fbrown@mpuptown.com']
-  const isHR = HR_EMAILS.includes(user?.email)
+  const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
+  const isHR = ADMIN_EMAILS.includes(user?.email?.toLowerCase())
 
   const tabs = [
     { k: 'requests',     l: 'Requests',   i: '📋' },

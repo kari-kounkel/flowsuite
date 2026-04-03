@@ -8,7 +8,7 @@ import SignaturePad from './SignaturePad.jsx'
 // Props: orgId, C, user
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HR_EMAILS = ['kari@karikounkel.com', 'operationsmanager@mpuptown.com']
+const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
 
 const FORM_TYPES = [
   { v: 'withholding',        l: 'Payroll Withholding Notification', i: '📋', desc: 'Notify employee of required payroll withholdings' },
@@ -58,7 +58,7 @@ const Field = ({ C, l, req, children, half }) => (
 const emptyWHRow = () => ({ id: crypto.randomUUID(), type: '', amount: '', frequency: '', effective_date: '' })
 
 export default function HRFormsWizard({ orgId, C, user }) {
-  const isHR = HR_EMAILS.includes(user?.email)
+  const isHR = ADMIN_EMAILS.includes(user?.email?.toLowerCase())
 
   const [hrView, setHrView]             = useState('queue') // 'queue' | 'form'
   const [employees, setEmployees]       = useState([])

@@ -126,6 +126,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [necState, setNecState]               = useState('')
   const [necZip, setNecZip]                   = useState('')
   const [necSsnLast4, setNecSsnLast4]         = useState('')
+  const [necBankingOnFile, setNecBankingOnFile] = useState(false)
   const [necHourlyRate, setNecHourlyRate]     = useState('')
   const [necHours, setNecHours]               = useState('')
   const [necPeriodStart, setNecPeriodStart]   = useState('')
@@ -301,7 +302,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
           state: necState || null,
           zip: necZip || null,
           ssn_last4: necSsnLast4 || null,
-          banking_on_file: false,
+          banking_on_file: necBankingOnFile,
         }).select().single()
         if (cErr) { shA('Contact save failed: ' + cErr.message); return }
         contactId = contact.id
@@ -350,18 +351,45 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   const handleSubmit = async () => {
-    if (!canSubmit) { sh('Both signatures required'); return }
+    if (!canSubmit) { sh(formType === 'nec_1099' ? 'HR signature required' : 'Both signatures required'); return }
     setSubmitting(true)
     try {
-      const empSig = await uploadSig(empSigUrl, 'employee')
-      const hrSig  = await uploadSig(hrSigUrl, 'hr')
+      // NEC skips employee signature upload
+      const empSig = formType !== 'nec_1099' ? await uploadSig(empSigUrl, 'employee') : null
+      const hrSig  = hrSigUrl ? await uploadSig(hrSigUrl, 'hr') : null
       const now    = new Date().toISOString()
 
+      // For NEC, if new contractor and no token was generated yet, save contact now
+      let resolvedContactId = necSavedContactId || necContactId
+      if (formType === 'nec_1099' && necMode === 'new' && !resolvedContactId) {
+        const { data: contact, error: cErr } = await supabase.from('nec_contacts').insert({
+          org_id: orgId,
+          first_name: necFirstName,
+          last_name: necLastName,
+          email: necEmail || null,
+          address_line1: necAddress1 || null,
+          city: necCity || null,
+          state: necState || null,
+          zip: necZip || null,
+          ssn_last4: necSsnLast4 || null,
+          banking_on_file: necBankingOnFile,
+        }).select().single()
+        if (cErr) throw cErr
+        resolvedContactId = contact.id
+        setNecSavedContactId(contact.id)
+        setNecContacts(p => [...p, contact])
+      }
+
       const { data: form, error: formErr } = await supabase.from('hr_forms').insert({
-        org_id: orgId, employee_id: empId, form_type: formType,
-        created_by: user.email, status: 'complete',
-        employee_signature_url: empSig, employee_signed_at: now,
-        hr_signature_url: hrSig, hr_signed_at: now,
+        org_id: orgId,
+        employee_id: empId || null,
+        form_type: formType,
+        created_by: user.email,
+        status: 'complete',
+        employee_signature_url: empSig,
+        employee_signed_at: empSig ? now : null,
+        hr_signature_url: hrSig,
+        hr_signed_at: hrSig ? now : null,
       }).select().single()
 
       if (formErr) throw formErr
@@ -392,12 +420,13 @@ export default function HRFormsWizard({ orgId, C, user }) {
       } else if (formType === 'nec_1099') {
         const necHoursVal = parseFloat(necHours) || 0
         const necRateVal  = parseFloat(necHourlyRate) || 0
-        const resolvedContactId = necSavedContactId || necContactId
+        const contactRec  = necContacts.find(c => c.id === resolvedContactId)
+        const bankingReady = contactRec?.banking_on_file || necBankingOnFile
         await supabase.from('advance_details').insert({
           request_id: form.id,
           amount: parseFloat((necHoursVal * necRateVal).toFixed(2)),
           reason: `1099 NEC (HR) — ${necDescription}`,
-          payment_method: selectedNecContact?.banking_on_file ? 'ACH / Direct Deposit' : 'Check',
+          payment_method: bankingReady ? 'ACH / Direct Deposit' : 'Check',
           nec_hourly_rate: necRateVal,
           nec_hours: necHoursVal,
           nec_period_start: necPeriodStart,
@@ -410,7 +439,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
         }
 
         // Create MoneyFlow AP task for this contractor payment
-        const contactRec = necContacts.find(c => c.id === resolvedContactId)
         const contactName = contactRec
           ? `${contactRec.first_name} ${contactRec.last_name}`
           : (necFirstName && necLastName ? `${necFirstName} ${necLastName}` : 'Contractor')
@@ -420,7 +448,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
           type: 'AP',
           source: 'hr_form_nec',
           name: `1099 NEC — ${contactName} — $${(necHoursVal * necRateVal).toFixed(2)}`,
-          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${necHoursVal} hrs @ $${necRateVal}/hr\nPayment: ${contactRec?.banking_on_file ? 'ACH Direct Deposit' : 'Check'}`,
+          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${necHoursVal} hrs @ $${necRateVal}/hr\nPayment: ${bankingReady ? 'ACH Direct Deposit' : 'Check'}`,
           due_date: new Date().toISOString().split('T')[0],
           status: 'open',
           is_recurring: false,
@@ -445,7 +473,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     setCashAmount(''); setCashPurpose(''); setCashMode('payroll')
     setNecContactId(''); setNecMode('existing'); setNecFirstName(''); setNecLastName('')
     setNecEmail(''); setNecAddress1(''); setNecCity(''); setNecState(''); setNecZip('')
-    setNecSsnLast4(''); setNecHourlyRate(''); setNecHours(''); setNecPeriodStart('')
+    setNecSsnLast4(''); setNecBankingOnFile(false); setNecHourlyRate(''); setNecHours(''); setNecPeriodStart('')
     setNecPeriodEnd(''); setNecDescription(''); setNecTokenUrl(''); setNecSavedContactId(null)
     setEmpSigUrl(''); setHrSigUrl('')
   }
@@ -942,6 +970,13 @@ export default function HRFormsWizard({ orgId, C, user }) {
                   <Field C={C} l="SSN Last 4">
                     <input type="text" inputMode="numeric" maxLength={4} value={necSsnLast4} onChange={e => setNecSsnLast4(e.target.value.replace(/\D/g, ''))} placeholder="••••" style={{ ...inp(C), width: 80 }} />
                   </Field>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, marginBottom: 12, cursor: 'pointer', padding: '10px 12px', borderRadius: 6, background: necBankingOnFile ? 'rgba(34,197,94,0.08)' : C.ch, border: `1px solid ${necBankingOnFile ? '#22C55E' : C.bdr}` }}>
+                    <input type="checkbox" checked={necBankingOnFile} onChange={e => setNecBankingOnFile(e.target.checked)} style={{ accentColor: '#22C55E', width: 16, height: 16 }} />
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: necBankingOnFile ? '#22C55E' : C.w }}>ACH banking info already on file</div>
+                      <div style={{ fontSize: 10, color: C.g, marginTop: 1 }}>Check this if you already have their routing and account numbers — no token link needed</div>
+                    </div>
+                  </label>
                 </div>
               )}
 
@@ -1051,11 +1086,19 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
             <button onClick={() => setStep(2)} style={{ padding: '8px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>← Back</button>
-            <button onClick={() => setStep(4)} disabled={!canNext3} style={{
-              padding: '8px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
-              background: canNext3 ? (C.go || '#F59E0B') : C.bdr, color: canNext3 ? C.bg : C.g,
-              border: 'none', cursor: canNext3 ? 'pointer' : 'not-allowed',
-            }}>Next →</button>
+            {formType === 'nec_1099' ? (
+              <button onClick={handleSubmit} disabled={!canNext3 || submitting} style={{
+                padding: '8px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                background: canNext3 && !submitting ? (C.go || '#F59E0B') : C.bdr, color: canNext3 && !submitting ? C.bg : C.g,
+                border: 'none', cursor: canNext3 && !submitting ? 'pointer' : 'not-allowed',
+              }}>{submitting ? 'Saving...' : 'Complete Form ✓'}</button>
+            ) : (
+              <button onClick={() => setStep(4)} disabled={!canNext3} style={{
+                padding: '8px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                background: canNext3 ? (C.go || '#F59E0B') : C.bdr, color: canNext3 ? C.bg : C.g,
+                border: 'none', cursor: canNext3 ? 'pointer' : 'not-allowed',
+              }}>Next →</button>
+            )}
           </div>
         </div>
       )}

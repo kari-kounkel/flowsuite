@@ -201,7 +201,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
       .from('employee_requests')
       .select('*, advance_details(*), expense_details(*), mileage_logs(*)')
       .eq('org_id', orgId)
-      .order('created_at', { ascending: false })
+      .order('submitted_at', { ascending: false })
 
     // Pull ALL HR-initiated forms
     const { data: hrForms } = await supabase
@@ -238,7 +238,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
       created_at: n.created_at,
     }))
 
-    setRequests([...(empReqs || []), ...normalizedHR, ...normalizedNotes]
+    setRequests([...(empReqs || []).map(r => ({ ...r, created_at: r.submitted_at })), ...normalizedHR, ...normalizedNotes]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
     setLoadingQueue(false)
   }

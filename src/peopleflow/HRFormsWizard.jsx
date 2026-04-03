@@ -84,6 +84,14 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [necItemNotes, setNecItemNotes]     = useState({}) // { id: noteText }
   const [pushingPayRun, setPushingPayRun]   = useState(false)
 
+  // Payroll notes
+  const [empPayrollNotes, setEmpPayrollNotes] = useState([]) // notes for selected employee
+  const [showAddNote, setShowAddNote]         = useState(false)
+  const [newNoteText, setNewNoteText]         = useState('')
+  const [newNotePayrolls, setNewNotePayrolls] = useState(['', '', '']) // up to 3 pay periods
+  const [newNoteStopAfter, setNewNoteStopAfter] = useState('')
+  const [savingNote, setSavingNote]           = useState(false)
+
   // Contractor panel state
   const [editingContractor, setEditingContractor] = useState(null) // null | 'new' | {contact obj}
   const [cFirst, setCFirst]   = useState('')
@@ -105,6 +113,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [payDate, setPayDate]           = useState('')
   const [payNote, setPayNote]           = useState('')
   const [actionToast, setActionToast]   = useState('')
+  const [payRunPeriods, setPayRunPeriods] = useState(['', '', '']) // up to 3 pay periods
+  const [payRunStopAfter, setPayRunStopAfter] = useState('')       // 4th — DO NOT apply after
 
   const [step, setStep]             = useState(1)
   const [empId, setEmpId]           = useState('')
@@ -206,6 +216,14 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   useEffect(() => { if (isHR) loadQueue() }, [orgId, isHR])
+
+  useEffect(() => {
+    if (!empId || !orgId) { setEmpPayrollNotes([]); return }
+    supabase.from('employee_payroll_notes')
+      .select('*').eq('org_id', orgId).eq('employee_id', empId)
+      .eq('resolved', false).order('created_at', { ascending: false })
+      .then(({ data }) => setEmpPayrollNotes(data || []))
+  }, [empId, orgId])
 
   const shA = (msg) => { setActionToast(msg); setTimeout(() => setActionToast(''), 3000) }
 
@@ -589,50 +607,70 @@ export default function HRFormsWizard({ orgId, C, user }) {
               try { return s + parseFloat(JSON.parse(r.notes || '{}').total || 0) } catch { return s }
             }, 0)
             return (
-              <div style={{ marginBottom: 12, padding: '12px 16px', borderRadius: 8, background: 'rgba(14,165,233,0.1)', border: '2px solid #0EA5E9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedNecIds.length} contractor payment{selectedNecIds.length > 1 ? 's' : ''} selected</div>
-                  <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Total: <strong>${total.toFixed(2)}</strong></div>
+              <div style={{ marginBottom: 12, padding: '14px 16px', borderRadius: 8, background: 'rgba(14,165,233,0.1)', border: '2px solid #0EA5E9' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedNecIds.length} contractor payment{selectedNecIds.length > 1 ? 's' : ''} selected</div>
+                    <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Total: <strong>${total.toFixed(2)}</strong></div>
+                  </div>
+                  <button onClick={() => { setSelectedNecIds([]); setPayRunPeriods(['','','']); setPayRunStopAfter('') }} style={{ padding: '5px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setSelectedNecIds([])} style={{ padding: '7px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
-                  <button disabled={pushingPayRun} onClick={async () => {
-                    setPushingPayRun(true)
-                    try {
-                      const lines = selectedReqs.map(r => {
-                        let d = {}
-                        try { d = JSON.parse(r.notes || '{}') } catch {}
-                        const note = necItemNotes[r.id] ? `\n⚠ NOTE: ${necItemNotes[r.id]}` : ''
-                        return `• ${d.contact_name || 'Contractor'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || 'Check'}) · ${d.period_start} → ${d.period_end}${note}`
-                      }).join('\n')
 
-                      await supabase.from('moneyflow_tasks').insert([{
-                        org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
-                        name: `1099 NEC Pay Run — ${selectedNecIds.length} contractor${selectedNecIds.length > 1 ? 's' : ''} — $${total.toFixed(2)}`,
-                        description: `Contractor payments for this pay run:\n\n${lines}`,
-                        due_date: new Date().toISOString().split('T')[0],
-                        status: 'open', is_recurring: false, recur_interval: 0,
-                      }])
-
-                      // Mark all selected as paid
-                      await Promise.all(selectedReqs.map(r =>
-                        supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
-                      ))
-
-                      setRequests(p => p.map(r => selectedNecIds.includes(r.id) ? { ...r, status: 'paid' } : r))
-                      setSelectedNecIds([])
-                      setNecItemNotes({})
-                      shA(`Pay run pushed ✓ — ${selectedReqs.length} payment${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
-                    } catch(e) {
-                      shA('Push failed: ' + e.message)
-                    } finally {
-                      setPushingPayRun(false)
-                    }
-                  }} style={{
-                    padding: '7px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
-                    background: pushingPayRun ? C.bdr : '#0EA5E9', color: '#fff', border: 'none', cursor: pushingPayRun ? 'wait' : 'pointer',
-                  }}>{pushingPayRun ? 'Pushing...' : '💳 Push Pay Run → MoneyFlow'}</button>
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Pay Period(s) This Covers — up to 3</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                    {[0,1,2].map(i => (
+                      <input key={i} type="date" value={payRunPeriods[i]}
+                        onChange={e => setPayRunPeriods(p => { const n = [...p]; n[i] = e.target.value; return n })}
+                        style={inp(C)} />
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>🛑 DO NOT Apply After This Date</div>
+                  <input type="date" value={payRunStopAfter} onChange={e => setPayRunStopAfter(e.target.value)}
+                    style={{ ...inp(C), borderColor: payRunStopAfter ? '#EF4444' : C.bdr }} />
                 </div>
+
+                <button disabled={pushingPayRun} onClick={async () => {
+                  setPushingPayRun(true)
+                  try {
+                    const lines = selectedReqs.map(r => {
+                      let d = {}
+                      try { d = JSON.parse(r.notes || '{}') } catch {}
+                      const note = necItemNotes[r.id] ? `\n  ⚠ NOTE: ${necItemNotes[r.id]}` : ''
+                      return `• ${d.contact_name || 'Contractor'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || 'Check'}) · ${d.period_start} → ${d.period_end}${note}`
+                    }).join('\n')
+
+                    const periods = payRunPeriods.filter(Boolean)
+                    const periodLine = periods.length ? `\nPay Period(s): ${periods.join(', ')}` : ''
+                    const stopLine = payRunStopAfter ? `\n🛑 DO NOT APPLY AFTER: ${payRunStopAfter}` : ''
+
+                    await supabase.from('moneyflow_tasks').insert([{
+                      org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
+                      name: `1099 NEC Pay Run — ${selectedNecIds.length} contractor${selectedNecIds.length > 1 ? 's' : ''} — $${total.toFixed(2)}`,
+                      description: `Contractor payments for this pay run:\n\n${lines}${periodLine}${stopLine}`,
+                      due_date: periods[0] || new Date().toISOString().split('T')[0],
+                      status: 'open', is_recurring: false, recur_interval: 0,
+                    }])
+
+                    await Promise.all(selectedReqs.map(r =>
+                      supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
+                    ))
+
+                    setRequests(p => p.map(r => selectedNecIds.includes(r.id) ? { ...r, status: 'paid' } : r))
+                    setSelectedNecIds([])
+                    setNecItemNotes({})
+                    setPayRunPeriods(['','',''])
+                    setPayRunStopAfter('')
+                    shA(`Pay run pushed ✓ — ${selectedReqs.length} payment${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
+                  } catch(e) {
+                    shA('Push failed: ' + e.message)
+                  } finally {
+                    setPushingPayRun(false)
+                  }
+                }} style={{
+                  width: '100%', padding: '9px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                  background: pushingPayRun ? C.bdr : '#0EA5E9', color: '#fff', border: 'none', cursor: pushingPayRun ? 'wait' : 'pointer',
+                }}>{pushingPayRun ? 'Pushing...' : '💳 Push Pay Run → MoneyFlow'}</button>
               </div>
             )
           })()}
@@ -999,11 +1037,85 @@ export default function HRFormsWizard({ orgId, C, user }) {
           <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>Select Employee</div>
           <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>Which employee is this form for?</div>
           <Field C={C} l="Employee">
-            <select value={empId} onChange={e => setEmpId(e.target.value)} style={inp(C)}>
+            <select value={empId} onChange={e => { setEmpId(e.target.value); setShowAddNote(false); setNewNoteText(''); setNewNotePayrolls(['','','']); setNewNoteStopAfter('') }} style={inp(C)}>
               <option value="">— Select employee —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{gn(e)} — {e.dept}</option>)}
             </select>
           </Field>
+
+          {/* Payroll notes for selected employee */}
+          {empId && (
+            <div style={{ marginBottom: 18 }}>
+              {/* Existing notes */}
+              {empPayrollNotes.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>⚠ Active Payroll Notes</div>
+                  {empPayrollNotes.map(n => (
+                    <div key={n.id} style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}`, marginBottom: 6 }}>
+                      <div style={{ fontSize: 12, color: C.w, marginBottom: 4 }}>{n.note}</div>
+                      {n.affects_payrolls?.length > 0 && (
+                        <div style={{ fontSize: 10, color: C.g }}>Applies to: {n.affects_payrolls.join(', ')}</div>
+                      )}
+                      {n.stop_after && (
+                        <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginTop: 2 }}>🛑 DO NOT apply after {n.stop_after}</div>
+                      )}
+                      <button onClick={async () => {
+                        await supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', n.id)
+                        setEmpPayrollNotes(p => p.filter(x => x.id !== n.id))
+                      }} style={{ marginTop: 6, fontSize: 10, color: C.g, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>Mark resolved</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add note toggle */}
+              {!showAddNote && (
+                <button onClick={() => setShowAddNote(true)} style={{ fontSize: 11, color: '#0EA5E9', background: 'none', border: '1px dashed rgba(14,165,233,0.4)', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  + Add Payroll Note for {gn(employees.find(e => e.id === empId) || {})}
+                </button>
+              )}
+
+              {/* Add note form */}
+              {showAddNote && (
+                <div style={{ padding: '14px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 10 }}>New Payroll Note</div>
+                  <Field C={C} l="Note" req>
+                    <textarea value={newNoteText} onChange={e => setNewNoteText(e.target.value)} rows={2}
+                      placeholder="e.g. Raise to $18/hr effective this payroll — or — Do not deduct advance again after 5/9..."
+                      style={{ ...inp(C), resize: 'vertical' }} />
+                  </Field>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Applies to Pay Period(s) — up to 3</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                    {[0,1,2].map(i => (
+                      <input key={i} type="date" value={newNotePayrolls[i]} onChange={e => setNewNotePayrolls(p => { const n = [...p]; n[i] = e.target.value; return n })}
+                        style={inp(C)} />
+                    ))}
+                  </div>
+                  <Field C={C} l="🛑 Stop After (DO NOT apply after this date)">
+                    <input type="date" value={newNoteStopAfter} onChange={e => setNewNoteStopAfter(e.target.value)} style={inp(C)} />
+                  </Field>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                    <button onClick={() => setShowAddNote(false)} style={{ padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                    <button disabled={!newNoteText || savingNote} onClick={async () => {
+                      setSavingNote(true)
+                      const { data } = await supabase.from('employee_payroll_notes').insert({
+                        org_id: orgId, employee_id: empId, note: newNoteText,
+                        affects_payrolls: newNotePayrolls.filter(Boolean),
+                        stop_after: newNoteStopAfter || null,
+                        created_by: user.email,
+                      }).select().single()
+                      setEmpPayrollNotes(p => [data, ...p])
+                      setNewNoteText(''); setNewNotePayrolls(['','','']); setNewNoteStopAfter('')
+                      setShowAddNote(false); setSavingNote(false)
+                    }} style={{ padding: '6px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: newNoteText ? C.go : C.bdr, color: newNoteText ? C.bg : C.g, border: 'none', cursor: newNoteText ? 'pointer' : 'not-allowed' }}>
+                      {savingNote ? 'Saving...' : 'Save Note'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', fontSize: 11, color: '#0EA5E9', marginBottom: 18 }}>
             💡 For <strong>1099 NEC contractor payments</strong>, no employee selection is needed — you can skip this step.
           </div>

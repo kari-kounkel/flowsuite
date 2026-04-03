@@ -661,33 +661,43 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 <button disabled={pushingPayRun} onClick={async () => {
                   setPushingPayRun(true)
                   try {
-                    const lines = selectedReqs.map(r => {
-                      if (r._is_payroll_note) {
-                        const noteLine = necItemNotes[r.id] ? `\n  ⚠ RUN NOTE: ${necItemNotes[r.id]}` : ''
-                        const periods = r.affects_payrolls?.filter(Boolean).join(', ') || '—'
-                        const stop = r.stop_after ? ` 🛑 stop after ${r.stop_after}` : ''
-                        return `• PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note} (periods: ${periods}${stop})${noteLine}`
-                      }
-                      let d = {}
-                      try { d = JSON.parse(r.notes || '{}') } catch {}
-                      const note = necItemNotes[r.id] ? `\n  ⚠ RUN NOTE: ${necItemNotes[r.id]}` : ''
-                      if (r._is_hr_form) return `• ${TYPE_LABELS[r.type] || r.type} — ${d.contact_name || getEmpName(r.employee_id) || 'Unknown'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || '—'})${note}`
-                      return `• ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${note}`
-                    }).join('\n')
-
                     const periods = payRunPeriods.filter(Boolean)
-                    const periodLine = periods.length ? `\nPay Period(s): ${periods.join(', ')}` : ''
-                    const stopLine = payRunStopAfter ? `\n🛑 DO NOT APPLY AFTER: ${payRunStopAfter}` : ''
+                    const periodsToUse = periods.length > 0 ? periods : [new Date().toISOString().split('T')[0]]
+                    const tasksToInsert = []
 
-                    await supabase.from('moneyflow_tasks').insert([{
-                      org_id: orgId, entity: 'omega', type: 'AP', source: 'paperflow_payrun',
-                      name: `Pay Run — ${selectedPushIds.length} item${selectedPushIds.length > 1 ? 's' : ''}${total > 0 ? ' — $' + total.toFixed(2) : ''}`,
-                      description: `Payroll run items:\n\n${lines}${periodLine}${stopLine}`,
-                      due_date: periods[0] || new Date().toISOString().split('T')[0],
-                      status: 'open', is_recurring: false, recur_interval: 0,
-                    }])
+                    for (const period of periodsToUse) {
+                      const lines = []
 
-                    // Mark NEC and HR forms as paid, payroll notes as resolved
+                      for (const r of selectedReqs) {
+                        let d = {}
+                        try { d = JSON.parse(r.notes || '{}') } catch {}
+                        const runNote = necItemNotes[r.id] ? ` — NOTE: ${necItemNotes[r.id]}` : ''
+
+                        if (r._is_payroll_note) {
+                          const stop = r.stop_after ? ` 🛑 STOP AFTER ${r.stop_after}` : ''
+                          lines.push(`☐ PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note}${stop}${runNote}`)
+                        } else if (r._is_hr_form && d.total) {
+                          lines.push(`☐ PAY — ${d.contact_name || getEmpName(r.employee_id)} — $${parseFloat(d.total).toFixed(2)} via ${d.payment_method || 'Check'}${runNote}`)
+                        } else {
+                          lines.push(`☐ ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${runNote}`)
+                        }
+                      }
+
+                      if (payRunStopAfter) {
+                        lines.push(`\n🛑 VERIFY BEFORE CLOSING: Nothing above applies after ${payRunStopAfter}`)
+                      }
+
+                      tasksToInsert.push({
+                        org_id: orgId, entity: 'omega', type: 'AP', source: 'paperflow_payrun',
+                        name: `Payroll Checklist — ${period}`,
+                        description: `Complete this checklist before finalizing payroll for ${period}:\n\n${lines.join('\n')}`,
+                        due_date: period,
+                        status: 'open', is_recurring: false, recur_interval: 0,
+                      })
+                    }
+
+                    await supabase.from('moneyflow_tasks').insert(tasksToInsert)
+
                     await Promise.all(selectedReqs.map(r => {
                       if (r._is_payroll_note) return supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', r.id)
                       if (r._is_hr_form) return supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
@@ -699,7 +709,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     setNecItemNotes({})
                     setPayRunPeriods(['','',''])
                     setPayRunStopAfter('')
-                    shA(`Pay run pushed ✓ — ${selectedReqs.length} item${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
+                    shA(`${tasksToInsert.length} payroll checklist${tasksToInsert.length > 1 ? 's' : ''} created in MoneyFlow ✓`)
                   } catch(e) {
                     shA('Push failed: ' + e.message)
                   } finally {

@@ -306,7 +306,20 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
       const url = `${window.location.origin}?nec=${tok.token}`
       setNecTokenUrl(url)
-      shA('Token link generated ✓')
+
+      // Auto-open mailto if we have the contractor's email
+      const contactEmail = necMode === 'existing'
+        ? necContacts.find(c => c.id === contactId)?.email
+        : necEmail
+      if (contactEmail) {
+        const subject = encodeURIComponent('Action Required: Submit Your Banking Information')
+        const body = encodeURIComponent(
+          `Hello,\n\nPlease use the secure link below to submit your banking information for direct deposit payment.\n\nThis link is one-time use and expires in 7 days.\n\n${url}\n\nIf you have questions, contact HR.\n\nThank you.`
+        )
+        window.open(`mailto:${contactEmail}?subject=${subject}&body=${body}`, '_blank')
+      }
+
+      shA('Token link generated ✓' + (contactEmail ? ' — email draft opened' : ' — copy link to send manually'))
     } catch (e) {
       shA('Error: ' + e.message)
     } finally {
@@ -962,6 +975,20 @@ export default function HRFormsWizard({ orgId, C, user }) {
                           padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
                           background: C.go, color: C.bg, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
                         }}>Copy</button>
+                        {(() => {
+                          const contactEmail = necMode === 'existing'
+                            ? necContacts.find(c => c.id === necContactId)?.email
+                            : necEmail
+                          if (!contactEmail) return null
+                          const subject = encodeURIComponent('Action Required: Submit Your Banking Information')
+                          const body = encodeURIComponent(`Hello,\n\nPlease use the secure link below to submit your banking information for direct deposit payment.\n\nThis link is one-time use and expires in 7 days.\n\n${necTokenUrl}\n\nIf you have questions, contact HR.\n\nThank you.`)
+                          return (
+                            <button onClick={() => window.open(`mailto:${contactEmail}?subject=${subject}&body=${body}`, '_blank')} style={{
+                              padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
+                              background: '#0EA5E9', color: '#fff', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}>✉ Email</button>
+                          )
+                        })()}
                       </div>
                       <div style={{ fontSize: 10, color: '#22C55E', marginTop: 6 }}>✓ Link generated — expires in 7 days</div>
                     </div>

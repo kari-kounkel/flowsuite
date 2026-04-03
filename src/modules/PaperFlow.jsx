@@ -47,15 +47,16 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const ac = employees.filter(e => e.status !== 'Terminated' && e.status !== 'Inactive')
   const gn = e => `${e.pn || e.preferred_name || e.first_name || ''} ${e.ln || e.last_name || ''}`
 
-  const HR_EMAILS = ['kari@karikounkel.com', 'operationsmanager@mpuptown.com']
+  const HR_EMAILS = ['kari@karikounkel.com', 'operationsmanager@mpuptown.com', 'des@caresconsultinginc.com', 'fbrown@mpuptown.com']
   const isHR = HR_EMAILS.includes(user?.email)
 
   const tabs = [
-    { k: 'requests',  l: 'Requests',  i: '📋' },
-    { k: 'sections',  l: 'Browse',   i: '§' },
-    { k: 'negotiate', l: 'Negotiate', i: '✎' },
-    { k: 'push',      l: 'Push',      i: '▶' },
-    { k: 'acks',      l: 'Acks',      i: '✓' },
+    { k: 'requests',     l: 'Requests',   i: '📋' },
+    ...(isHR ? [{ k: 'hr_dashboard', l: 'HR Dashboard', i: '🔵' }] : []),
+    { k: 'sections',     l: 'Browse',     i: '§' },
+    { k: 'negotiate',    l: 'Negotiate',  i: '✎' },
+    { k: 'push',         l: 'Push',       i: '▶' },
+    { k: 'acks',         l: 'Acks',       i: '✓' },
   ]
 
   const saveNote = async (sectionId, text, noteType = 'general') => {
@@ -147,6 +148,10 @@ export default function PaperFlowModule({ orgId, C, user }) {
           <HRFormsWizard orgId={orgId} C={C} user={user} />
         )}
       </div>
+    )}
+
+    {view === 'hr_dashboard' && isHR && (
+      <HRDashboard orgId={orgId} C={C} user={user} employees={employees} />
     )}
 
     {view === 'sections' && <div>
@@ -403,4 +408,226 @@ function AcksView({ pushes, acks, sections, acknowledge, C }) {
     </>}
     {acks.length === 0 && <Card C={C} style={{ textAlign: 'center', color: C.g, padding: 30 }}>No acknowledgments yet. Push a section first.</Card>}
   </div>)
+}
+
+// ── HR Dashboard ──────────────────────────────────────────────────────────────
+// Unified view of ALL requests + HR forms across both tables.
+// Gated: only kari, des, frank see this.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STATUS_COLORS = {
+  pending:  '#F59E0B',
+  approved: '#3B82F6',
+  paid:     '#22C55E',
+  rejected: '#EF4444',
+  complete: '#22C55E',
+  open:     '#F59E0B',
+}
+
+const TYPE_LABELS = {
+  expense:          '🧾 Expense',
+  mileage:          '🚗 Mileage',
+  advance:          '💵 Advance',
+  '1099':           '📄 1099 NEC',
+  withholding:      '📋 Withholding',
+  deduction:        '✂️ Deduction',
+  cash_reimbursement: '💵 Cash Reimb.',
+  nec_1099:         '📄 1099 NEC (HR)',
+}
+
+function HRDashboard({ orgId, C, user, employees }) {
+  const [empRequests, setEmpRequests]   = useState([])
+  const [hrForms, setHrForms]           = useState([])
+  const [loading, setLoading]           = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [typeFilter, setTypeFilter]     = useState('all')
+  const [sourceFilter, setSourceFilter] = useState('all') // 'all' | 'employee' | 'hr'
+  const [expanded, setExpanded]         = useState(null)
+
+  const gn = (empId) => {
+    const e = employees.find(x => x.id === empId)
+    if (!e) return '—'
+    return `${e.preferred_name || e.first_name || ''} ${e.last_name || ''}`.trim()
+  }
+
+  useEffect(() => {
+    if (!orgId) return
+    const load = async () => {
+      setLoading(true)
+      const [eR, hR] = await Promise.all([
+        supabase.from('employee_requests')
+          .select('*, advance_details(*), expense_details(*), mileage_logs(*)')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: false }),
+        supabase.from('hr_forms')
+          .select('*')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: false }),
+      ])
+      setEmpRequests(eR.data || [])
+      setHrForms(hR.data || [])
+      setLoading(false)
+    }
+    load()
+  }, [orgId])
+
+  // Normalize both into one list with a _source tag
+  const allItems = [
+    ...(empRequests.map(r => ({ ...r, _source: 'employee', _type: r.type }))),
+    ...(hrForms.map(f => ({ ...f, _source: 'hr', _type: f.form_type, status: f.status || 'complete' }))),
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+
+  const filtered = allItems.filter(item => {
+    if (sourceFilter !== 'all' && item._source !== sourceFilter) return false
+    if (statusFilter !== 'all' && item.status !== statusFilter) return false
+    if (typeFilter !== 'all' && item._type !== typeFilter) return false
+    return true
+  })
+
+  const counts = {
+    pending:  allItems.filter(i => i.status === 'pending').length,
+    approved: allItems.filter(i => i.status === 'approved').length,
+    paid:     allItems.filter(i => i.status === 'paid').length,
+    complete: allItems.filter(i => i.status === 'complete').length,
+    rejected: allItems.filter(i => i.status === 'rejected').length,
+  }
+
+  const pill = (label, active, onClick) => (
+    <button onClick={onClick} style={{
+      padding: '4px 12px', borderRadius: 20, cursor: 'pointer', fontSize: 10, fontWeight: 600,
+      fontFamily: 'inherit', border: `1px solid ${active ? C.go : C.bdrF}`,
+      background: active ? C.gD : 'transparent', color: active ? C.go : C.g,
+    }}>{label}</button>
+  )
+
+  const getAmount = (item) => {
+    if (item._source === 'hr') return null // hr_forms don't store amount at top level
+    if (item._type === 'expense') return item.expense_details?.[0]?.amount
+    if (item._type === 'mileage') return ((item.mileage_logs || []).reduce((s, r) => s + (r.miles || 0), 0) * 0.725).toFixed(2)
+    if (item._type === 'advance' || item._type === '1099') return item.advance_details?.[0]?.amount
+    return null
+  }
+
+  const allStatuses = ['pending','approved','paid','complete','rejected']
+  const allTypes = [...new Set(allItems.map(i => i._type).filter(Boolean))]
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.w }}>🔵 HR Dashboard</div>
+          <div style={{ fontSize: 11, color: C.g }}>All employee requests + HR-initiated forms</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {Object.entries(counts).filter(([, v]) => v > 0).map(([k, v]) => (
+            <div key={k} style={{
+              padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+              background: `${STATUS_COLORS[k]}18`, border: `1px solid ${STATUS_COLORS[k]}44`,
+              color: STATUS_COLORS[k], cursor: 'pointer',
+            }} onClick={() => setStatusFilter(statusFilter === k ? 'all' : k)}>
+              {k.toUpperCase()} {v}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
+        {pill('All', sourceFilter === 'all', () => setSourceFilter('all'))}
+        {pill('Employee Submitted', sourceFilter === 'employee', () => setSourceFilter('employee'))}
+        {pill('HR Initiated', sourceFilter === 'hr', () => setSourceFilter('hr'))}
+        <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
+        {pill('All Statuses', statusFilter === 'all', () => setStatusFilter('all'))}
+        {allStatuses.filter(s => allItems.some(i => i.status === s)).map(s =>
+          pill(s.charAt(0).toUpperCase() + s.slice(1), statusFilter === s, () => setStatusFilter(s))
+        )}
+        <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
+        {pill('All Types', typeFilter === 'all', () => setTypeFilter('all'))}
+        {allTypes.map(t =>
+          pill(TYPE_LABELS[t]?.replace(/^[^\s]+\s/, '') || t, typeFilter === t, () => setTypeFilter(t))
+        )}
+      </div>
+
+      {loading && <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center' }}>Loading...</div>}
+
+      {!loading && filtered.length === 0 && (
+        <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
+          No items match this filter.
+        </div>
+      )}
+
+      {!loading && filtered.map(item => {
+        const isExp = expanded === item.id
+        const sc = STATUS_COLORS[item.status] || C.g
+        const amt = getAmount(item)
+        const name = item._source === 'employee' ? gn(item.employee_id) : (item.created_by || 'HR')
+        const label = TYPE_LABELS[item._type] || item._type || '—'
+        const isHRForm = item._source === 'hr'
+
+        return (
+          <div key={item.id} style={{
+            marginBottom: 6, borderRadius: 8,
+            border: `1px solid ${isExp ? C.go : C.bdr}`,
+            background: C.ch, overflow: 'hidden',
+          }}>
+            <div onClick={() => setExpanded(isExp ? null : item.id)}
+              style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}>
+
+              {/* Source badge */}
+              <div style={{
+                fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                background: isHRForm ? 'rgba(14,165,233,0.12)' : 'rgba(245,158,11,0.1)',
+                color: isHRForm ? '#0EA5E9' : C.go,
+                textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap',
+              }}>{isHRForm ? 'HR' : 'EMP'}</div>
+
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{name}</span>
+                  <span style={{ fontSize: 10, color: C.g }}>{label}</span>
+                </div>
+                <div style={{ fontSize: 10, color: C.g }}>
+                  {new Date(item.created_at).toLocaleDateString()}
+                  {item.approved_at && <span style={{ marginLeft: 8 }}>· Approved {new Date(item.approved_at).toLocaleDateString()}</span>}
+                  {item.paid_at && <span style={{ marginLeft: 8, color: STATUS_COLORS.paid }}>· Paid {new Date(item.paid_at).toLocaleDateString()}</span>}
+                  {item.hr_signed_at && <span style={{ marginLeft: 8, color: STATUS_COLORS.complete }}>· Signed {new Date(item.hr_signed_at).toLocaleDateString()}</span>}
+                </div>
+              </div>
+
+              <div style={{ textAlign: 'right' }}>
+                {amt && <div style={{ fontSize: 14, fontWeight: 700, color: C.go }}>${parseFloat(amt).toFixed(2)}</div>}
+                <div style={{ fontSize: 10, fontWeight: 700, color: sc, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.status}</div>
+              </div>
+              <div style={{ fontSize: 12, color: C.g }}>{isExp ? '▾' : '▸'}</div>
+            </div>
+
+            {isExp && (
+              <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10, fontSize: 11 }}>
+                  <div><span style={{ color: C.g }}>Source: </span><span style={{ color: C.w }}>{isHRForm ? 'HR-Initiated Form' : 'Employee Request'}</span></div>
+                  <div><span style={{ color: C.g }}>Type: </span><span style={{ color: C.w }}>{label}</span></div>
+                  {item.created_by && <div><span style={{ color: C.g }}>Created by: </span><span style={{ color: C.w }}>{item.created_by}</span></div>}
+                  {item.approved_by && <div><span style={{ color: C.g }}>Approved by: </span><span style={{ color: C.w }}>{item.approved_by}</span></div>}
+                  {item.payment_method && <div><span style={{ color: C.g }}>Payment: </span><span style={{ color: C.w }}>{item.payment_method}</span></div>}
+                  {item.approval_note && <div style={{ gridColumn: '1 / -1' }}><span style={{ color: C.g }}>Note: </span><span style={{ color: C.w }}>{item.approval_note}</span></div>}
+                </div>
+                {/* Employee request — show reason if advance */}
+                {item._source === 'employee' && item.advance_details?.[0] && (
+                  <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(245,158,11,0.06)', border: `1px solid ${C.bdr}`, fontSize: 11 }}>
+                    <span style={{ color: C.g }}>Reason: </span>
+                    <span style={{ color: C.w }}>{item.advance_details[0].reason}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <div style={{ fontSize: 10, color: C.g, marginTop: 16, textAlign: 'right' }}>
+        {filtered.length} of {allItems.length} items shown
+      </div>
+    </div>
+  )
 }

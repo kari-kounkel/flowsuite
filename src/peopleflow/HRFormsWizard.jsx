@@ -18,19 +18,25 @@ const FORM_TYPES = [
 ]
 
 const TYPE_LABELS = {
-  expense:      '🧾 Expense',
-  mileage:      '🚗 Mileage',
-  advance:      '💵 Advance',
-  '1099':       '📄 1099 NEC',
-  '1099_nec_hr':'📄 1099 NEC (HR)',
+  expense:          '🧾 Expense',
+  mileage:          '🚗 Mileage',
+  advance:          '💵 Advance',
+  '1099':           '📄 1099 NEC',
+  '1099_nec_hr':    '📄 1099 NEC (HR)',
+  withholding_hr:   '📋 Withholding',
+  deduction_hr:     '✂️ Deduction',
+  cash_reimb_hr:    '💵 Cash Reimbursement',
+  payroll_note:     '📝 Payroll Note',
 }
 
 const STATUS_COLORS = {
-  pending:         '#F59E0B',
-  pending_payrun:  '#0EA5E9',
-  approved:        '#3B82F6',
-  paid:            '#22C55E',
-  rejected:        '#EF4444',
+  pending:          '#F59E0B',
+  pending_payrun:   '#0EA5E9',
+  open:             '#0EA5E9',
+  approved:         '#3B82F6',
+  complete:         '#22C55E',
+  paid:             '#22C55E',
+  rejected:         '#EF4444',
 }
 
 const PAYMENT_MODES_HR = ['Check', 'ACH / Direct Deposit', 'Cash', 'Payroll']
@@ -84,6 +90,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [necItemNotes, setNecItemNotes]     = useState({}) // { id: noteText }
   const [necItemPeriod, setNecItemPeriod]   = useState({}) // { id: 'YYYY-MM-DD' } — which payroll this belongs to
   const [pushingPayRun, setPushingPayRun]   = useState(false)
+  const [editingQueueId, setEditingQueueId] = useState(null) // id of record being edited
+  const [editFields, setEditFields]         = useState({})   // { field: value }
 
   // Payroll notes
   const [empPayrollNotes, setEmpPayrollNotes] = useState([]) // notes for selected employee
@@ -195,23 +203,42 @@ export default function HRFormsWizard({ orgId, C, user }) {
       .eq('org_id', orgId)
       .order('created_at', { ascending: false })
 
-    // Pull HR-initiated NEC forms — normalize to same shape as employee_requests
-    const { data: necForms } = await supabase
+    // Pull ALL HR-initiated forms
+    const { data: hrForms } = await supabase
       .from('hr_forms')
       .select('*')
       .eq('org_id', orgId)
-      .eq('form_type', 'nec_1099')
       .order('created_at', { ascending: false })
 
-    const normalizedNec = (necForms || []).map(f => ({
+    // Pull payroll notes
+    const { data: prNotes } = await supabase
+      .from('employee_payroll_notes')
+      .select('*')
+      .eq('org_id', orgId)
+      .eq('resolved', false)
+      .order('created_at', { ascending: false })
+
+    const normalizedHR = (hrForms || []).map(f => ({
       ...f,
       _is_hr_form: true,
-      type: '1099_nec_hr',
-      status: f.status === 'complete' ? 'pending_payrun' : f.status,
-      employee_id: null,
+      type: f.form_type === 'nec_1099' ? '1099_nec_hr'
+          : f.form_type === 'withholding' ? 'withholding_hr'
+          : f.form_type === 'deduction' ? 'deduction_hr'
+          : f.form_type === 'cash_reimbursement' ? 'cash_reimb_hr'
+          : f.form_type,
+      status: (f.form_type === 'nec_1099' && f.status === 'complete') ? 'pending_payrun' : f.status,
+      employee_id: f.employee_id || null,
     }))
 
-    setRequests([...(empReqs || []), ...normalizedNec]
+    const normalizedNotes = (prNotes || []).map(n => ({
+      ...n,
+      _is_payroll_note: true,
+      type: 'payroll_note',
+      status: 'open',
+      created_at: n.created_at,
+    }))
+
+    setRequests([...(empReqs || []), ...normalizedHR, ...normalizedNotes]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
     setLoadingQueue(false)
   }
@@ -537,7 +564,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     </div>
   )
 
-  const openReqs      = requests.filter(r => ['pending', 'approved', 'pending_payrun'].includes(r.status))
+  const openReqs      = requests.filter(r => ['pending', 'approved', 'pending_payrun', 'open'].includes(r.status))
   const completedReqs = requests.filter(r => ['paid', 'rejected', 'complete'].includes(r.status))
   const displayReqs   = queueTab === 'open' ? openReqs : completedReqs
 
@@ -678,9 +705,11 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           {displayReqs.map(req => {
             const amt   = getAmount(req)
-            const name  = req._is_hr_form
-              ? (() => { try { return JSON.parse(req.notes || '{}').contact_name || 'Contractor' } catch { return 'Contractor' } })()
-              : getEmpName(req.employee_id)
+            const name  = req._is_payroll_note
+              ? getEmpName(req.employee_id)
+              : req._is_hr_form
+                ? (() => { try { return JSON.parse(req.notes || '{}').contact_name || getEmpName(req.employee_id) || 'HR Form' } catch { return getEmpName(req.employee_id) || 'HR Form' } })()
+                : getEmpName(req.employee_id)
             const sc    = STATUS_COLORS[req.status] || C.g
             const isExp = expandedReq === req.id
             const adv   = req.advance_details?.[0]
@@ -713,7 +742,72 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 {isExp && (
                   <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
 
-                    {/* NEC HR form detail + Pay Run selection */}
+                    {/* ── Payroll Note detail ── */}
+                    {req._is_payroll_note && (
+                      <div style={{ marginTop: 12 }}>
+                        {editingQueueId === req.id ? (
+                          <div>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 8 }}>Edit Payroll Note</div>
+                            <textarea value={editFields.note ?? req.note} onChange={e => setEditFields(p => ({ ...p, note: e.target.value }))} rows={3}
+                              style={{ ...inp(C), resize: 'vertical', marginBottom: 8 }} />
+                            <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Applies to Pay Period(s)</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+                              {[0,1,2].map(i => {
+                                const vals = editFields.affects_payrolls ?? (req.affects_payrolls || ['','',''])
+                                return <input key={i} type="date" value={vals[i] || ''} onChange={e => {
+                                  const arr = [...(editFields.affects_payrolls ?? (req.affects_payrolls || ['','','']))]
+                                  arr[i] = e.target.value
+                                  setEditFields(p => ({ ...p, affects_payrolls: arr }))
+                                }} style={inp(C)} />
+                              })}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>🛑 Stop After</div>
+                            <input type="date" value={editFields.stop_after ?? (req.stop_after || '')} onChange={e => setEditFields(p => ({ ...p, stop_after: e.target.value }))}
+                              style={{ ...inp(C), marginBottom: 10, borderColor: (editFields.stop_after ?? req.stop_after) ? '#EF4444' : C.bdr }} />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button onClick={() => { setEditingQueueId(null); setEditFields({}) }} style={{ padding: '6px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                              <button onClick={async () => {
+                                await supabase.from('employee_payroll_notes').update({
+                                  note: editFields.note ?? req.note,
+                                  affects_payrolls: (editFields.affects_payrolls ?? req.affects_payrolls || []).filter(Boolean),
+                                  stop_after: editFields.stop_after ?? req.stop_after ?? null,
+                                }).eq('id', req.id)
+                                setRequests(p => p.map(r => r.id === req.id ? { ...r, ...editFields, note: editFields.note ?? r.note } : r))
+                                setEditingQueueId(null); setEditFields({})
+                                shA('Note updated ✓')
+                              }} style={{ padding: '6px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer' }}>Save</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.08)', border: `1px solid ${C.go}` }}>
+                            <div style={{ fontSize: 12, color: C.w, marginBottom: 6 }}>{req.note}</div>
+                            {req.affects_payrolls?.length > 0 && <div style={{ fontSize: 10, color: C.g }}>Applies to: {req.affects_payrolls.join(', ')}</div>}
+                            {req.stop_after && <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginTop: 2 }}>🛑 DO NOT apply after {req.stop_after}</div>}
+                            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                              <button onClick={() => { setEditingQueueId(req.id); setEditFields({}) }} style={{ padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.w, cursor: 'pointer' }}>Edit</button>
+                              <button onClick={async () => {
+                                await supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', req.id)
+                                setRequests(p => p.filter(r => r.id !== req.id))
+                                shA('Note resolved ✓')
+                              }} style={{ padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: '1px solid #22C55E', color: '#22C55E', cursor: 'pointer' }}>✓ Mark Resolved</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Other HR forms (withholding, deduction, cash reimbursement) ── */}
+                    {req._is_hr_form && req.type !== '1099_nec_hr' && (
+                      <div style={{ marginTop: 12 }}>
+                        <div style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', marginBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>{TYPE_LABELS[req.type] || req.form_type}</div>
+                          <div style={{ fontSize: 11, color: C.g }}>For: <span style={{ color: C.w, fontWeight: 600 }}>{getEmpName(req.employee_id)}</span></div>
+                          <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>Created by: <span style={{ color: C.w }}>{req.created_by}</span></div>
+                          <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>Status: <span style={{ color: STATUS_COLORS[req.status] || C.g, fontWeight: 700, textTransform: 'uppercase' }}>{req.status}</span></div>
+                        </div>
+                        <button onClick={() => { setEditingQueueId(req.id); setEditFields({}) }} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.w, cursor: 'pointer' }}>Edit Form</button>
+                      </div>
+                    )}
                     {req._is_hr_form && (() => {
                       let d = {}
                       try { d = JSON.parse(req.notes || '{}') } catch {}

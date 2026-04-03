@@ -80,6 +80,9 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [expandedReq, setExpandedReq]   = useState(null)
+  const [selectedNecIds, setSelectedNecIds] = useState([]) // ids checked for pay run
+  const [necItemNotes, setNecItemNotes]     = useState({}) // { id: noteText }
+  const [pushingPayRun, setPushingPayRun]   = useState(false)
 
   // Contractor panel state
   const [editingContractor, setEditingContractor] = useState(null) // null | 'new' | {contact obj}
@@ -573,6 +576,67 @@ export default function HRFormsWizard({ orgId, C, user }) {
             </div>
           )}
 
+          {!loadingQueue && displayReqs.length === 0 && (
+            <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
+              {queueTab === 'open' ? 'No open requests.' : 'No completed requests yet.'}
+            </div>
+          )}
+
+          {/* ── Bulk Pay Run bar ── */}
+          {selectedNecIds.length > 0 && (() => {
+            const selectedReqs = requests.filter(r => selectedNecIds.includes(r.id))
+            const total = selectedReqs.reduce((s, r) => {
+              try { return s + parseFloat(JSON.parse(r.notes || '{}').total || 0) } catch { return s }
+            }, 0)
+            return (
+              <div style={{ marginBottom: 12, padding: '12px 16px', borderRadius: 8, background: 'rgba(14,165,233,0.1)', border: '2px solid #0EA5E9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedNecIds.length} contractor payment{selectedNecIds.length > 1 ? 's' : ''} selected</div>
+                  <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Total: <strong>${total.toFixed(2)}</strong></div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setSelectedNecIds([])} style={{ padding: '7px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
+                  <button disabled={pushingPayRun} onClick={async () => {
+                    setPushingPayRun(true)
+                    try {
+                      const lines = selectedReqs.map(r => {
+                        let d = {}
+                        try { d = JSON.parse(r.notes || '{}') } catch {}
+                        const note = necItemNotes[r.id] ? `\n⚠ NOTE: ${necItemNotes[r.id]}` : ''
+                        return `• ${d.contact_name || 'Contractor'} — $${parseFloat(d.total || 0).toFixed(2)} (${d.payment_method || 'Check'}) · ${d.period_start} → ${d.period_end}${note}`
+                      }).join('\n')
+
+                      await supabase.from('moneyflow_tasks').insert([{
+                        org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
+                        name: `1099 NEC Pay Run — ${selectedNecIds.length} contractor${selectedNecIds.length > 1 ? 's' : ''} — $${total.toFixed(2)}`,
+                        description: `Contractor payments for this pay run:\n\n${lines}`,
+                        due_date: new Date().toISOString().split('T')[0],
+                        status: 'open', is_recurring: false, recur_interval: 0,
+                      }])
+
+                      // Mark all selected as paid
+                      await Promise.all(selectedReqs.map(r =>
+                        supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
+                      ))
+
+                      setRequests(p => p.map(r => selectedNecIds.includes(r.id) ? { ...r, status: 'paid' } : r))
+                      setSelectedNecIds([])
+                      setNecItemNotes({})
+                      shA(`Pay run pushed ✓ — ${selectedReqs.length} payment${selectedReqs.length > 1 ? 's' : ''} sent to MoneyFlow`)
+                    } catch(e) {
+                      shA('Push failed: ' + e.message)
+                    } finally {
+                      setPushingPayRun(false)
+                    }
+                  }} style={{
+                    padding: '7px 20px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                    background: pushingPayRun ? C.bdr : '#0EA5E9', color: '#fff', border: 'none', cursor: pushingPayRun ? 'wait' : 'pointer',
+                  }}>{pushingPayRun ? 'Pushing...' : '💳 Push Pay Run → MoneyFlow'}</button>
+                </div>
+              </div>
+            )
+          })()}
+
           {displayReqs.map(req => {
             const amt   = getAmount(req)
             const name  = req._is_hr_form
@@ -610,10 +674,11 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 {isExp && (
                   <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
 
-                    {/* NEC HR form detail + Pay Run */}
+                    {/* NEC HR form detail + Pay Run selection */}
                     {req._is_hr_form && (() => {
                       let d = {}
                       try { d = JSON.parse(req.notes || '{}') } catch {}
+                      const isSelected = selectedNecIds.includes(req.id)
                       return (
                         <div style={{ marginTop: 12 }}>
                           {req.notes && (
@@ -635,24 +700,29 @@ export default function HRFormsWizard({ orgId, C, user }) {
                             </div>
                           )}
                           {req.status === 'pending_payrun' && (
-                            <button onClick={async () => {
-                              let detail = {}
-                              try { detail = JSON.parse(req.notes || '{}') } catch {}
-                              await supabase.from('moneyflow_tasks').insert([{
-                                org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
-                                name: `1099 NEC — ${detail.contact_name || 'Contractor'} — $${parseFloat(detail.total || 0).toFixed(2)}`,
-                                description: detail.description || 'NEC contractor payment',
-                                due_date: new Date().toISOString().split('T')[0],
-                                status: 'open', is_recurring: false, recur_interval: 0,
-                                paperflow_request_id: req.id,
-                              }])
-                              await supabase.from('hr_forms').update({ status: 'paid' }).eq('id', req.id)
-                              setRequests(p => p.map(r => r.id === req.id ? { ...r, status: 'paid' } : r))
-                              shA('Pushed to MoneyFlow ✓')
-                            }} style={{
-                              width: '100%', padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
-                              background: '#0EA5E9', color: '#fff', border: 'none', cursor: 'pointer',
-                            }}>💳 Push to Pay Run → MoneyFlow</button>
+                            <div>
+                              {/* Payroll reminder note */}
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>Payroll Reminder Note</div>
+                                <textarea
+                                  value={necItemNotes[req.id] || ''}
+                                  onChange={e => setNecItemNotes(p => ({ ...p, [req.id]: e.target.value }))}
+                                  rows={2}
+                                  placeholder="e.g. Don't repeat next cycle — or — Raise effective this period — or — Verify manually before processing..."
+                                  style={{ width: '100%', padding: '8px 10px', background: C.ch, border: `1px solid ${C.bdr}`, borderRadius: 6, color: C.w, fontSize: 11, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
+                                />
+                              </div>
+                              {/* Include in pay run checkbox */}
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '10px 12px', borderRadius: 6, background: isSelected ? 'rgba(14,165,233,0.08)' : 'transparent', border: `1px solid ${isSelected ? '#0EA5E9' : C.bdr}` }}>
+                                <input type="checkbox" checked={isSelected} onChange={e => {
+                                  setSelectedNecIds(p => e.target.checked ? [...p, req.id] : p.filter(x => x !== req.id))
+                                }} style={{ accentColor: '#0EA5E9', width: 16, height: 16 }} />
+                                <div>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? '#0EA5E9' : C.w }}>Include in Pay Run</div>
+                                  <div style={{ fontSize: 10, color: C.g, marginTop: 1 }}>Check to add to the next bulk push to MoneyFlow</div>
+                                </div>
+                              </label>
+                            </div>
                           )}
                         </div>
                       )

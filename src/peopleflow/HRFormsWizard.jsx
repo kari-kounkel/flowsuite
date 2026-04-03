@@ -1088,7 +1088,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
             {!showAddNote && (
               <div onClick={() => setShowAddNote(true)} style={{
                 padding: '14px 16px', borderRadius: 8, cursor: 'pointer',
-                background: 'transparent', border: `1.5px solid ${C.bdr || '#374151'}`,
+                background: C.ch, border: `1.5px solid ${C.bdr || '#374151'}`,
                 display: 'flex', alignItems: 'center', gap: 14, transition: 'all 0.15s',
               }}>
                 <div style={{ fontSize: 22 }}>📝</div>

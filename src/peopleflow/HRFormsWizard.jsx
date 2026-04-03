@@ -611,36 +611,43 @@ export default function HRFormsWizard({ orgId, C, user }) {
                   <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
 
                     {/* NEC HR form detail + Pay Run */}
-                    {req._is_hr_form && req.notes && (() => {
+                    {req._is_hr_form && (() => {
                       let d = {}
-                      try { d = JSON.parse(req.notes) } catch {}
+                      try { d = JSON.parse(req.notes || '{}') } catch {}
                       return (
                         <div style={{ marginTop: 12 }}>
-                          <div style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', marginBottom: 12 }}>
-                            <div style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>1099 NEC — Contractor Payment</div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
-                              <div><span style={{ color: C.g }}>Contractor: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.contact_name}</span></div>
-                              <div><span style={{ color: C.g }}>Amount: </span><span style={{ color: C.go, fontWeight: 700 }}>${parseFloat(d.total || 0).toFixed(2)}</span></div>
-                              <div><span style={{ color: C.g }}>Hours: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.hours} hrs @ ${d.hourly_rate}/hr</span></div>
-                              <div><span style={{ color: C.g }}>Payment: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.payment_method}</span></div>
-                              <div><span style={{ color: C.g }}>Period: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.period_start} → {d.period_end}</span></div>
+                          {req.notes && (
+                            <div style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', marginBottom: 12 }}>
+                              <div style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>1099 NEC — Contractor Payment</div>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+                                <div><span style={{ color: C.g }}>Contractor: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.contact_name || '—'}</span></div>
+                                <div><span style={{ color: C.g }}>Amount: </span><span style={{ color: C.go, fontWeight: 700 }}>${parseFloat(d.total || 0).toFixed(2)}</span></div>
+                                <div><span style={{ color: C.g }}>Hours: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.hours} hrs @ ${d.hourly_rate}/hr</span></div>
+                                <div><span style={{ color: C.g }}>Payment: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.payment_method || '—'}</span></div>
+                                <div><span style={{ color: C.g }}>Period: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.period_start} → {d.period_end}</span></div>
+                              </div>
+                              {d.description && <div style={{ fontSize: 11, color: C.g, marginTop: 6, fontStyle: 'italic' }}>{d.description}</div>}
                             </div>
-                            {d.description && <div style={{ fontSize: 11, color: C.g, marginTop: 6, fontStyle: 'italic' }}>{d.description}</div>}
-                          </div>
+                          )}
+                          {!req.notes && (
+                            <div style={{ fontSize: 11, color: C.g, fontStyle: 'italic', marginBottom: 12 }}>
+                              This record was created before detail storage was available. Delete and re-enter to capture full detail.
+                            </div>
+                          )}
                           {req.status === 'pending_payrun' && (
                             <button onClick={async () => {
                               let detail = {}
-                              try { detail = JSON.parse(req.notes) } catch {}
+                              try { detail = JSON.parse(req.notes || '{}') } catch {}
                               await supabase.from('moneyflow_tasks').insert([{
                                 org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
-                                name: `1099 NEC — ${detail.contact_name} — $${parseFloat(detail.total || 0).toFixed(2)}`,
-                                description: `${detail.description}\n${detail.period_start} → ${detail.period_end} · ${detail.hours} hrs @ $${detail.hourly_rate}/hr\nPayment: ${detail.payment_method}`,
+                                name: `1099 NEC — ${detail.contact_name || 'Contractor'} — $${parseFloat(detail.total || 0).toFixed(2)}`,
+                                description: detail.description || 'NEC contractor payment',
                                 due_date: new Date().toISOString().split('T')[0],
                                 status: 'open', is_recurring: false, recur_interval: 0,
                                 paperflow_request_id: req.id,
                               }])
-                              await supabase.from('hr_forms').update({ status: 'complete' }).eq('id', req.id)
-                              setRequests(p => p.map(r => r.id === req.id ? { ...r, status: 'complete' } : r))
+                              await supabase.from('hr_forms').update({ status: 'paid' }).eq('id', req.id)
+                              setRequests(p => p.map(r => r.id === req.id ? { ...r, status: 'paid' } : r))
                               shA('Pushed to MoneyFlow ✓')
                             }} style={{
                               width: '100%', padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,

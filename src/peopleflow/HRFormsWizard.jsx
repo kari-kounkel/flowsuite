@@ -378,16 +378,16 @@ export default function HRFormsWizard({ orgId, C, user }) {
           purpose: cashPurpose, refund_method: cashMode,
         })
       } else if (formType === 'nec_1099') {
-        const hours = parseFloat(necHours) || 0
-        const rate  = parseFloat(necHourlyRate) || 0
-        const contactId = necSavedContactId || necContactId
+        const necHoursVal = parseFloat(necHours) || 0
+        const necRateVal  = parseFloat(necHourlyRate) || 0
+        const resolvedContactId = necSavedContactId || necContactId
         await supabase.from('advance_details').insert({
           request_id: form.id,
-          amount: parseFloat((hours * rate).toFixed(2)),
+          amount: parseFloat((necHoursVal * necRateVal).toFixed(2)),
           reason: `1099 NEC (HR) — ${necDescription}`,
           payment_method: selectedNecContact?.banking_on_file ? 'ACH / Direct Deposit' : 'Check',
-          nec_hourly_rate: rate,
-          nec_hours: hours,
+          nec_hourly_rate: necRateVal,
+          nec_hours: necHoursVal,
           nec_period_start: necPeriodStart,
           nec_period_end: necPeriodEnd,
         })
@@ -398,20 +398,17 @@ export default function HRFormsWizard({ orgId, C, user }) {
         }
 
         // Create MoneyFlow AP task for this contractor payment
-        const contactId = necSavedContactId || necContactId
-        const contactRec = necContacts.find(c => c.id === contactId)
+        const contactRec = necContacts.find(c => c.id === resolvedContactId)
         const contactName = contactRec
           ? `${contactRec.first_name} ${contactRec.last_name}`
           : (necFirstName && necLastName ? `${necFirstName} ${necLastName}` : 'Contractor')
-        const hours = parseFloat(necHours) || 0
-        const rate  = parseFloat(necHourlyRate) || 0
         await supabase.from('moneyflow_tasks').insert([{
           org_id: orgId,
           entity: 'omega',
           type: 'AP',
           source: 'hr_form_nec',
-          name: `1099 NEC — ${contactName} — $${(hours * rate).toFixed(2)}`,
-          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${hours} hrs @ $${rate}/hr\nPayment: ${contactRec?.banking_on_file ? 'ACH Direct Deposit' : 'Check'}`,
+          name: `1099 NEC — ${contactName} — $${(necHoursVal * necRateVal).toFixed(2)}`,
+          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${necHoursVal} hrs @ $${necRateVal}/hr\nPayment: ${contactRec?.banking_on_file ? 'ACH Direct Deposit' : 'Check'}`,
           due_date: new Date().toISOString().split('T')[0],
           status: 'open',
           is_recurring: false,

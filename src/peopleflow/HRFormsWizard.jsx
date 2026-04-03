@@ -57,6 +57,18 @@ const Field = ({ C, l, req, children, half }) => (
 
 const emptyWHRow = () => ({ id: crypto.randomUUID(), type: '', amount: '', frequency: '', effective_date: '' })
 
+const StepDot = ({ n, active, done, C }) => (
+  <div style={{
+    width: 26, height: 26, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontWeight: 700, fontSize: 11,
+    background: done ? (C?.go || '#F59E0B') : active ? (C?.go || '#F59E0B') : (C?.ch || '#1F2937'),
+    color: (done || active) ? (C?.bg || '#0F172A') : (C?.g || '#6B7280'),
+    border: `2px solid ${done || active ? (C?.go || '#F59E0B') : (C?.bdr || '#374151')}`,
+    transition: 'all 0.2s',
+  }}>{done ? '✓' : n}</div>
+)
+
 export default function HRFormsWizard({ orgId, C, user }) {
   const isHR = ADMIN_EMAILS.includes(user?.email?.toLowerCase())
 
@@ -472,8 +484,9 @@ export default function HRFormsWizard({ orgId, C, user }) {
       {/* ── QUEUE VIEW ── */}
       {hrView === 'queue' && (
         <div>
-          {/* Open / Completed tabs */}
-          <div style={{ display: 'flex', gap: 2, marginBottom: 16, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
+          {/* Open / Completed tabs + Refresh */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
             {[
               { k: 'open',      l: `Open (${openReqs.length})` },
               { k: 'completed', l: `Completed (${completedReqs.length})` },
@@ -485,6 +498,12 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 color: queueTab === t.k ? C.bg : C.g,
               }}>{t.l}</button>
             ))}
+          </div>
+          <button onClick={loadQueue} disabled={loadingQueue} style={{
+            padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+            background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g, cursor: loadingQueue ? 'wait' : 'pointer',
+            opacity: loadingQueue ? 0.6 : 1,
+          }}>⟳ Refresh</button>
           </div>
 
           {loadingQueue && <div style={{ fontSize: 12, color: C.g, padding: 20, textAlign: 'center' }}>Loading...</div>}
@@ -685,7 +704,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
           {['Employee', 'Form', 'Details', 'Sign'].map((l, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', flex: i < 3 ? 1 : 'none' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <StepDot n={i + 1} />
+                <StepDot n={i + 1} active={step === i + 1} done={step > i + 1} C={C} />
                 <div style={{ fontSize: 9, color: step === i + 1 ? (C.go || '#F59E0B') : C.g, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{l}</div>
               </div>
               {i < 3 && <div style={{ flex: 1, height: 1, background: step > i + 1 ? (C.go || '#F59E0B') : (C.bdr || '#374151'), margin: '0 6px 16px', transition: 'background 0.3s' }} />}

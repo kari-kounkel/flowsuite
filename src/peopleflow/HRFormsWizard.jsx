@@ -72,12 +72,25 @@ const StepDot = ({ n, active, done, C }) => (
 export default function HRFormsWizard({ orgId, C, user }) {
   const isHR = ADMIN_EMAILS.includes(user?.email?.toLowerCase())
 
-  const [hrView, setHrView]             = useState('queue') // 'queue' | 'form'
+  const [hrView, setHrView]             = useState('queue') // 'queue' | 'form' | 'contractors'
   const [employees, setEmployees]       = useState([])
   const [requests, setRequests]         = useState([])
   const [queueTab, setQueueTab]         = useState('open') // 'open' | 'completed'
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [expandedReq, setExpandedReq]   = useState(null)
+
+  // Contractor panel state
+  const [editingContractor, setEditingContractor] = useState(null) // null | 'new' | {contact obj}
+  const [cFirst, setCFirst]   = useState('')
+  const [cLast, setCLast]     = useState('')
+  const [cEmail, setCEmail]   = useState('')
+  const [cAddr, setCAddr]     = useState('')
+  const [cCity, setCCity]     = useState('')
+  const [cState, setCState]   = useState('')
+  const [cZip, setCZip]       = useState('')
+  const [cSsn, setCssn]       = useState('')
+  const [cBanking, setCBanking] = useState(false)
+  const [savingContractor, setSavingContractor] = useState(false)
   const [empHistory, setEmpHistory]     = useState({}) // { empId: [requests] }
   const [loadingHistory, setLoadingHistory] = useState(null)
   const [approvingId, setApprovingId]   = useState(null)
@@ -283,7 +296,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     }
     return false
   })()
-  const canSubmit = formType === 'nec_1099' ? hrSigUrl : (empSigUrl && hrSigUrl)
+  const canSubmit = formType === 'nec_1099' ? true : (empSigUrl && hrSigUrl)
 
   const generateNecToken = async () => {
     setGeneratingToken(true)
@@ -351,7 +364,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   const handleSubmit = async () => {
-    if (!canSubmit) { sh(formType === 'nec_1099' ? 'HR signature required' : 'Both signatures required'); return }
+    if (formType !== 'nec_1099' && !canSubmit) { sh('Both signatures required'); return }
     setSubmitting(true)
     try {
       // NEC skips employee signature upload
@@ -498,7 +511,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
           <span style={{ fontSize: 10, color: C.g }}>{user?.email}</span>
         </div>
         <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}` }}>
-          {[{ k: 'queue', l: '📥 Request Queue' }, { k: 'form', l: '✎ New HR Form' }].map(t => (
+          {[{ k: 'queue', l: '📥 Request Queue' }, { k: 'form', l: '✎ New HR Form' }, { k: 'contractors', l: '👤 Contractors' }].map(t => (
             <button key={t.k} onClick={() => setHrView(t.k)} style={{
               padding: '5px 14px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
               border: 'none', cursor: 'pointer', transition: 'all 0.15s',
@@ -711,6 +724,109 @@ export default function HRFormsWizard({ orgId, C, user }) {
               </div>
             )
           })}
+
+          {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
+        </div>
+      )}
+
+      )}
+
+      {/* ── CONTRACTORS VIEW ── */}
+      {hrView === 'contractors' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.w }}>1099 Contractors</div>
+            <button onClick={() => {
+              setCFirst(''); setCLast(''); setCEmail(''); setCAddr(''); setCCity(''); setCState(''); setCZip(''); setCssn(''); setCBanking(false)
+              setEditingContractor('new')
+            }} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer' }}>+ Add Contractor</button>
+          </div>
+
+          {/* Contractor list */}
+          {!editingContractor && (
+            <div>
+              {necContacts.length === 0 && (
+                <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>No contractors on file yet.</div>
+              )}
+              {necContacts.map(c => (
+                <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 14px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch, marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.w }}>{c.first_name} {c.last_name}</div>
+                    <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{c.email || '—'} · {c.city || '—'}, {c.state || '—'}</div>
+                    <div style={{ fontSize: 10, marginTop: 3, fontWeight: 700, color: c.banking_on_file ? '#22C55E' : '#F59E0B' }}>
+                      {c.banking_on_file ? '✓ ACH on file' : '⚠ No ACH'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => {
+                      setCFirst(c.first_name || ''); setCLast(c.last_name || ''); setCEmail(c.email || '')
+                      setCAddr(c.address_line1 || ''); setCCity(c.city || ''); setCState(c.state || '')
+                      setCZip(c.zip || ''); setCssn(c.ssn_last4 || ''); setCBanking(c.banking_on_file || false)
+                      setEditingContractor(c)
+                    }} style={{ padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 600, background: 'transparent', border: `1px solid ${C.bdr}`, color: C.w, cursor: 'pointer' }}>Edit</button>
+                    <button onClick={async () => {
+                      if (!window.confirm(`Delete ${c.first_name} ${c.last_name}?`)) return
+                      const { error } = await supabase.from('nec_contacts').delete().eq('id', c.id)
+                      if (error) { shA('Delete failed: ' + error.message); return }
+                      setNecContacts(p => p.filter(x => x.id !== c.id))
+                      shA('Contractor deleted')
+                    }} style={{ padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 600, background: 'transparent', border: '1px solid #EF4444', color: '#EF4444', cursor: 'pointer' }}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Edit / Add form */}
+          {editingContractor && (
+            <div style={{ padding: '16px', borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 14 }}>
+                {editingContractor === 'new' ? 'New Contractor' : `Editing — ${cFirst} ${cLast}`}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field C={C} l="First Name" req><input value={cFirst} onChange={e => setCFirst(e.target.value)} style={inp(C)} /></Field>
+                <Field C={C} l="Last Name" req><input value={cLast} onChange={e => setCLast(e.target.value)} style={inp(C)} /></Field>
+              </div>
+              <Field C={C} l="Email"><input type="email" value={cEmail} onChange={e => setCEmail(e.target.value)} style={inp(C)} /></Field>
+              <Field C={C} l="Address"><input value={cAddr} onChange={e => setCAddr(e.target.value)} style={inp(C)} /></Field>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10 }}>
+                <Field C={C} l="City"><input value={cCity} onChange={e => setCCity(e.target.value)} style={inp(C)} /></Field>
+                <Field C={C} l="State"><input value={cState} onChange={e => setCState(e.target.value)} maxLength={2} placeholder="MN" style={inp(C)} /></Field>
+                <Field C={C} l="ZIP"><input value={cZip} onChange={e => setCZip(e.target.value)} maxLength={10} style={inp(C)} /></Field>
+              </div>
+              <Field C={C} l="SSN Last 4">
+                <input type="text" inputMode="numeric" maxLength={4} value={cSsn} onChange={e => setCssn(e.target.value.replace(/\D/g, ''))} placeholder="••••" style={{ ...inp(C), width: 80 }} />
+              </Field>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, cursor: 'pointer', padding: '10px 12px', borderRadius: 6, background: cBanking ? 'rgba(34,197,94,0.08)' : 'transparent', border: `1px solid ${cBanking ? '#22C55E' : C.bdr}` }}>
+                <input type="checkbox" checked={cBanking} onChange={e => setCBanking(e.target.checked)} style={{ accentColor: '#22C55E', width: 16, height: 16 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: cBanking ? '#22C55E' : C.w }}>ACH banking info on file</div>
+                  <div style={{ fontSize: 10, color: C.g, marginTop: 1 }}>Check if you have their routing and account numbers</div>
+                </div>
+              </label>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button onClick={() => setEditingContractor(null)} style={{ padding: '7px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                <button disabled={!cFirst || !cLast || savingContractor} onClick={async () => {
+                  setSavingContractor(true)
+                  const payload = { first_name: cFirst, last_name: cLast, email: cEmail || null, address_line1: cAddr || null, city: cCity || null, state: cState || null, zip: cZip || null, ssn_last4: cSsn || null, banking_on_file: cBanking }
+                  if (editingContractor === 'new') {
+                    const { data, error } = await supabase.from('nec_contacts').insert({ org_id: orgId, ...payload }).select().single()
+                    if (error) { shA('Save failed: ' + error.message); setSavingContractor(false); return }
+                    setNecContacts(p => [...p, data])
+                  } else {
+                    const { error } = await supabase.from('nec_contacts').update(payload).eq('id', editingContractor.id)
+                    if (error) { shA('Save failed: ' + error.message); setSavingContractor(false); return }
+                    setNecContacts(p => p.map(c => c.id === editingContractor.id ? { ...c, ...payload } : c))
+                  }
+                  setSavingContractor(false)
+                  setEditingContractor(null)
+                  shA(editingContractor === 'new' ? 'Contractor added ✓' : 'Contractor updated ✓')
+                }} style={{ padding: '7px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: cFirst && cLast ? C.go : C.bdr, color: cFirst && cLast ? C.bg : C.g, border: 'none', cursor: cFirst && cLast ? 'pointer' : 'not-allowed' }}>
+                  {savingContractor ? 'Saving...' : editingContractor === 'new' ? 'Add Contractor' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
         </div>

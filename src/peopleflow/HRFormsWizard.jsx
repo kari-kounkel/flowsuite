@@ -1010,8 +1010,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 </div>
               )}
 
-              {/* Generate token link */}
-              {((necMode === 'existing' && necContactId && !selectedNecContact?.banking_on_file) || necMode === 'new') && (
+              {/* Generate token link — only when banking NOT already on file */}
+              {((necMode === 'existing' && necContactId && !selectedNecContact?.banking_on_file) || (necMode === 'new' && !necBankingOnFile)) && (
                 <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.25)', marginBottom: 14 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: '#0EA5E9', marginBottom: 6 }}>🔗 Generate ACH Collection Link</div>
                   <div style={{ fontSize: 10, color: C.g, marginBottom: 10, lineHeight: 1.5 }}>
@@ -1083,6 +1083,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
               </Field>
             </div>
           )}
+
+          {toast && <div style={{ fontSize: 11, color: '#EF4444', marginBottom: 8, fontWeight: 600 }}>{toast}</div>}
 
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
             <button onClick={() => setStep(2)} style={{ padding: '8px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>← Back</button>

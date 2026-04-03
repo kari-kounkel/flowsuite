@@ -18,17 +18,19 @@ const FORM_TYPES = [
 ]
 
 const TYPE_LABELS = {
-  expense: '🧾 Expense',
-  mileage: '🚗 Mileage',
-  advance: '💵 Advance',
-  '1099':  '📄 1099 NEC',
+  expense:      '🧾 Expense',
+  mileage:      '🚗 Mileage',
+  advance:      '💵 Advance',
+  '1099':       '📄 1099 NEC',
+  '1099_nec_hr':'📄 1099 NEC (HR)',
 }
 
 const STATUS_COLORS = {
-  pending:  '#F59E0B',
-  approved: '#3B82F6',
-  paid:     '#22C55E',
-  rejected: '#EF4444',
+  pending:         '#F59E0B',
+  pending_payrun:  '#0EA5E9',
+  approved:        '#3B82F6',
+  paid:            '#22C55E',
+  rejected:        '#EF4444',
 }
 
 const PAYMENT_MODES_HR = ['Check', 'ACH / Direct Deposit', 'Cash', 'Payroll']
@@ -171,12 +173,33 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const loadQueue = async () => {
     if (!orgId) return
     setLoadingQueue(true)
-    const { data } = await supabase
+
+    // Pull employee requests
+    const { data: empReqs } = await supabase
       .from('employee_requests')
       .select('*, advance_details(*), expense_details(*), mileage_logs(*)')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false })
-    setRequests(data || [])
+
+    // Pull HR-initiated NEC forms — normalize to same shape as employee_requests
+    const { data: necForms } = await supabase
+      .from('hr_forms')
+      .select('*, nec_form_details(*)')
+      .eq('org_id', orgId)
+      .eq('form_type', 'nec_1099')
+      .order('created_at', { ascending: false })
+
+    const normalizedNec = (necForms || []).map(f => ({
+      ...f,
+      _is_hr_form: true,
+      type: '1099_nec_hr',
+      status: f.status === 'complete' ? 'pending_payrun' : f.status,
+      employee_id: null,
+      nec_detail: f.nec_form_details?.[0] || null,
+    }))
+
+    setRequests([...(empReqs || []), ...normalizedNec]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
     setLoadingQueue(false)
   }
 
@@ -205,6 +228,9 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   const getAmount = (req) => {
+    if (req._is_hr_form && req.notes) {
+      try { return JSON.parse(req.notes).total } catch { return null }
+    }
     if (req.type === 'expense') return req.expense_details?.[0]?.amount
     if (req.type === 'mileage') {
       const total = (req.mileage_logs || []).reduce((s, r) => s + (r.miles || 0), 0)
@@ -431,43 +457,36 @@ export default function HRFormsWizard({ orgId, C, user }) {
           purpose: cashPurpose, refund_method: cashMode,
         })
       } else if (formType === 'nec_1099') {
-        const necHoursVal = parseFloat(necHours) || 0
-        const necRateVal  = parseFloat(necHourlyRate) || 0
-        const contactRec  = necContacts.find(c => c.id === resolvedContactId)
+        const necHoursVal  = parseFloat(necHours) || 0
+        const necRateVal   = parseFloat(necHourlyRate) || 0
+        const contactRec   = necContacts.find(c => c.id === resolvedContactId)
         const bankingReady = contactRec?.banking_on_file || necBankingOnFile
-        await supabase.from('advance_details').insert({
-          request_id: form.id,
-          amount: parseFloat((necHoursVal * necRateVal).toFixed(2)),
-          reason: `1099 NEC (HR) — ${necDescription}`,
-          payment_method: bankingReady ? 'ACH / Direct Deposit' : 'Check',
-          nec_hourly_rate: necRateVal,
-          nec_hours: necHoursVal,
-          nec_period_start: necPeriodStart,
-          nec_period_end: necPeriodEnd,
-        })
-        // Link token to this form if one was generated
-        if (necTokenUrl) {
-          const token = necTokenUrl.split('?nec=')[1]
-          if (token) await supabase.from('nec_tokens').update({ request_id: form.id }).eq('token', token)
-        }
-
-        // Create MoneyFlow AP task for this contractor payment
-        const contactName = contactRec
+        const contactName  = contactRec
           ? `${contactRec.first_name} ${contactRec.last_name}`
           : (necFirstName && necLastName ? `${necFirstName} ${necLastName}` : 'Contractor')
-        await supabase.from('moneyflow_tasks').insert([{
-          org_id: orgId,
-          entity: 'omega',
-          type: 'AP',
-          source: 'hr_form_nec',
-          name: `1099 NEC — ${contactName} — $${(necHoursVal * necRateVal).toFixed(2)}`,
-          description: `${necDescription}\n${necPeriodStart} → ${necPeriodEnd} · ${necHoursVal} hrs @ $${necRateVal}/hr\nPayment: ${bankingReady ? 'ACH Direct Deposit' : 'Check'}`,
-          due_date: new Date().toISOString().split('T')[0],
-          status: 'open',
-          is_recurring: false,
-          recur_interval: 0,
-          paperflow_request_id: form.id,
-        }])
+
+        // Store NEC detail payload directly on hr_forms record
+        await supabase.from('hr_forms').update({
+          status: 'pending_payrun',
+          notes: JSON.stringify({
+            nec_contact_id: resolvedContactId,
+            contact_name: contactName,
+            hourly_rate: necRateVal,
+            hours: necHoursVal,
+            total: parseFloat((necHoursVal * necRateVal).toFixed(2)),
+            period_start: necPeriodStart,
+            period_end: necPeriodEnd,
+            description: necDescription,
+            payment_method: bankingReady ? 'ACH / Direct Deposit' : 'Check',
+          }),
+        }).eq('id', form.id)
+
+        // Link token if generated
+        if (necTokenUrl) {
+          const token = necTokenUrl.split('?nec=')[1]
+          if (token) await supabase.from('nec_tokens').update({ hr_form_id: form.id }).eq('token', token)
+        }
+        // MoneyFlow task created at Pay Run time, not here
       }
 
       setStep(5)
@@ -497,8 +516,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
     </div>
   )
 
-  const openReqs      = requests.filter(r => ['pending', 'approved'].includes(r.status))
-  const completedReqs = requests.filter(r => ['paid', 'rejected'].includes(r.status))
+  const openReqs      = requests.filter(r => ['pending', 'approved', 'pending_payrun'].includes(r.status))
+  const completedReqs = requests.filter(r => ['paid', 'rejected', 'complete'].includes(r.status))
   const displayReqs   = queueTab === 'open' ? openReqs : completedReqs
 
   return (
@@ -557,7 +576,9 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           {displayReqs.map(req => {
             const amt   = getAmount(req)
-            const name  = getEmpName(req.employee_id)
+            const name  = req._is_hr_form
+              ? (() => { try { return JSON.parse(req.notes || '{}').contact_name || 'Contractor' } catch { return 'Contractor' } })()
+              : getEmpName(req.employee_id)
             const sc    = STATUS_COLORS[req.status] || C.g
             const isExp = expandedReq === req.id
             const adv   = req.advance_details?.[0]
@@ -589,6 +610,47 @@ export default function HRFormsWizard({ orgId, C, user }) {
                 {/* Expanded detail */}
                 {isExp && (
                   <div style={{ padding: '0 14px 14px', borderTop: `1px solid ${C.bdr}` }}>
+
+                    {/* NEC HR form detail + Pay Run */}
+                    {req._is_hr_form && req.notes && (() => {
+                      let d = {}
+                      try { d = JSON.parse(req.notes) } catch {}
+                      return (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ padding: '10px 12px', borderRadius: 6, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: '#0EA5E9', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>1099 NEC — Contractor Payment</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11 }}>
+                              <div><span style={{ color: C.g }}>Contractor: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.contact_name}</span></div>
+                              <div><span style={{ color: C.g }}>Amount: </span><span style={{ color: C.go, fontWeight: 700 }}>${parseFloat(d.total || 0).toFixed(2)}</span></div>
+                              <div><span style={{ color: C.g }}>Hours: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.hours} hrs @ ${d.hourly_rate}/hr</span></div>
+                              <div><span style={{ color: C.g }}>Payment: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.payment_method}</span></div>
+                              <div><span style={{ color: C.g }}>Period: </span><span style={{ color: C.w, fontWeight: 600 }}>{d.period_start} → {d.period_end}</span></div>
+                            </div>
+                            {d.description && <div style={{ fontSize: 11, color: C.g, marginTop: 6, fontStyle: 'italic' }}>{d.description}</div>}
+                          </div>
+                          {req.status === 'pending_payrun' && (
+                            <button onClick={async () => {
+                              let detail = {}
+                              try { detail = JSON.parse(req.notes) } catch {}
+                              await supabase.from('moneyflow_tasks').insert([{
+                                org_id: orgId, entity: 'omega', type: 'AP', source: 'hr_form_nec',
+                                name: `1099 NEC — ${detail.contact_name} — $${parseFloat(detail.total || 0).toFixed(2)}`,
+                                description: `${detail.description}\n${detail.period_start} → ${detail.period_end} · ${detail.hours} hrs @ $${detail.hourly_rate}/hr\nPayment: ${detail.payment_method}`,
+                                due_date: new Date().toISOString().split('T')[0],
+                                status: 'open', is_recurring: false, recur_interval: 0,
+                                paperflow_request_id: req.id,
+                              }])
+                              await supabase.from('hr_forms').update({ status: 'complete' }).eq('id', req.id)
+                              setRequests(p => p.map(r => r.id === req.id ? { ...r, status: 'complete' } : r))
+                              shA('Pushed to MoneyFlow ✓')
+                            }} style={{
+                              width: '100%', padding: '8px 0', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+                              background: '#0EA5E9', color: '#fff', border: 'none', cursor: 'pointer',
+                            }}>💳 Push to Pay Run → MoneyFlow</button>
+                          )}
+                        </div>
+                      )
+                    })()}
 
                     {/* Advance repayment schedule */}
                     {req.type === 'advance' && adv?.repayment_schedule && (
@@ -727,8 +789,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
         </div>
-      )}
-
       )}
 
       {/* ── CONTRACTORS VIEW ── */}
@@ -1270,7 +1330,10 @@ export default function HRFormsWizard({ orgId, C, user }) {
           <div style={{ fontSize: 48, marginBottom: 16 }}>✓</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: C.go || '#F59E0B', marginBottom: 8 }}>Form Complete</div>
           <div style={{ fontSize: 13, color: C.g, marginBottom: 6 }}>
-            <strong style={{ color: C.w }}>{selectedForm?.l}</strong> for <strong style={{ color: C.w }}>{selectedEmp ? gn(selectedEmp) : '—'}</strong> has been saved with both signatures.
+            {formType === 'nec_1099'
+              ? <><strong style={{ color: C.w }}>{selectedForm?.l}</strong> has been recorded and is sitting in PaperFlow pending pay run.</>
+              : <><strong style={{ color: C.w }}>{selectedForm?.l}</strong> for <strong style={{ color: C.w }}>{selectedEmp ? gn(selectedEmp) : '—'}</strong> has been saved with signatures.</>
+            }
           </div>
           <button onClick={reset} style={{
             padding: '10px 28px', borderRadius: 6, fontFamily: 'inherit', fontSize: 12, fontWeight: 700,

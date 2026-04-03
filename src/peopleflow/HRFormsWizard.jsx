@@ -282,7 +282,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     }
     return false
   })()
-  const canSubmit = empSigUrl && hrSigUrl
+  const canSubmit = formType === 'nec_1099' ? hrSigUrl : (empSigUrl && hrSigUrl)
 
   const generateNecToken = async () => {
     setGeneratingToken(true)
@@ -951,10 +951,26 @@ export default function HRFormsWizard({ orgId, C, user }) {
                   background: selectedNecContact.banking_on_file ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.08)',
                   border: `1px solid ${selectedNecContact.banking_on_file ? '#22C55E' : (C.go || '#F59E0B')}` }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: selectedNecContact.banking_on_file ? '#22C55E' : (C.go || '#F59E0B') }}>
-                    {selectedNecContact.banking_on_file ? '✓ ACH banking on file — payment will be direct deposit' : '⚠ No banking on file — generate a link to collect ACH info'}
+                    {selectedNecContact.banking_on_file ? '✓ ACH banking on file — payment will be direct deposit' : '⚠ No banking on file'}
                   </div>
                   {selectedNecContact.banking_on_file && (
                     <div style={{ fontSize: 10, color: C.g, marginTop: 2 }}>{selectedNecContact.bank_name} — {selectedNecContact.bank_account_type}</div>
+                  )}
+                  {!selectedNecContact.banking_on_file && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: 10, color: C.g, marginBottom: 6 }}>
+                        If you already have this contractor's ACH info on file outside the system, mark them as confirmed:
+                      </div>
+                      <button onClick={async () => {
+                        const { error } = await supabase.from('nec_contacts').update({ banking_on_file: true }).eq('id', selectedNecContact.id)
+                        if (error) { shA('Update failed: ' + error.message); return }
+                        setNecContacts(p => p.map(c => c.id === selectedNecContact.id ? { ...c, banking_on_file: true } : c))
+                        shA('Banking marked on file ✓')
+                      }} style={{
+                        padding: '5px 14px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
+                        background: '#22C55E', color: '#fff', border: 'none', cursor: 'pointer',
+                      }}>✓ Mark ACH On File</button>
+                    </div>
                   )}
                 </div>
               )}
@@ -1047,8 +1063,14 @@ export default function HRFormsWizard({ orgId, C, user }) {
       {/* ── Step 4: Sign ── */}
       {step === 4 && (
         <div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>Signatures Required</div>
-          <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>Both employee and HR must sign to complete this form.</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>
+            {formType === 'nec_1099' ? 'HR Authorization' : 'Signatures Required'}
+          </div>
+          <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>
+            {formType === 'nec_1099'
+              ? 'HR signs to certify this payment is accurate and authorized.'
+              : 'Both employee and HR must sign to complete this form.'}
+          </div>
 
           {/* Consent text */}
           <div style={{ fontSize: 11, color: C.g, lineHeight: 1.6, marginBottom: 16, padding: '10px 12px', borderRadius: 6, background: C.ch, border: `1px solid ${C.bdr}` }}>
@@ -1058,8 +1080,12 @@ export default function HRFormsWizard({ orgId, C, user }) {
             {formType === 'nec_1099' && 'By signing, HR certifies that the above non-employee compensation is accurate and authorized. The contractor will receive payment as described. If annual compensation exceeds $600, IRS Form 1099-NEC will be issued.'}
           </div>
 
-          <SignaturePad C={C} label={`${selectedEmp ? gn(selectedEmp) : 'Employee'} Signature`} required onSign={setEmpSigUrl} onClear={() => setEmpSigUrl('')} />
-          <div style={{ marginTop: 16 }}>
+          {/* Employee signature — not shown for NEC (contractor doesn't sign here) */}
+          {formType !== 'nec_1099' && (
+            <SignaturePad C={C} label={`${selectedEmp ? gn(selectedEmp) : 'Employee'} Signature`} required onSign={setEmpSigUrl} onClear={() => setEmpSigUrl('')} />
+          )}
+
+          <div style={{ marginTop: formType !== 'nec_1099' ? 16 : 0 }}>
             <SignaturePad C={C} label="HR / Payroll Representative Signature" required onSign={setHrSigUrl} onClear={() => setHrSigUrl('')} />
           </div>
 

@@ -581,6 +581,8 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
                   })()}
                 </div>
               )}
+            </div>
+          )}
 
           {/* 1099 NON-EMPLOYEE COMPENSATION */}
           {type === '1099' && (

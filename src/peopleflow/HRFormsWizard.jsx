@@ -769,7 +769,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
                               <button onClick={async () => {
                                 await supabase.from('employee_payroll_notes').update({
                                   note: editFields.note ?? req.note,
-                                  affects_payrolls: (editFields.affects_payrolls ?? req.affects_payrolls || []).filter(Boolean),
+                                  affects_payrolls: (editFields.affects_payrolls ?? req.affects_payrolls ?? []).filter(Boolean),
                                   stop_after: editFields.stop_after ?? req.stop_after ?? null,
                                 }).eq('id', req.id)
                                 setRequests(p => p.map(r => r.id === req.id ? { ...r, ...editFields, note: editFields.note ?? r.note } : r))

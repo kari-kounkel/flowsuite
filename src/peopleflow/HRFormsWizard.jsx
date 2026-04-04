@@ -172,6 +172,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [necPeriodEnd, setNecPeriodEnd]       = useState('')
   const [necDescription, setNecDescription]   = useState('')
   const [necTokenUrl, setNecTokenUrl]         = useState('')
+  const [necPayPeriods, setNecPayPeriods]     = useState(['', '', '']) // up to 3 payrolls this applies to
+  const [necCheckOff, setNecCheckOff]         = useState('')           // "check to make sure NOT on this payroll" date
   const [generatingToken, setGeneratingToken] = useState(false)
   const [necSavedContactId, setNecSavedContactId] = useState(null)
 
@@ -293,20 +295,25 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const handleApprove = async (reqId) => {
     const now = new Date().toISOString()
     const periods = approvePeriods.filter(Boolean)
+    const notePayload = JSON.stringify({
+      note: approveNote,
+      pay_periods: periods,
+      check_off_date: approveStopAfter || null,
+    })
     const { error } = await supabase.from('employee_requests')
-      .update({ status: 'approved', approved_at: now, approved_by: user.email, approval_note: approveNote })
+      .update({ status: 'pending_payrun', approved_at: now, approved_by: user.email, approval_note: notePayload })
       .eq('id', reqId)
     if (error) { shA('Approve failed: ' + error.message); return }
 
     setRequests(p => p.map(r => r.id === reqId ? {
-      ...r, status: 'approved', approved_at: now, approved_by: user.email,
+      ...r, status: 'pending_payrun', approved_at: now, approved_by: user.email,
       _payroll_periods: periods, _stop_after: approveStopAfter,
     } : r))
     setApprovingId(null)
     setApproveNote('')
     setApprovePeriods(['', '', ''])
     setApproveStopAfter('')
-    shA('Approved ✓ — check Pay Run tab to push to MoneyFlow')
+    shA('Approved ✓ — moved to Pay Run tab')
   }
 
   const handleDelete = async (req) => {
@@ -532,6 +539,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
             period_end: necPeriodEnd,
             description: necDescription,
             payment_method: bankingReady ? 'ACH / Direct Deposit' : 'Check',
+            pay_periods: necPayPeriods.filter(Boolean),
+            check_off_date: necCheckOff || null,
           }),
         }).eq('id', form.id)
 
@@ -561,6 +570,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
     setNecEmail(''); setNecAddress1(''); setNecCity(''); setNecState(''); setNecZip('')
     setNecSsnLast4(''); setNecBankingOnFile(false); setNecHourlyRate(''); setNecHours(''); setNecPeriodStart('')
     setNecPeriodEnd(''); setNecDescription(''); setNecTokenUrl(''); setNecSavedContactId(null)
+    setNecPayPeriods(['', '', '']); setNecCheckOff('')
     setEmpSigUrl(''); setHrSigUrl('')
   }
 
@@ -582,6 +592,46 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     : queueTab === 'completed' ? completedReqs
                     : queueTab === 'rejected'  ? rejectedReqs
                     : pendingReqs
+
+  // For payrun tab: expand each record into one virtual card per pay date
+  const expandedReqs = queueTab === 'payrun'
+    ? displayReqs.flatMap(r => {
+        let d = {}
+        try { d = JSON.parse(r.notes || '{}') } catch {}
+        
+        // For employee requests, pay periods stored in approval_note JSON
+        let empPeriods = r._payroll_periods || []
+        let empCheckOff = r._stop_after || null
+        if (!r._is_hr_form && !r._is_payroll_note && r.approval_note) {
+          try {
+            const an = JSON.parse(r.approval_note)
+            empPeriods = an.pay_periods || []
+            empCheckOff = an.check_off_date || null
+          } catch {}
+        }
+
+        const periods = r._is_payroll_note
+          ? (r.affects_payrolls || [])
+          : r._is_hr_form
+            ? (d.pay_periods || [])
+            : empPeriods
+        const checkOff = r._is_hr_form ? d.check_off_date : (r._is_payroll_note ? null : empCheckOff)
+
+        const cards = periods.length > 0
+          ? periods.map(p => ({ ...r, _virtual_date: p, _is_check_off: false }))
+          : [{ ...r, _virtual_date: null, _is_check_off: false }]
+
+        if (checkOff) {
+          cards.push({ ...r, _virtual_date: checkOff, _is_check_off: true,
+            id: r.id + '_checkoff_' + checkOff })
+        }
+        return cards
+      }).sort((a, b) => {
+        if (!a._virtual_date) return 1
+        if (!b._virtual_date) return -1
+        return new Date(a._virtual_date) - new Date(b._virtual_date)
+      })
+    : displayReqs
 
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
@@ -611,7 +661,6 @@ export default function HRFormsWizard({ orgId, C, user }) {
           <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}`, width: 'fit-content' }}>
             {[
               { k: 'pending',   l: `Pending (${pendingReqs.length})` },
-              { k: 'approved',  l: `Approved (${approvedReqs.length})` },
               { k: 'payrun',    l: `Pay Run (${payrunReqs.length})` },
               { k: 'completed', l: `Completed (${completedReqs.length})` },
               { k: 'rejected',  l: `Rejected (${rejectedReqs.length})` },
@@ -633,98 +682,98 @@ export default function HRFormsWizard({ orgId, C, user }) {
 
           {loadingQueue && <div style={{ fontSize: 12, color: C.g, padding: 20, textAlign: 'center' }}>Loading...</div>}
 
-          {!loadingQueue && displayReqs.length === 0 && (
+          {!loadingQueue && expandedReqs.length === 0 && (
             <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
               {queueTab === 'pending' ? 'No pending requests.' 
-              : queueTab === 'approved' ? 'Nothing approved yet.'
               : queueTab === 'payrun' ? 'Nothing queued for pay run.'
               : queueTab === 'completed' ? 'No completed requests yet.'
               : 'No rejected requests.'}
             </div>
           )}
-
           {/* ── Bulk Pay Run bar ── */}
           {selectedPushIds.length > 0 && (() => {
-            const selectedReqs = requests.filter(r => selectedPushIds.includes(r.id))
-            const total = selectedReqs.reduce((s, r) => {
+            const selectedReqs = expandedReqs.filter(r => selectedPushIds.includes(r.id))
+            const total = selectedReqs.filter(r => !r._is_check_off).reduce((s, r) => {
               try { return s + parseFloat(JSON.parse(r.notes || '{}').total || 0) } catch { return s }
             }, 0)
             return (
               <div style={{ marginBottom: 12, padding: '14px 16px', borderRadius: 8, background: 'rgba(14,165,233,0.1)', border: '2px solid #0EA5E9' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedPushIds.length} item{selectedPushIds.length > 1 ? 's' : ''} selected for pay run</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#0EA5E9' }}>{selectedPushIds.length} item{selectedPushIds.length > 1 ? 's' : ''} selected</div>
                     {total > 0 && <div style={{ fontSize: 12, color: C.w, marginTop: 2 }}>Payments total: <strong>${total.toFixed(2)}</strong></div>}
                   </div>
                   <button onClick={() => { setSelectedPushIds([]); setPayRunPeriods(['','','']); setPayRunStopAfter('') }} style={{ padding: '5px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Clear</button>
                 </div>
 
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Pay Period(s) This Covers — up to 3</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-                    {[0,1,2].map(i => (
-                      <input key={i} type="date" value={payRunPeriods[i]}
-                        onChange={e => setPayRunPeriods(p => { const n = [...p]; n[i] = e.target.value; return n })}
-                        style={inp(C)} />
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 10, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4 }}>🛑 DO NOT Apply After This Date</div>
-                  <input type="date" value={payRunStopAfter} onChange={e => setPayRunStopAfter(e.target.value)}
-                    style={{ ...inp(C), borderColor: payRunStopAfter ? '#EF4444' : C.bdr }} />
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 10, color: C.g, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Which Pay Date Are You Running?</div>
+                  <input type="date" value={payRunPeriods[0]}
+                    onChange={e => setPayRunPeriods([e.target.value, '', ''])}
+                    style={inp(C)} />
                 </div>
 
                 <button disabled={pushingPayRun} onClick={async () => {
                   setPushingPayRun(true)
                   try {
-                    const periods = payRunPeriods.filter(Boolean)
-                    const periodsToUse = periods.length > 0 ? periods : [new Date().toISOString().split('T')[0]]
+                    const payDate = payRunPeriods[0] || new Date().toISOString().split('T')[0]
+                    const normalItems = selectedReqs.filter(r => !r._is_check_off)
+                    const checkOffItems = selectedReqs.filter(r => r._is_check_off)
                     const tasksToInsert = []
 
-                    for (const period of periodsToUse) {
-                      const lines = []
-
-                      for (const r of selectedReqs) {
+                    // Main payroll checklist card
+                    if (normalItems.length > 0) {
+                      const lines = normalItems.map(r => {
                         let d = {}
                         try { d = JSON.parse(r.notes || '{}') } catch {}
                         const runNote = necItemNotes[r.id] ? ` — NOTE: ${necItemNotes[r.id]}` : ''
-
-                        if (r._is_payroll_note) {
-                          const stop = r.stop_after ? ` 🛑 STOP AFTER ${r.stop_after}` : ''
-                          lines.push(`☐ PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note}${stop}${runNote}`)
-                        } else if (r._is_hr_form && d.total) {
-                          lines.push(`☐ PAY — ${d.contact_name || getEmpName(r.employee_id)} — $${parseFloat(d.total).toFixed(2)} via ${d.payment_method || 'Check'}${runNote}`)
-                        } else {
-                          lines.push(`☐ ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${runNote}`)
-                        }
-                      }
-
-                      if (payRunStopAfter) {
-                        lines.push(`\n🛑 VERIFY BEFORE CLOSING: Nothing above applies after ${payRunStopAfter}`)
-                      }
+                        if (r._is_payroll_note) return `☐ PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note}${runNote}`
+                        if (r._is_hr_form && d.total) return `☐ PAY — ${d.contact_name || getEmpName(r.employee_id)} — $${parseFloat(d.total).toFixed(2)} via ${d.payment_method || 'Check'}${runNote}`
+                        return `☐ ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${runNote}`
+                      }).join('\n')
 
                       tasksToInsert.push({
                         org_id: orgId, entity: 'omega', type: 'AP', source: 'paperflow_payrun',
-                        name: `Payroll Checklist — ${period}`,
-                        description: `Complete this checklist before finalizing payroll for ${period}:\n\n${lines.join('\n')}`,
-                        due_date: period,
-                        status: 'open', is_recurring: false, recur_interval: 0,
+                        name: `Payroll Checklist — ${payDate}`,
+                        description: `Complete before finalizing payroll for ${payDate}:\n\n${lines}`,
+                        due_date: payDate, status: 'open', is_recurring: false, recur_interval: 0,
+                      })
+                    }
+
+                    // Separate "DO NOT RUN" warning card for each check-off item
+                    for (const r of checkOffItems) {
+                      let d = {}
+                      try { d = JSON.parse(r.notes || '{}') } catch {}
+                      const itemName = r._is_payroll_note
+                        ? `${getEmpName(r.employee_id)}: ${r.note}`
+                        : r._is_hr_form
+                          ? `${d.contact_name || getEmpName(r.employee_id)} — $${parseFloat(d.total || 0).toFixed(2)}`
+                          : `${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}`
+                      tasksToInsert.push({
+                        org_id: orgId, entity: 'omega', type: 'AP', source: 'paperflow_payrun',
+                        name: `⚠ CHECK — Make Sure This Does NOT Run — ${r._virtual_date}`,
+                        description: `VERIFY IN QUICKBOOKS: The following item must NOT appear in the ${r._virtual_date} payroll:\n\n${itemName}\n\nDo not close this card until you have confirmed it is absent.`,
+                        due_date: r._virtual_date, status: 'open', is_recurring: false, recur_interval: 0,
                       })
                     }
 
                     await supabase.from('moneyflow_tasks').insert(tasksToInsert)
 
-                    await Promise.all(selectedReqs.map(r => {
-                      if (r._is_payroll_note) return supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', r.id)
-                      if (r._is_hr_form) return supabase.from('hr_forms').update({ status: 'paid' }).eq('id', r.id)
-                      return supabase.from('employee_requests').update({ status: 'paid' }).eq('id', r.id)
+                    // Only mark source records complete if ALL their virtual cards are being pushed
+                    const realIds = [...new Set(normalItems.map(r => r.id.split('_checkoff_')[0]))]
+                    await Promise.all(realIds.map(id => {
+                      const r = requests.find(x => x.id === id)
+                      if (!r) return Promise.resolve()
+                      if (r._is_payroll_note) return supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', id)
+                      if (r._is_hr_form) return supabase.from('hr_forms').update({ status: 'paid' }).eq('id', id)
+                      return supabase.from('employee_requests').update({ status: 'paid' }).eq('id', id)
                     }))
 
-                    setRequests(p => p.filter(r => !selectedPushIds.includes(r.id)))
+                    setRequests(p => p.filter(r => !realIds.includes(r.id)))
                     setSelectedPushIds([])
                     setNecItemNotes({})
                     setPayRunPeriods(['','',''])
-                    setPayRunStopAfter('')
-                    shA(`${tasksToInsert.length} payroll checklist${tasksToInsert.length > 1 ? 's' : ''} created in MoneyFlow ✓`)
+                    shA(`${tasksToInsert.length} card${tasksToInsert.length > 1 ? 's' : ''} pushed to MoneyFlow ✓`)
                   } catch(e) {
                     shA('Push failed: ' + e.message)
                   } finally {
@@ -738,7 +787,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
             )
           })()}
 
-          {displayReqs.map(req => {
+          {expandedReqs.map(req => {
             const amt   = getAmount(req)
             const name  = req._is_payroll_note
               ? getEmpName(req.employee_id)
@@ -752,7 +801,22 @@ export default function HRFormsWizard({ orgId, C, user }) {
             const isPayingThis    = payingId === req.id
 
             return (
-              <div key={req.id} style={{ marginBottom: 8, borderRadius: 8, border: `1px solid ${isExp ? C.go : C.bdr}`, background: C.ch, overflow: 'hidden', transition: 'border-color 0.2s' }}>
+              <div key={req.id} style={{ marginBottom: 8, borderRadius: 8,
+                border: `1px solid ${req._is_check_off ? '#EF4444' : isExp ? C.go : C.bdr}`,
+                background: req._is_check_off ? 'rgba(239,68,68,0.04)' : C.ch,
+                overflow: 'hidden', transition: 'border-color 0.2s' }}>
+                {/* Check-off warning banner */}
+                {req._is_check_off && (
+                  <div style={{ padding: '6px 14px', background: 'rgba(239,68,68,0.12)', borderBottom: '1px solid rgba(239,68,68,0.3)', fontSize: 10, fontWeight: 700, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                    ⚠ CHECK TO MAKE SURE THIS DOES NOT RUN — {req._virtual_date}
+                  </div>
+                )}
+                {/* Virtual date badge for regular payrun cards */}
+                {req._virtual_date && !req._is_check_off && (
+                  <div style={{ padding: '4px 14px', background: 'rgba(14,165,233,0.08)', borderBottom: `1px solid rgba(14,165,233,0.2)`, fontSize: 10, fontWeight: 700, color: '#0EA5E9' }}>
+                    📅 Pay Date: {req._virtual_date}
+                  </div>
+                )}
                 {/* Row header */}
                 <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
                   {/* Checkbox for open items */}
@@ -761,12 +825,12 @@ export default function HRFormsWizard({ orgId, C, user }) {
                       checked={selectedPushIds.includes(req.id)}
                       onChange={e => setSelectedPushIds(p => e.target.checked ? [...p, req.id] : p.filter(x => x !== req.id))}
                       onClick={e => e.stopPropagation()}
-                      style={{ accentColor: '#0EA5E9', width: 16, height: 16, flexShrink: 0 }}
+                      style={{ accentColor: req._is_check_off ? '#EF4444' : '#0EA5E9', width: 16, height: 16, flexShrink: 0 }}
                     />
                   )}
                   <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { const next = isExp ? null : req.id; setExpandedReq(next); if (!isExp && req.employee_id) loadEmpHistory(req.employee_id) }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.w }}>{name}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: req._is_check_off ? '#EF4444' : C.w }}>{name}</span>
                       <span style={{ fontSize: 10, color: C.g }}>{TYPE_LABELS[req.type] || req.type}</span>
                     </div>
                     <div style={{ fontSize: 10, color: C.g }}>
@@ -1610,6 +1674,23 @@ export default function HRFormsWizard({ orgId, C, user }) {
               <Field C={C} l="Description of Work" req>
                 <textarea value={necDescription} onChange={e => setNecDescription(e.target.value)} rows={3} placeholder="Describe the work performed during this period..." style={{ ...inp(C), resize: 'vertical' }} />
               </Field>
+
+              {/* Pay period scheduling */}
+              <div style={{ padding: '12px 14px', borderRadius: 8, background: 'rgba(14,165,233,0.06)', border: '1px solid rgba(14,165,233,0.2)', marginTop: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#0EA5E9', marginBottom: 10 }}>📅 Which Payroll(s) Does This Hit?</div>
+                <div style={{ fontSize: 10, color: C.g, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.07em' }}>Pay Date(s) — up to 3</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+                  {[0,1,2].map(i => (
+                    <input key={i} type="date" value={necPayPeriods[i]}
+                      onChange={e => setNecPayPeriods(p => { const n = [...p]; n[i] = e.target.value; return n })}
+                      style={inp(C)} />
+                  ))}
+                </div>
+                <div style={{ fontSize: 10, color: '#EF4444', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, fontWeight: 700 }}>⚠ Check to Make Sure This Does NOT Run On</div>
+                <div style={{ fontSize: 10, color: C.g, marginBottom: 6 }}>Creates a red warning card in Pay Run for that date</div>
+                <input type="date" value={necCheckOff} onChange={e => setNecCheckOff(e.target.value)}
+                  style={{ ...inp(C), borderColor: necCheckOff ? '#EF4444' : C.bdr }} />
+              </div>
             </div>
           )}
 

@@ -119,7 +119,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [editingDed, setEditingDed]             = useState(null) // null | 'new' | {ded obj}
   const [dedEmpId, setDedEmpId]                 = useState('')
   const [dedLabel, setDedLabel]                 = useState('')
-  const [dedAmount, setDedAmountSD]             = useState('')
+  const [sdAmount, setSdAmount]                 = useState('')
   const [dedFreq, setDedFreq]                   = useState('per_pay_period')
   const [dedStartDate, setDedStartDate]         = useState('')
   const [dedStopDate, setDedStopDate]           = useState('')
@@ -1323,7 +1323,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
               <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>Recurring items that auto-populate Pay Run every payroll — child support, pension, garnishments, dues.</div>
             </div>
             <button onClick={() => {
-              setDedEmpId(''); setDedLabel(''); setDedAmountSD(''); setDedFreq('per_pay_period')
+              setDedEmpId(''); setDedLabel(''); setSdAmount(''); setDedFreq('per_pay_period')
               setDedStartDate(''); setDedStopDate('')
               setEditingDed('new')
             }} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Add Deduction</button>
@@ -1346,7 +1346,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
               </Field>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <Field C={C} l="Amount Per Occurrence" req>
-                  <input type="number" min="0" step="0.01" value={dedAmount} onChange={e => setDedAmountSD(e.target.value)} placeholder="0.00" style={inp(C)} />
+                  <input type="number" min="0" step="0.01" value={sdAmount} onChange={e => setSdAmount(e.target.value)} placeholder="0.00" style={inp(C)} />
                 </Field>
                 <Field C={C} l="Frequency" req>
                   <select value={dedFreq} onChange={e => setDedFreq(e.target.value)} style={inp(C)}>
@@ -1371,13 +1371,13 @@ export default function HRFormsWizard({ orgId, C, user }) {
               )}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button onClick={() => setEditingDed(null)} style={{ padding: '7px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
-                <button disabled={!dedEmpId || !dedLabel || !dedAmount || savingDed} onClick={async () => {
+                <button disabled={!dedEmpId || !dedLabel || !sdAmount || savingDed} onClick={async () => {
                   setSavingDed(true)
                   const payload = {
                     org_id: orgId,
                     employee_id: dedEmpId,
                     label: dedLabel,
-                    amount: parseFloat(dedAmount),
+                    amount: parseFloat(sdAmount),
                     frequency: dedFreq,
                     start_date: dedStartDate || null,
                     stop_date: dedStopDate || null,
@@ -1397,7 +1397,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
                   setSavingDed(false)
                   setEditingDed(null)
                   shA(editingDed === 'new' ? 'Standing deduction added ✓' : 'Standing deduction updated ✓')
-                }} style={{ padding: '7px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: dedEmpId && dedLabel && dedAmount ? C.go : C.bdr, color: dedEmpId && dedLabel && dedAmount ? C.bg : C.g, border: 'none', cursor: dedEmpId && dedLabel && dedAmount ? 'pointer' : 'not-allowed' }}>
+                }} style={{ padding: '7px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: dedEmpId && dedLabel && sdAmount ? C.go : C.bdr, color: dedEmpId && dedLabel && sdAmount ? C.bg : C.g, border: 'none', cursor: dedEmpId && dedLabel && sdAmount ? 'pointer' : 'not-allowed' }}>
                   {savingDed ? 'Saving...' : editingDed === 'new' ? 'Add Deduction' : 'Save Changes'}
                 </button>
               </div>
@@ -1432,7 +1432,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     <div style={{ fontSize: 18, fontWeight: 700, color: C.go }}>${parseFloat(d.amount).toFixed(2)}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
                       <button onClick={() => {
-                        setDedEmpId(d.employee_id); setDedLabel(d.label); setDedAmountSD(String(d.amount))
+                        setDedEmpId(d.employee_id); setDedLabel(d.label); setSdAmount(String(d.amount))
                         setDedFreq(d.frequency); setDedStartDate(d.start_date || ''); setDedStopDate(d.stop_date || '')
                         setEditingDed(d)
                       }} style={{ padding: '4px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 10, fontWeight: 600, background: 'transparent', border: `1px solid ${C.bdr}`, color: C.w, cursor: 'pointer' }}>Edit</button>

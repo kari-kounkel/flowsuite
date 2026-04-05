@@ -26,7 +26,7 @@ const TYPE_LABELS = {
   withholding_hr:   '📋 Withholding',
   deduction_hr:     '✂️ Deduction',
   cash_reimb_hr:    '💵 Cash Reimbursement',
-  payroll_note:     '📝 Payroll Note',
+  standing_deduction: '⟳ Standing Deduction',
 }
 
 const STATUS_COLORS = {
@@ -113,6 +113,18 @@ export default function HRFormsWizard({ orgId, C, user }) {
   const [cSsn, setCssn]       = useState('')
   const [cBanking, setCBanking] = useState(false)
   const [savingContractor, setSavingContractor] = useState(false)
+  // Standing deductions state
+  const [standingDeds, setStandingDeds]         = useState([])
+  const [loadingDeds, setLoadingDeds]           = useState(false)
+  const [editingDed, setEditingDed]             = useState(null) // null | 'new' | {ded obj}
+  const [dedEmpId, setDedEmpId]                 = useState('')
+  const [dedLabel, setDedLabel]                 = useState('')
+  const [dedAmount, setDedAmountSD]             = useState('')
+  const [dedFreq, setDedFreq]                   = useState('per_pay_period')
+  const [dedStartDate, setDedStartDate]         = useState('')
+  const [dedStopDate, setDedStopDate]           = useState('')
+  const [savingDed, setSavingDed]               = useState(false)
+
   const [empHistory, setEmpHistory]     = useState({}) // { empId: [requests] }
   const [loadingHistory, setLoadingHistory] = useState(null)
   const [approvingId, setApprovingId]   = useState(null)
@@ -222,6 +234,24 @@ export default function HRFormsWizard({ orgId, C, user }) {
       .eq('resolved', false)
       .order('created_at', { ascending: false })
 
+    // Pull active standing deductions — inject into Pay Run automatically
+    const today = new Date().toISOString().split('T')[0]
+    const { data: standingRaw } = await supabase
+      .from('standing_deductions')
+      .select('*')
+      .eq('org_id', orgId)
+      .eq('active', true)
+      .or(`stop_date.is.null,stop_date.gte.${today}`)
+
+    const normalizedStanding = (standingRaw || []).map(s => ({
+      ...s,
+      _is_standing_deduction: true,
+      type: 'standing_deduction',
+      status: 'pending_payrun',
+      created_at: s.created_at,
+      notes: JSON.stringify({ label: s.label, amount: s.amount, frequency: s.frequency, stop_date: s.stop_date }),
+    }))
+
     const normalizedHR = (hrForms || []).map(f => ({
       ...f,
       _is_hr_form: true,
@@ -242,12 +272,24 @@ export default function HRFormsWizard({ orgId, C, user }) {
       created_at: n.created_at,
     }))
 
-    setRequests([...(empReqs || []).map(r => ({ ...r, created_at: r.submitted_at })), ...normalizedHR, ...normalizedNotes]
+    setRequests([...(empReqs || []).map(r => ({ ...r, created_at: r.submitted_at })), ...normalizedHR, ...normalizedNotes, ...normalizedStanding]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)))
     setLoadingQueue(false)
   }
 
   useEffect(() => { if (isHR) loadQueue() }, [orgId, isHR])
+
+  const loadStandingDeds = async () => {
+    if (!orgId) return
+    setLoadingDeds(true)
+    const { data } = await supabase.from('standing_deductions')
+      .select('*').eq('org_id', orgId).eq('active', true)
+      .order('created_at', { ascending: false })
+    setStandingDeds(data || [])
+    setLoadingDeds(false)
+  }
+
+  useEffect(() => { if (isHR) loadStandingDeds() }, [orgId, isHR])
 
   useEffect(() => {
     if (!empId || !orgId) { setEmpPayrollNotes([]); return }
@@ -280,6 +322,9 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   const getAmount = (req) => {
+    if (req._is_standing_deduction) {
+      try { return JSON.parse(req.notes || '{}').amount } catch { return null }
+    }
     if (req._is_hr_form && req.notes) {
       try { return JSON.parse(req.notes).total } catch { return null }
     }
@@ -317,6 +362,10 @@ export default function HRFormsWizard({ orgId, C, user }) {
   }
 
   const handleDelete = async (req) => {
+    if (req._is_standing_deduction) {
+      shA('To stop a standing deduction, use the ⟳ Standing Deductions tab.')
+      return
+    }
     if (!window.confirm('Delete this request permanently?')) return
     if (req._is_payroll_note) {
       await supabase.from('employee_payroll_notes').delete().eq('id', req.id)
@@ -643,7 +692,7 @@ export default function HRFormsWizard({ orgId, C, user }) {
           <span style={{ fontSize: 10, color: C.g }}>{user?.email}</span>
         </div>
         <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 7, background: C.ch, border: `1px solid ${C.bdr}` }}>
-          {[{ k: 'queue', l: '📥 Request Queue' }, { k: 'form', l: '✎ New HR Form' }, { k: 'contractors', l: '👤 Contractors' }].map(t => (
+          {[{ k: 'queue', l: '📥 Request Queue' }, { k: 'form', l: '✎ New HR Form' }, { k: 'contractors', l: '👤 Contractors' }, { k: 'standing', l: '⟳ Standing Deductions' }].map(t => (
             <button key={t.k} onClick={() => setHrView(t.k)} style={{
               padding: '5px 14px', borderRadius: 5, fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
               border: 'none', cursor: 'pointer', transition: 'all 0.15s',
@@ -728,6 +777,10 @@ export default function HRFormsWizard({ orgId, C, user }) {
                         try { d = JSON.parse(r.notes || '{}') } catch {}
                         const runNote = necItemNotes[r.id] ? ` — NOTE: ${necItemNotes[r.id]}` : ''
                         if (r._is_payroll_note) return `☐ PAYROLL NOTE — ${getEmpName(r.employee_id)}: ${r.note}${runNote}`
+                        if (r._is_standing_deduction) {
+                          let sd = {}; try { sd = JSON.parse(r.notes || '{}') } catch {}
+                          return `☐ STANDING DEDUCTION — ${getEmpName(r.employee_id)}: ${sd.label} — $${parseFloat(sd.amount || 0).toFixed(2)} (${sd.frequency === 'per_pay_period' ? 'per pay period' : 'monthly'})${sd.stop_date ? ` — 🛑 STOPS ${sd.stop_date}` : ''}${runNote}`
+                        }
                         if (r._is_hr_form && d.total) return `☐ PAY — ${d.contact_name || getEmpName(r.employee_id)} — $${parseFloat(d.total).toFixed(2)} via ${d.payment_method || 'Check'}${runNote}`
                         return `☐ ${TYPE_LABELS[r.type] || r.type} — ${getEmpName(r.employee_id)}${runNote}`
                       }).join('\n')
@@ -760,16 +813,18 @@ export default function HRFormsWizard({ orgId, C, user }) {
                     await supabase.from('moneyflow_tasks').insert(tasksToInsert)
 
                     // Only mark source records complete if ALL their virtual cards are being pushed
-                    const realIds = [...new Set(normalItems.map(r => r.id.split('_checkoff_')[0]))]
+                      const realIds = [...new Set(normalItems.map(r => r.id.split('_checkoff_')[0]))]
                     await Promise.all(realIds.map(id => {
                       const r = requests.find(x => x.id === id)
                       if (!r) return Promise.resolve()
+                      if (r._is_standing_deduction) return Promise.resolve() // never mark paid — they recur
                       if (r._is_payroll_note) return supabase.from('employee_payroll_notes').update({ resolved: true }).eq('id', id)
                       if (r._is_hr_form) return supabase.from('hr_forms').update({ status: 'paid' }).eq('id', id)
                       return supabase.from('employee_requests').update({ status: 'paid' }).eq('id', id)
                     }))
 
-                    setRequests(p => p.filter(r => !realIds.includes(r.id)))
+                    // Keep standing deductions in the queue — only remove non-standing items
+                    setRequests(p => p.filter(r => r._is_standing_deduction || !realIds.includes(r.id)))
                     setSelectedPushIds([])
                     setNecItemNotes({})
                     setPayRunPeriods(['','',''])
@@ -791,6 +846,8 @@ export default function HRFormsWizard({ orgId, C, user }) {
             const amt   = getAmount(req)
             const name  = req._is_payroll_note
               ? getEmpName(req.employee_id)
+              : req._is_standing_deduction
+                ? (() => { try { return JSON.parse(req.notes || '{}').label || getEmpName(req.employee_id) } catch { return getEmpName(req.employee_id) } })()
               : req._is_hr_form
                 ? (() => { try { return JSON.parse(req.notes || '{}').contact_name || getEmpName(req.employee_id) || 'HR Form' } catch { return getEmpName(req.employee_id) || 'HR Form' } })()
                 : getEmpName(req.employee_id)
@@ -923,6 +980,25 @@ export default function HRFormsWizard({ orgId, C, user }) {
                         )}
                       </div>
                     )}
+
+                    {/* ── Standing Deduction detail ── */}
+                    {req._is_standing_deduction && (() => {
+                      let d = {}
+                      try { d = JSON.parse(req.notes || '{}') } catch {}
+                      return (
+                        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 6, background: 'rgba(245,158,11,0.06)', border: `1px solid ${C.bdr}` }}>
+                          <div style={{ fontSize: 10, color: C.go, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>⟳ Standing Deduction</div>
+                          <div style={{ fontSize: 12, color: C.w, fontWeight: 600, marginBottom: 4 }}>{d.label}</div>
+                          <div style={{ fontSize: 11, color: C.g }}>
+                            {getEmpName(req.employee_id)} · {d.frequency === 'per_pay_period' ? 'Per Pay Period' : 'Monthly'}
+                          </div>
+                          {d.stop_date && <div style={{ fontSize: 10, color: '#EF4444', fontWeight: 700, marginTop: 4 }}>🛑 Stops after {d.stop_date}</div>}
+                          <div style={{ marginTop: 8 }}>
+                            <button onClick={() => setHrView('standing')} style={{ fontSize: 10, color: C.g, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit', padding: 0 }}>Manage in Standing Deductions →</button>
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                     {/* ── Other HR forms (withholding, deduction, cash reimbursement) ── */}
                     {req._is_hr_form && req.type !== '1099_nec_hr' && (
@@ -1233,6 +1309,145 @@ export default function HRFormsWizard({ orgId, C, user }) {
               </div>
             </div>
           )}
+
+          {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
+        </div>
+      )}
+
+      {/* ── STANDING DEDUCTIONS VIEW ── */}
+      {hrView === 'standing' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.w }}>Standing Deductions</div>
+              <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>Recurring items that auto-populate Pay Run every payroll — child support, pension, garnishments, dues.</div>
+            </div>
+            <button onClick={() => {
+              setDedEmpId(''); setDedLabel(''); setDedAmountSD(''); setDedFreq('per_pay_period')
+              setDedStartDate(''); setDedStopDate('')
+              setEditingDed('new')
+            }} style={{ padding: '6px 16px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: C.go, color: C.bg, border: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ Add Deduction</button>
+          </div>
+
+          {/* Add / Edit form */}
+          {editingDed && (
+            <div style={{ padding: 16, borderRadius: 8, border: `1px solid ${C.bdr}`, background: C.ch, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 14 }}>
+                {editingDed === 'new' ? 'New Standing Deduction' : `Editing — ${editingDed.label}`}
+              </div>
+              <Field C={C} l="Employee" req>
+                <select value={dedEmpId} onChange={e => setDedEmpId(e.target.value)} style={inp(C)}>
+                  <option value="">— Select employee —</option>
+                  {employees.map(e => <option key={e.id} value={e.id}>{gn(e)} — {e.dept}</option>)}
+                </select>
+              </Field>
+              <Field C={C} l="Label / Description" req>
+                <input value={dedLabel} onChange={e => setDedLabel(e.target.value)} placeholder="e.g. Child Support Order #12345, Teamsters Dues, 401k Pension..." style={inp(C)} />
+              </Field>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field C={C} l="Amount Per Occurrence" req>
+                  <input type="number" min="0" step="0.01" value={dedAmount} onChange={e => setDedAmountSD(e.target.value)} placeholder="0.00" style={inp(C)} />
+                </Field>
+                <Field C={C} l="Frequency" req>
+                  <select value={dedFreq} onChange={e => setDedFreq(e.target.value)} style={inp(C)}>
+                    <option value="per_pay_period">Per Pay Period</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </Field>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field C={C} l="Start Date">
+                  <input type="date" value={dedStartDate} onChange={e => setDedStartDate(e.target.value)} style={inp(C)} />
+                </Field>
+                <Field C={C} l="Stop Date (leave blank for indefinite)">
+                  <input type="date" value={dedStopDate} onChange={e => setDedStopDate(e.target.value)}
+                    style={{ ...inp(C), borderColor: dedStopDate ? '#EF4444' : C.bdr }} />
+                </Field>
+              </div>
+              {dedStopDate && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.3)', fontSize: 11, color: '#EF4444', marginBottom: 10 }}>
+                  🛑 This deduction will stop appearing in Pay Run after <strong>{dedStopDate}</strong>.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+                <button onClick={() => setEditingDed(null)} style={{ padding: '7px 18px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, background: 'none', border: `1px solid ${C.bdr}`, color: C.g, cursor: 'pointer' }}>Cancel</button>
+                <button disabled={!dedEmpId || !dedLabel || !dedAmount || savingDed} onClick={async () => {
+                  setSavingDed(true)
+                  const payload = {
+                    org_id: orgId,
+                    employee_id: dedEmpId,
+                    label: dedLabel,
+                    amount: parseFloat(dedAmount),
+                    frequency: dedFreq,
+                    start_date: dedStartDate || null,
+                    stop_date: dedStopDate || null,
+                    active: true,
+                    created_by: user.email,
+                  }
+                  if (editingDed === 'new') {
+                    const { data, error } = await supabase.from('standing_deductions').insert(payload).select().single()
+                    if (error) { shA('Save failed: ' + error.message); setSavingDed(false); return }
+                    setStandingDeds(p => [data, ...p])
+                  } else {
+                    const { employee_id: _e, org_id: _o, created_by: _c, ...updatePayload } = payload
+                    const { error } = await supabase.from('standing_deductions').update(updatePayload).eq('id', editingDed.id)
+                    if (error) { shA('Save failed: ' + error.message); setSavingDed(false); return }
+                    setStandingDeds(p => p.map(d => d.id === editingDed.id ? { ...d, ...updatePayload } : d))
+                  }
+                  setSavingDed(false)
+                  setEditingDed(null)
+                  shA(editingDed === 'new' ? 'Standing deduction added ✓' : 'Standing deduction updated ✓')
+                }} style={{ padding: '7px 24px', borderRadius: 6, fontFamily: 'inherit', fontSize: 11, fontWeight: 700, background: dedEmpId && dedLabel && dedAmount ? C.go : C.bdr, color: dedEmpId && dedLabel && dedAmount ? C.bg : C.g, border: 'none', cursor: dedEmpId && dedLabel && dedAmount ? 'pointer' : 'not-allowed' }}>
+                  {savingDed ? 'Saving...' : editingDed === 'new' ? 'Add Deduction' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Deductions list */}
+          {loadingDeds && <div style={{ fontSize: 12, color: C.g, padding: 20, textAlign: 'center' }}>Loading...</div>}
+          {!loadingDeds && standingDeds.length === 0 && !editingDed && (
+            <div style={{ fontSize: 12, color: C.g, padding: 30, textAlign: 'center', background: C.ch, borderRadius: 8, border: `1px solid ${C.bdr}` }}>
+              No standing deductions on file. Add one above.
+            </div>
+          )}
+          {standingDeds.map(d => {
+            const emp = employees.find(e => e.id === d.employee_id)
+            const isExpired = d.stop_date && new Date(d.stop_date) < new Date()
+            return (
+              <div key={d.id} style={{ padding: '12px 14px', borderRadius: 8, border: `1px solid ${isExpired ? '#EF4444' : C.bdr}`, background: isExpired ? 'rgba(239,68,68,0.04)' : C.ch, marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: isExpired ? '#EF4444' : C.w }}>{d.label}</div>
+                    <div style={{ fontSize: 11, color: C.g, marginTop: 2 }}>
+                      {emp ? gn(emp) : d.employee_id} · {d.frequency === 'per_pay_period' ? 'Per Pay Period' : 'Monthly'}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                      {d.start_date && <span style={{ fontSize: 9, fontWeight: 700, color: '#0EA5E9', background: 'rgba(14,165,233,0.1)', padding: '2px 6px', borderRadius: 4 }}>▶ starts {d.start_date}</span>}
+                      {d.stop_date && <span style={{ fontSize: 9, fontWeight: 700, color: '#EF4444', background: 'rgba(239,68,68,0.1)', padding: '2px 6px', borderRadius: 4 }}>🛑 stops {d.stop_date}{isExpired ? ' — EXPIRED' : ''}</span>}
+                      {!d.stop_date && <span style={{ fontSize: 9, fontWeight: 700, color: '#22C55E', background: 'rgba(34,197,94,0.1)', padding: '2px 6px', borderRadius: 4 }}>∞ indefinite</span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.go }}>${parseFloat(d.amount).toFixed(2)}</div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
+                      <button onClick={() => {
+                        setDedEmpId(d.employee_id); setDedLabel(d.label); setDedAmountSD(String(d.amount))
+                        setDedFreq(d.frequency); setDedStartDate(d.start_date || ''); setDedStopDate(d.stop_date || '')
+                        setEditingDed(d)
+                      }} style={{ padding: '4px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 10, fontWeight: 600, background: 'transparent', border: `1px solid ${C.bdr}`, color: C.w, cursor: 'pointer' }}>Edit</button>
+                      <button onClick={async () => {
+                        if (!window.confirm(`Stop "${d.label}" permanently?`)) return
+                        await supabase.from('standing_deductions').update({ active: false }).eq('id', d.id)
+                        setStandingDeds(p => p.filter(x => x.id !== d.id))
+                        shA('Deduction stopped ✓')
+                      }} style={{ padding: '4px 12px', borderRadius: 6, fontFamily: 'inherit', fontSize: 10, fontWeight: 600, background: 'transparent', border: '1px solid #EF4444', color: '#EF4444', cursor: 'pointer' }}>Stop</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
 
           {actionToast && <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.go, color: C.bg, padding: '10px 18px', borderRadius: 8, fontWeight: 600, fontSize: 13, zIndex: 1e3 }}>{actionToast}</div>}
         </div>

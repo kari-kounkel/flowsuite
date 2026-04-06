@@ -100,10 +100,11 @@ const ENTITY_COLORS = {
   hub:   { bg: '#3a6b4a', light: '#6ac48a', label: 'Hub'   },
 }
 const TYPE_COLORS = {
-  AP:    '#c4956a',
-  AR:    '#6ab87a',
-  PR:    '#9a6ac4',
-  Admin: '#a0a0a0',
+  AP:      '#c4956a',
+  AR:      '#6ab87a',
+  PR:      '#9a6ac4',
+  Admin:   '#a0a0a0',
+  Journal: '#5aa8c4',
 }
 
 function fmt(n) {
@@ -317,7 +318,7 @@ function TaskFormModal({ task, orgId, C, allResources, onSave, onClose, onDelete
           <div style={{ flex: 1 }}>
             <label style={labelStyle}>Type</label>
             <select value={form.type} onChange={e => set('type', e.target.value)} style={inputStyle}>
-              {['AP','AR','PR','Admin'].map(t => <option key={t} value={t}>{t}</option>)}
+              {['AP','AR','PR','Admin','Journal'].map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
         </div>
@@ -1415,17 +1416,19 @@ function IIFFactory({ orgId, C, parsedData, setParsedData, fileName, setFileName
 
 // ─── RECURRING JE TAB (Supabase-live) ────────────────────────────────────────
 function RecurringJETab({ orgId, C }) {
-  const [templates, setTemplates]   = useState([])
-  const [lines, setLines]           = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [selectedId, setSelectedId] = useState(null)
-  const [jeMonth, setJeMonth]       = useState(new Date().getMonth() + 1)
-  const [jeYear, setJeYear]         = useState(new Date().getFullYear())
+  const [templates, setTemplates]         = useState([])
+  const [lines, setLines]                 = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [selectedId, setSelectedId]       = useState(null)
+  const [jeMonth, setJeMonth]             = useState(new Date().getMonth() + 1)
+  const [jeYear, setJeYear]               = useState(new Date().getFullYear())
   const [utilOverrides, setUtilOverrides] = useState({})
-  // ── Pencil edit for fixed-amount lines ──
-  const [editingLine, setEditingLine] = useState(null)
-  const [editAmt, setEditAmt]         = useState('')
-  const [savingLine, setSavingLine]   = useState(false)
+  const [editingLine, setEditingLine]     = useState(null)
+  const [editAmt, setEditAmt]             = useState('')
+  const [savingLine, setSavingLine]       = useState(false)
+  const [sendingId, setSendingId]         = useState(null)   // template id being sent individually
+  const [sendingAll, setSendingAll]       = useState(false)
+  const [sentIds, setSentIds]             = useState({})     // template_id → true (flash confirm)
 
   useEffect(() => {
     async function load() {
@@ -1445,6 +1448,76 @@ function RecurringJETab({ orgId, C }) {
   const activeTemplate = templates.find(t => t.id === selectedId)
   const activeLines    = lines.filter(l => l.template_id === selectedId)
 
+  // Last day of selected month for due_date
+  function lastDayOfMonth(yr, mo) {
+    return new Date(yr, mo, 0).toISOString().split('T')[0]
+  }
+
+  function getTemplateAmount(tmplId) {
+    const tmplLines = lines.filter(l => l.template_id === tmplId)
+    // For editable templates sum the overrides; otherwise sum debit-side fixed lines
+    const hasEditable = tmplLines.some(l => l.is_editable)
+    if (hasEditable) {
+      return tmplLines.filter(l => l.is_editable).reduce((s, l) => s + (parseFloat(utilOverrides[l.id]) || 0), 0)
+    }
+    return tmplLines.filter(l => l.is_debit && !l.is_total).reduce((s, l) => s + Math.abs(l.amount || 0), 0)
+  }
+
+  // Send a single template to tasks
+  async function sendOneToTask(tmpl) {
+    setSendingId(tmpl.id)
+    const dueDate = lastDayOfMonth(jeYear, jeMonth)
+    const amount  = getTemplateAmount(tmpl.id)
+    const mm      = mmPad(jeMonth)
+    const name    = tmpl.label + ' — ' + MONTHS[jeMonth - 1] + ' ' + jeYear
+    const source_key = 'je_' + tmpl.code + '_' + jeYear + '_' + mm
+
+    // Check for existing task with same source_key so we don't duplicate
+    const { data: existing } = await supabase
+      .from('moneyflow_tasks')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('source', 'je_auto')
+      .eq('payment_type_key', source_key)
+      .maybeSingle()
+
+    if (existing) {
+      await supabase.from('moneyflow_tasks').update({
+        name,
+        amount,
+        due_date: dueDate,
+        updated_at: new Date().toISOString(),
+      }).eq('id', existing.id)
+    } else {
+      await supabase.from('moneyflow_tasks').insert([{
+        org_id:           orgId,
+        entity:           'iaz',
+        type:             'Journal',
+        source:           'je_auto',
+        payment_type_key: source_key,
+        name,
+        description:      'KK ' + tmpl.code + ' ' + jeYear + ' ' + mm + ' — Enter manually in QBO',
+        due_date:         dueDate,
+        status:           'open',
+        is_recurring:     true,
+        recur_interval:   30,
+        amount,
+      }])
+    }
+    setSentIds(prev => ({ ...prev, [tmpl.id]: true }))
+    setTimeout(() => setSentIds(prev => { const n = { ...prev }; delete n[tmpl.id]; return n }), 2500)
+    setSendingId(null)
+  }
+
+  // Send all templates for the selected month at once
+  async function sendAllToTasks() {
+    setSendingAll(true)
+    for (const tmpl of templates) {
+      await sendOneToTask(tmpl)
+    }
+    setSendingAll(false)
+  }
+
   const displayLines = activeLines.map(l => ({
     acct:     l.acct_number,
     name:     l.acct_name,
@@ -1459,13 +1532,13 @@ function RecurringJETab({ orgId, C }) {
     id:       l.id,
   }))
 
-  const mm        = mmPad(jeMonth)
-  const monthName = MONTHS[jeMonth - 1]
-  const journalNum = activeTemplate ? `KK ${activeTemplate.code} ${jeYear} ${mm}` : ''
+  const mm         = mmPad(jeMonth)
+  const monthName  = MONTHS[jeMonth - 1]
+  const journalNum = activeTemplate ? 'KK ' + activeTemplate.code + ' ' + jeYear + ' ' + mm : ''
   const timing     = activeTemplate?.timing || ''
   const dateLabel  = timing === 'Last day of month'
-    ? `Last day of ${monthName} ${jeYear}`
-    : `15th of ${monthName} ${jeYear}`
+    ? 'Last day of ' + monthName + ' ' + jeYear
+    : '15th of ' + monthName + ' ' + jeYear
 
   async function saveLineEdit(lineId) {
     setSavingLine(true)
@@ -1483,7 +1556,7 @@ function RecurringJETab({ orgId, C }) {
   }
 
   const inputStyle = {
-    background: C.bg, border: `1px solid ${C.bdr}`, color: C.w,
+    background: C.bg, border: '1px solid ' + C.bdr, color: C.w,
     borderRadius: 6, padding: '6px 8px', fontSize: 11,
     fontFamily: "'DM Mono', monospace", width: '100%', boxSizing: 'border-box',
   }
@@ -1493,29 +1566,15 @@ function RecurringJETab({ orgId, C }) {
 
   return (
     <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+
+      {/* ── LEFT PANEL: template list + period picker ── */}
       <div style={{
-        background: C.bg2, border: `1px solid ${C.bdr}`,
-        borderRadius: 10, padding: 16, minWidth: 220, maxWidth: 280, flex: '0 0 auto',
+        background: C.bg2, border: '1px solid ' + C.bdr,
+        borderRadius: 10, padding: 16, minWidth: 240, maxWidth: 300, flex: '0 0 auto',
       }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.go, marginBottom: 12, letterSpacing: '0.5px' }}>GENERATE JE</div>
 
-        <div style={{ marginBottom: 14 }}>
-          <label style={labelStyle}>Entry Type</label>
-          {templates.map(t => (
-            <button key={t.id} onClick={() => setSelectedId(t.id)} style={{
-              display: 'block', width: '100%', textAlign: 'left',
-              background: selectedId === t.id ? C.gD : 'transparent',
-              border: `1px solid ${selectedId === t.id ? C.go : C.bdrF}`,
-              color: selectedId === t.id ? C.go : C.w,
-              padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
-              fontSize: 11, fontFamily: 'inherit', marginBottom: 5,
-            }}>
-              <div style={{ fontWeight: 600 }}>{t.label}</div>
-              <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>{t.timing}</div>
-            </button>
-          ))}
-        </div>
-
+        {/* Month + Year */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
           <div style={{ flex: 2 }}>
             <label style={labelStyle}>Month</label>
@@ -1530,9 +1589,65 @@ function RecurringJETab({ orgId, C }) {
             </select>
           </div>
         </div>
+
+        {/* Send All button */}
+        <button
+          onClick={sendAllToTasks}
+          disabled={sendingAll}
+          style={{
+            width: '100%', marginBottom: 14,
+            background: sendingAll ? C.gD : C.go,
+            border: 'none', color: '#fff',
+            padding: '8px 12px', borderRadius: 8,
+            cursor: sendingAll ? 'default' : 'pointer',
+            fontSize: 11, fontWeight: 700, fontFamily: 'inherit',
+            opacity: sendingAll ? 0.7 : 1,
+          }}
+        >
+          {sendingAll ? '⏳ Sending…' : '📋 Send All to Tasks — ' + monthName + ' ' + jeYear}
+        </button>
+
+        {/* Template list */}
+        <label style={labelStyle}>Entry Type</label>
+        {templates.map(t => (
+          <div key={t.id} style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={() => setSelectedId(t.id)} style={{
+                flex: 1, textAlign: 'left',
+                background: selectedId === t.id ? C.gD : 'transparent',
+                border: '1px solid ' + (selectedId === t.id ? C.go : C.bdrF),
+                color: selectedId === t.id ? C.go : C.w,
+                padding: '7px 10px', borderRadius: 7, cursor: 'pointer',
+                fontSize: 11, fontFamily: 'inherit',
+              }}>
+                <div style={{ fontWeight: 600 }}>{t.label}</div>
+                <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>{t.timing}</div>
+              </button>
+              {/* Individual → Task button */}
+              <button
+                onClick={() => sendOneToTask(t)}
+                disabled={sendingId === t.id}
+                title={'Send ' + t.label + ' to Tasks'}
+                style={{
+                  flexShrink: 0,
+                  background: sentIds[t.id] ? '#2a6a3a' : 'transparent',
+                  border: '1px solid ' + (sentIds[t.id] ? '#4ac47a' : C.bdrF),
+                  color: sentIds[t.id] ? '#4ac47a' : C.g,
+                  borderRadius: 6, padding: '5px 8px',
+                  fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {sendingId === t.id ? '⏳' : sentIds[t.id] ? '✓' : '→'}
+              </button>
+            </div>
+          </div>
+        ))}
+
+        {/* Editable fields for selected template */}
         {activeLines.some(l => l.is_editable) && (
-          <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>This Month's Allocation</label>
+          <div style={{ marginTop: 14 }}>
+            <label style={labelStyle}>This Month's Amounts</label>
             <div style={{ fontSize: 9, color: C.g, marginBottom: 6, lineHeight: 1.5 }}>From your monthly FLEX export.</div>
             {activeLines.filter(l => l.is_editable).map(l => (
               <div key={l.id} style={{ marginBottom: 8 }}>
@@ -1548,31 +1663,34 @@ function RecurringJETab({ orgId, C }) {
           </div>
         )}
 
-        <div style={{ fontSize: 10, color: C.g, borderTop: `1px solid ${C.bdr}`, paddingTop: 10, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 10, color: C.g, borderTop: '1px solid ' + C.bdr, paddingTop: 10, marginTop: 12, lineHeight: 1.6 }}>
           No CSV. No import.<br />Key directly into QBO.
         </div>
       </div>
+
+      {/* ── RIGHT PANEL: JE preview + edit fixed amounts ── */}
       <div style={{ flex: 1, minWidth: 320 }}>
         {activeTemplate && (
           <JETable
             lines={displayLines} C={C}
             journalNum={journalNum} dateLabel={dateLabel}
-            memo={`${activeTemplate.label} — ${monthName} ${jeYear} — Enter manually in QBO`}
+            memo={activeTemplate.label + ' — ' + monthName + ' ' + jeYear + ' — Enter manually in QBO'}
           />
         )}
+
         {activeLines.filter(l => !l.is_editable && !l.is_total).length > 0 && (
           <div style={{
-            marginTop: 14, background: C.bg2, border: `1px solid ${C.bdr}`,
+            marginTop: 14, background: C.bg2, border: '1px solid ' + C.bdr,
             borderRadius: 10, padding: '12px 16px',
           }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 6 }}>✏️ Edit Fixed Amounts</div>
             <div style={{ fontSize: 10, color: C.g, marginBottom: 10, lineHeight: 1.5 }}>
-              Saves to Supabase permanently — update when CPA gives you new numbers.
+              Saves to Supabase permanently — update when amounts change.
             </div>
             {activeLines.filter(l => !l.is_editable && !l.is_total).map(l => (
               <div key={l.id} style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 0', borderBottom: `1px solid ${C.bdrF}`,
+                padding: '6px 0', borderBottom: '1px solid ' + C.bdrF,
               }}>
                 <span style={{ flex: 1, fontSize: 11, color: C.w }}>{l.acct_name}</span>
                 {editingLine === l.id ? (
@@ -1594,17 +1712,17 @@ function RecurringJETab({ orgId, C }) {
                       cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
                     }}>{savingLine ? '…' : 'Save'}</button>
                     <button onClick={() => { setEditingLine(null); setEditAmt('') }} style={{
-                      background: 'transparent', border: `1px solid ${C.bdr}`, color: C.g,
+                      background: 'transparent', border: '1px solid ' + C.bdr, color: C.g,
                       borderRadius: 5, padding: '4px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
                     }}>✕</button>
                   </>
                 ) : (
                   <>
                     <span style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", minWidth: 90, textAlign: 'right' }}>
-                      ${fmt(l.amount || 0)}
+                      {'$' + fmt(l.amount || 0)}
                     </span>
                     <button onClick={() => { setEditingLine(l.id); setEditAmt(String(l.amount || 0)) }} style={{
-                      background: 'transparent', border: `1px solid ${C.bdrF}`, color: C.g,
+                      background: 'transparent', border: '1px solid ' + C.bdrF, color: C.g,
                       borderRadius: 5, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
                     }}>✏️</button>
                   </>
@@ -1616,10 +1734,10 @@ function RecurringJETab({ orgId, C }) {
 
         <div style={{
           marginTop: 12, padding: '10px 14px',
-          borderLeft: `3px solid ${C.go}`,
+          borderLeft: '3px solid ' + C.go,
           background: C.gD, borderRadius: '0 8px 8px 0', fontSize: 11, color: C.g,
         }}>
-          <strong style={{ color: C.go }}>Sidebar:</strong> QBO recurring entries are OFF. FlowSuite is the source. Fixed amounts save to Supabase — no deploy needed to change a number.
+          <strong style={{ color: C.go }}>Sidebar:</strong> Hit → on any entry to send it to your task queue mid-month. Hit <em>Send All</em> at month-end to push the whole batch at once. Duplicate-safe — won't create two tasks for the same entry in the same period.
         </div>
       </div>
     </div>
@@ -7063,7 +7181,7 @@ export default function MoneyFlowModule({ orgId, C }) {
                   () => setFilterEntity(e)
                 ))}
                 <span style={{ width: 1, background: C.bdr, margin: '0 4px' }} />
-                {['all','AP','AR','PR','Admin'].map(t => pill(
+                {['all','AP','AR','PR','Admin','Journal'].map(t => pill(
                   t === 'all' ? 'All Types' : t,
                   filterType === t,
                   () => setFilterType(t)

@@ -1429,6 +1429,19 @@ function RecurringJETab({ orgId, C }) {
   const [sendingId, setSendingId]         = useState(null)   // template id being sent individually
   const [sendingAll, setSendingAll]       = useState(false)
   const [sentIds, setSentIds]             = useState({})     // template_id → true (flash confirm)
+  // ── Add / Edit template modal ──
+  const BLANK_TMPL = { label: '', code: '', timing: 'Last day of month' }
+  const [tmplModal, setTmplModal]           = useState(null)   // null | 'new' | template object
+  const [tmplForm, setTmplForm]             = useState({ label: '', code: '', timing: 'Last day of month' })
+  const [savingTmpl, setSavingTmpl]         = useState(false)
+  const [deletingTmpl, setDeletingTmpl]     = useState(false)
+  const [confirmDelTmpl, setConfirmDelTmpl] = useState(false)
+  // ── Add / Delete line modal ──
+  const BLANK_LINE = { acct_number: '', acct_name: '', is_debit: true, is_editable: false, amount: '' }
+  const [lineModal, setLineModal]           = useState(false)
+  const [lineForm, setLineForm]             = useState({ acct_number: '', acct_name: '', is_debit: true, is_editable: false, amount: '' })
+  const [savingNewLine, setSavingNewLine]   = useState(false)
+  const [deletingLineId, setDeletingLineId] = useState(null)
 
   useEffect(() => {
     async function load() {
@@ -1555,7 +1568,78 @@ function RecurringJETab({ orgId, C }) {
     setSavingLine(false)
   }
 
-  const inputStyle = {
+  // ── Save new or edited template ──
+  async function saveTmpl() {
+    if (!tmplForm.label.trim() || !tmplForm.code.trim()) return
+    setSavingTmpl(true)
+    const payload = {
+      org_id: orgId,
+      label:  tmplForm.label.trim(),
+      code:   tmplForm.code.trim().toUpperCase(),
+      timing: tmplForm.timing,
+    }
+    if (tmplModal && tmplModal !== 'new') {
+      const { error } = await supabase.from('recurring_je_templates').update(payload).eq('id', tmplModal.id)
+      if (!error) setTemplates(prev => prev.map(t => t.id === tmplModal.id ? { ...t, ...payload } : t))
+    } else {
+      const { data, error } = await supabase.from('recurring_je_templates').insert([payload]).select()
+      if (!error && data) {
+        setTemplates(prev => [...prev, data[0]])
+        setSelectedId(data[0].id)
+      }
+    }
+    setTmplModal(null)
+    setSavingTmpl(false)
+    setConfirmDelTmpl(false)
+  }
+
+  // ── Delete template + all its lines ──
+  async function deleteTmpl() {
+    if (!tmplModal || tmplModal === 'new') return
+    setDeletingTmpl(true)
+    await supabase.from('recurring_je_lines').delete().eq('template_id', tmplModal.id)
+    await supabase.from('recurring_je_templates').delete().eq('id', tmplModal.id)
+    setLines(prev => prev.filter(l => l.template_id !== tmplModal.id))
+    setTemplates(prev => {
+      const remaining = prev.filter(t => t.id !== tmplModal.id)
+      if (remaining.length) setSelectedId(remaining[0].id)
+      return remaining
+    })
+    setTmplModal(null)
+    setDeletingTmpl(false)
+    setConfirmDelTmpl(false)
+  }
+
+  // ── Add a new line to the active template ──
+  async function saveNewLine() {
+    if (!lineForm.acct_number.trim() || !lineForm.acct_name.trim()) return
+    setSavingNewLine(true)
+    const maxSort = activeLines.reduce((m, l) => Math.max(m, l.sort_order || 0), 0)
+    const payload = {
+      org_id:      orgId,
+      template_id: selectedId,
+      sort_order:  maxSort + 1,
+      acct_number: lineForm.acct_number.trim(),
+      acct_name:   lineForm.acct_name.trim(),
+      is_debit:    lineForm.is_debit,
+      is_editable: lineForm.is_editable,
+      is_total:    false,
+      amount:      parseFloat(lineForm.amount) || 0,
+    }
+    const { data, error } = await supabase.from('recurring_je_lines').insert([payload]).select()
+    if (!error && data) setLines(prev => [...prev, data[0]])
+    setLineModal(false)
+    setLineForm({ acct_number: '', acct_name: '', is_debit: true, is_editable: false, amount: '' })
+    setSavingNewLine(false)
+  }
+
+  // ── Delete a single line ──
+  async function deleteLine(lineId) {
+    setDeletingLineId(lineId)
+    await supabase.from('recurring_je_lines').delete().eq('id', lineId)
+    setLines(prev => prev.filter(l => l.id !== lineId))
+    setDeletingLineId(null)
+  }
     background: C.bg, border: '1px solid ' + C.bdr, color: C.w,
     borderRadius: 6, padding: '6px 8px', fontSize: 11,
     fontFamily: "'DM Mono', monospace", width: '100%', boxSizing: 'border-box',
@@ -1608,10 +1692,16 @@ function RecurringJETab({ orgId, C }) {
         </button>
 
         {/* Template list */}
-        <label style={labelStyle}>Entry Type</label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>Entry Type</label>
+          <button
+            onClick={() => { setTmplForm({ label: '', code: '', timing: 'Last day of month' }); setTmplModal('new'); setConfirmDelTmpl(false) }}
+            style={{ background: 'transparent', border: '1px solid ' + C.go, color: C.go, borderRadius: 6, padding: '3px 9px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+          >+ New</button>
+        </div>
         {templates.map(t => (
           <div key={t.id} style={{ marginBottom: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <button onClick={() => setSelectedId(t.id)} style={{
                 flex: 1, textAlign: 'left',
                 background: selectedId === t.id ? C.gD : 'transparent',
@@ -1623,6 +1713,12 @@ function RecurringJETab({ orgId, C }) {
                 <div style={{ fontWeight: 600 }}>{t.label}</div>
                 <div style={{ fontSize: 9, color: C.g, marginTop: 2 }}>{t.timing}</div>
               </button>
+              {/* Edit template gear */}
+              <button
+                onClick={() => { setTmplForm({ label: t.label, code: t.code, timing: t.timing }); setTmplModal(t); setConfirmDelTmpl(false) }}
+                title="Edit this template"
+                style={{ flexShrink: 0, background: 'transparent', border: '1px solid ' + C.bdrF, color: C.g, borderRadius: 6, padding: '5px 7px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit' }}
+              >⚙</button>
               {/* Individual → Task button */}
               <button
                 onClick={() => sendOneToTask(t)}
@@ -1683,7 +1779,13 @@ function RecurringJETab({ orgId, C }) {
             marginTop: 14, background: C.bg2, border: '1px solid ' + C.bdr,
             borderRadius: 10, padding: '12px 16px',
           }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.go, marginBottom: 6 }}>✏️ Edit Fixed Amounts</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.go }}>✏️ Edit Fixed Amounts</div>
+              <button
+                onClick={() => { setLineForm({ acct_number: '', acct_name: '', is_debit: true, is_editable: false, amount: '' }); setLineModal(true) }}
+                style={{ background: 'transparent', border: '1px solid ' + C.go, color: C.go, borderRadius: 6, padding: '3px 9px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+              >+ Add Line</button>
+            </div>
             <div style={{ fontSize: 10, color: C.g, marginBottom: 10, lineHeight: 1.5 }}>
               Saves to Supabase permanently — update when amounts change.
             </div>
@@ -1725,6 +1827,10 @@ function RecurringJETab({ orgId, C }) {
                       background: 'transparent', border: '1px solid ' + C.bdrF, color: C.g,
                       borderRadius: 5, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
                     }}>✏️</button>
+                    <button onClick={() => deleteLine(l.id)} disabled={deletingLineId === l.id} style={{
+                      background: 'transparent', border: '1px solid ' + C.bdrF, color: '#c04040',
+                      borderRadius: 5, padding: '3px 7px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                    }}>{deletingLineId === l.id ? '…' : '🗑'}</button>
                   </>
                 )}
               </div>
@@ -1740,6 +1846,109 @@ function RecurringJETab({ orgId, C }) {
           <strong style={{ color: C.go }}>Sidebar:</strong> Hit → on any entry to send it to your task queue mid-month. Hit <em>Send All</em> at month-end to push the whole batch at once. Duplicate-safe — won't create two tasks for the same entry in the same period.
         </div>
       </div>
+
+      {/* ── TEMPLATE ADD / EDIT MODAL ── */}
+      {tmplModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 16 }}>
+          <div style={{ background: C.bg2, border: '1px solid ' + C.bdr, borderRadius: 14, padding: 28, maxWidth: 380, width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.go, marginBottom: 16 }}>
+              {tmplModal === 'new' ? '+ New JE Template' : 'Edit Template'}
+            </div>
+
+            <label style={labelStyle}>Label (display name)</label>
+            <input
+              value={tmplForm.label}
+              onChange={e => setTmplForm(p => ({ ...p, label: e.target.value }))}
+              placeholder="e.g. Interest — New Lender"
+              style={{ ...inputStyle, marginBottom: 12, fontFamily: 'inherit' }}
+            />
+
+            <label style={labelStyle}>Code (short, no spaces)</label>
+            <input
+              value={tmplForm.code}
+              onChange={e => setTmplForm(p => ({ ...p, code: e.target.value }))}
+              placeholder="e.g. INTNEW"
+              style={{ ...inputStyle, marginBottom: 12, fontFamily: "'DM Mono', monospace" }}
+            />
+
+            <label style={labelStyle}>Timing</label>
+            <select
+              value={tmplForm.timing}
+              onChange={e => setTmplForm(p => ({ ...p, timing: e.target.value }))}
+              style={{ ...inputStyle, marginBottom: 20, fontFamily: 'inherit' }}
+            >
+              <option value="Last day of month">Last day of month</option>
+              <option value="15th of month">15th of month</option>
+            </select>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+              {tmplModal !== 'new' && (
+                confirmDelTmpl ? (
+                  <button onClick={deleteTmpl} disabled={deletingTmpl} style={{ background: '#c04040', border: 'none', color: '#fff', padding: '7px 14px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit' }}>
+                    {deletingTmpl ? '…' : '⚠ Confirm Delete'}
+                  </button>
+                ) : (
+                  <button onClick={() => setConfirmDelTmpl(true)} style={{ background: 'transparent', border: '1px solid #c04040', color: '#c04040', padding: '7px 14px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>
+                    🗑 Delete
+                  </button>
+                )
+              )}
+              <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+                <button onClick={() => { setTmplModal(null); setConfirmDelTmpl(false) }} style={{ background: 'transparent', border: '1px solid ' + C.bdr, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+                <button onClick={saveTmpl} disabled={savingTmpl || !tmplForm.label.trim() || !tmplForm.code.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: (!tmplForm.label.trim() || !tmplForm.code.trim()) ? 0.5 : 1 }}>
+                  {savingTmpl ? '…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADD LINE MODAL ── */}
+      {lineModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 16 }}>
+          <div style={{ background: C.bg2, border: '1px solid ' + C.bdr, borderRadius: 14, padding: 28, maxWidth: 380, width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.go, marginBottom: 16 }}>+ Add Line to {activeTemplate?.label}</div>
+
+            <label style={labelStyle}>Account Number</label>
+            <input value={lineForm.acct_number} onChange={e => setLineForm(p => ({ ...p, acct_number: e.target.value }))} placeholder="e.g. 6270" style={{ ...inputStyle, marginBottom: 12, fontFamily: "'DM Mono', monospace" }} />
+
+            <label style={labelStyle}>Account Name</label>
+            <input value={lineForm.acct_name} onChange={e => setLineForm(p => ({ ...p, acct_name: e.target.value }))} placeholder="e.g. Interest Expense — New Lender" style={{ ...inputStyle, marginBottom: 12, fontFamily: 'inherit' }} />
+
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Side</label>
+                <select value={lineForm.is_debit ? 'debit' : 'credit'} onChange={e => setLineForm(p => ({ ...p, is_debit: e.target.value === 'debit' }))} style={{ ...inputStyle, fontFamily: 'inherit' }}>
+                  <option value="debit">Debit</option>
+                  <option value="credit">Credit</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Type</label>
+                <select value={lineForm.is_editable ? 'editable' : 'fixed'} onChange={e => setLineForm(p => ({ ...p, is_editable: e.target.value === 'editable' }))} style={{ ...inputStyle, fontFamily: 'inherit' }}>
+                  <option value="fixed">Fixed amount</option>
+                  <option value="editable">Editable (monthly input)</option>
+                </select>
+              </div>
+            </div>
+
+            {!lineForm.is_editable && (
+              <>
+                <label style={labelStyle}>Amount</label>
+                <input type="number" step="0.01" value={lineForm.amount} onChange={e => setLineForm(p => ({ ...p, amount: e.target.value }))} placeholder="0.00" style={{ ...inputStyle, marginBottom: 12, fontFamily: "'DM Mono', monospace" }} />
+              </>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => setLineModal(false)} style={{ background: 'transparent', border: '1px solid ' + C.bdr, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+              <button onClick={saveNewLine} disabled={savingNewLine || !lineForm.acct_number.trim() || !lineForm.acct_name.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: (!lineForm.acct_number.trim() || !lineForm.acct_name.trim()) ? 0.5 : 1 }}>
+                {savingNewLine ? '…' : 'Add Line'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

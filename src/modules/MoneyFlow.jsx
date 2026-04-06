@@ -1423,9 +1423,14 @@ function RecurringJETab({ orgId, C }) {
   const [jeMonth, setJeMonth]             = useState(new Date().getMonth() + 1)
   const [jeYear, setJeYear]               = useState(new Date().getFullYear())
   const [utilOverrides, setUtilOverrides] = useState({})
-  const [editingLine, setEditingLine]     = useState(null)
+  const [editingLine, setEditingLine]     = useState(null)   // line id being edited inline (amount only — legacy)
   const [editAmt, setEditAmt]             = useState('')
   const [savingLine, setSavingLine]       = useState(false)
+  // ── Full line edit modal ──
+  const BLANK_LINE_EDIT = { acct_number: '', acct_name: '', is_debit: true, is_editable: false, amount: '' }
+  const [lineEditModal, setLineEditModal] = useState(null)   // null | line object
+  const [lineEditForm, setLineEditForm]   = useState(BLANK_LINE_EDIT)
+  const [savingLineEdit, setSavingLineEdit] = useState(false)
   const [sendingId, setSendingId]         = useState(null)   // template id being sent individually
   const [sendingAll, setSendingAll]       = useState(false)
   const [sentIds, setSentIds]             = useState({})     // template_id → true (flash confirm)
@@ -1568,6 +1573,23 @@ function RecurringJETab({ orgId, C }) {
     setSavingLine(false)
   }
 
+  // ── Save full line edit (all fields) ──
+  async function saveLineEditFull() {
+    if (!lineEditModal) return
+    setSavingLineEdit(true)
+    const payload = {
+      acct_number: lineEditForm.acct_number.trim(),
+      acct_name:   lineEditForm.acct_name.trim(),
+      is_debit:    lineEditForm.is_debit,
+      is_editable: lineEditForm.is_editable,
+      amount:      parseFloat(lineEditForm.amount) || 0,
+    }
+    const { error } = await supabase.from('recurring_je_lines').update(payload).eq('id', lineEditModal.id)
+    if (!error) setLines(prev => prev.map(l => l.id === lineEditModal.id ? { ...l, ...payload } : l))
+    setLineEditModal(null)
+    setSavingLineEdit(false)
+  }
+
   // ── Save new or edited template ──
   async function saveTmpl() {
     if (!tmplForm.label.trim() || !tmplForm.code.trim()) return
@@ -1640,6 +1662,8 @@ function RecurringJETab({ orgId, C }) {
     setLines(prev => prev.filter(l => l.id !== lineId))
     setDeletingLineId(null)
   }
+
+  const inputStyle = {
     background: C.bg, border: '1px solid ' + C.bdr, color: C.w,
     borderRadius: 6, padding: '6px 8px', fontSize: 11,
     fontFamily: "'DM Mono', monospace", width: '100%', boxSizing: 'border-box',
@@ -1794,45 +1818,34 @@ function RecurringJETab({ orgId, C }) {
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '6px 0', borderBottom: '1px solid ' + C.bdrF,
               }}>
-                <span style={{ flex: 1, fontSize: 11, color: C.w }}>{l.acct_name}</span>
-                {editingLine === l.id ? (
-                  <>
-                    <input
-                      type="number" step="0.01"
-                      value={editAmt}
-                      onChange={e => setEditAmt(e.target.value)}
-                      autoFocus
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') saveLineEdit(l.id)
-                        if (e.key === 'Escape') { setEditingLine(null); setEditAmt('') }
-                      }}
-                      style={{ ...inputStyle, width: 110, padding: '4px 8px' }}
-                    />
-                    <button onClick={() => saveLineEdit(l.id)} disabled={savingLine} style={{
-                      background: C.go, border: 'none', color: '#fff',
-                      borderRadius: 5, padding: '4px 10px', fontSize: 10,
-                      cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700,
-                    }}>{savingLine ? '…' : 'Save'}</button>
-                    <button onClick={() => { setEditingLine(null); setEditAmt('') }} style={{
-                      background: 'transparent', border: '1px solid ' + C.bdr, color: C.g,
-                      borderRadius: 5, padding: '4px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
-                    }}>✕</button>
-                  </>
-                ) : (
-                  <>
-                    <span style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", minWidth: 90, textAlign: 'right' }}>
-                      {'$' + fmt(l.amount || 0)}
-                    </span>
-                    <button onClick={() => { setEditingLine(l.id); setEditAmt(String(l.amount || 0)) }} style={{
-                      background: 'transparent', border: '1px solid ' + C.bdrF, color: C.g,
-                      borderRadius: 5, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
-                    }}>✏️</button>
-                    <button onClick={() => deleteLine(l.id)} disabled={deletingLineId === l.id} style={{
-                      background: 'transparent', border: '1px solid ' + C.bdrF, color: '#c04040',
-                      borderRadius: 5, padding: '3px 7px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
-                    }}>{deletingLineId === l.id ? '…' : '🗑'}</button>
-                  </>
-                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: C.w }}>{l.acct_name}</div>
+                  <div style={{ fontSize: 9, color: C.g, fontFamily: "'DM Mono', monospace" }}>
+                    {l.acct_number ? l.acct_number + ' · ' : ''}{l.is_debit ? 'DR' : 'CR'}
+                  </div>
+                </div>
+                <span style={{ fontSize: 11, color: C.go, fontFamily: "'DM Mono', monospace", minWidth: 90, textAlign: 'right' }}>
+                  {'$' + fmt(l.amount || 0)}
+                </span>
+                <button
+                  onClick={() => {
+                    setLineEditForm({
+                      acct_number: l.acct_number || '',
+                      acct_name:   l.acct_name || '',
+                      is_debit:    l.is_debit,
+                      is_editable: l.is_editable,
+                      amount:      String(l.amount || 0),
+                    })
+                    setLineEditModal(l)
+                  }}
+                  style={{
+                    background: 'transparent', border: '1px solid ' + C.bdrF, color: C.g,
+                    borderRadius: 5, padding: '3px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>✏️</button>
+                <button onClick={() => deleteLine(l.id)} disabled={deletingLineId === l.id} style={{
+                  background: 'transparent', border: '1px solid ' + C.bdrF, color: '#c04040',
+                  borderRadius: 5, padding: '3px 7px', fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
+                }}>{deletingLineId === l.id ? '…' : '🗑'}</button>
               </div>
             ))}
           </div>
@@ -1904,7 +1917,51 @@ function RecurringJETab({ orgId, C }) {
         </div>
       )}
 
-      {/* ── ADD LINE MODAL ── */}
+      {/* ── FULL LINE EDIT MODAL ── */}
+      {lineEditModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 16 }}>
+          <div style={{ background: C.bg2, border: '1px solid ' + C.bdr, borderRadius: 14, padding: 28, maxWidth: 400, width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.go, marginBottom: 16 }}>✏️ Edit Line</div>
+
+            <label style={labelStyle}>Account Number</label>
+            <input value={lineEditForm.acct_number} onChange={e => setLineEditForm(p => ({ ...p, acct_number: e.target.value }))} placeholder="e.g. 6270" style={{ ...inputStyle, marginBottom: 12, fontFamily: "'DM Mono', monospace" }} />
+
+            <label style={labelStyle}>Account Name</label>
+            <input value={lineEditForm.acct_name} onChange={e => setLineEditForm(p => ({ ...p, acct_name: e.target.value }))} placeholder="e.g. Interest Expense — New Lender" style={{ ...inputStyle, marginBottom: 12, fontFamily: 'inherit' }} />
+
+            <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Side</label>
+                <select value={lineEditForm.is_debit ? 'debit' : 'credit'} onChange={e => setLineEditForm(p => ({ ...p, is_debit: e.target.value === 'debit' }))} style={{ ...inputStyle, fontFamily: 'inherit' }}>
+                  <option value="debit">Debit</option>
+                  <option value="credit">Credit</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Type</label>
+                <select value={lineEditForm.is_editable ? 'editable' : 'fixed'} onChange={e => setLineEditForm(p => ({ ...p, is_editable: e.target.value === 'editable' }))} style={{ ...inputStyle, fontFamily: 'inherit' }}>
+                  <option value="fixed">Fixed amount</option>
+                  <option value="editable">Editable (monthly input)</option>
+                </select>
+              </div>
+            </div>
+
+            {!lineEditForm.is_editable && (
+              <>
+                <label style={labelStyle}>Amount</label>
+                <input type="number" step="0.01" value={lineEditForm.amount} onChange={e => setLineEditForm(p => ({ ...p, amount: e.target.value }))} placeholder="0.00" style={{ ...inputStyle, marginBottom: 12, fontFamily: "'DM Mono', monospace" }} />
+              </>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => setLineEditModal(null)} style={{ background: 'transparent', border: '1px solid ' + C.bdr, color: C.g, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontFamily: 'inherit' }}>Cancel</button>
+              <button onClick={saveLineEditFull} disabled={savingLineEdit || !lineEditForm.acct_number.trim() || !lineEditForm.acct_name.trim()} style={{ background: C.go, border: 'none', color: '#fff', padding: '7px 20px', borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700, fontFamily: 'inherit', opacity: (!lineEditForm.acct_number.trim() || !lineEditForm.acct_name.trim()) ? 0.5 : 1 }}>
+                {savingLineEdit ? '…' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {lineModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 16 }}>
           <div style={{ background: C.bg2, border: '1px solid ' + C.bdr, borderRadius: 14, padding: 28, maxWidth: 380, width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.5)' }}>
@@ -5198,6 +5255,7 @@ function CashDashboard({ orgId, C }) {
   const [iazData, setIazData] = useState(null)
   const [omegaData, setOmegaData] = useState(null)
   const [iazAP, setIazAP] = useState([])
+  const [iazAPLeases, setIazAPLeases] = useState([])
   const [iazAR, setIazAR] = useState([])
   const [iazARMeta, setIazARMeta] = useState(null)   // { total_ar, invoice_count, oldest_date, pdf_url, uploaded_at }
   const [omegaAR, setOmegaAR] = useState([])
@@ -5230,9 +5288,14 @@ function CashDashboard({ orgId, C }) {
     Promise.all([
       supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
       supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
         if (!r.data || !r.data[0]) return { data: [] }
-        return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
+        return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
+      }),
+      // Leases & Contracts AP
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+        if (!r.data || !r.data[0]) return { data: [] }
+        return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
       }),
       supabase.from('cashflow_ar').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
         if (!r.data || !r.data[0]) return { data: [] }
@@ -5245,12 +5308,13 @@ function CashDashboard({ orgId, C }) {
       }),
       // IAZ AR report meta (PDF summary)
       supabase.from('cashflow_ar_reports').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('report_type', 'ar').order('uploaded_at', { ascending: false }).limit(1)
-    ]).then(([iazSnap, omegaSnap, apR, arR, iazArR, iazArMetaR]) => {
+    ]).then(([iazSnap, omegaSnap, apR, apLeasesR, arR, iazArR, iazArMetaR]) => {
       setIazData((iazSnap.data || [])[0] || null)
       const omegaSnapRow = (omegaSnap.data || [])[0] || null
       setOmegaData(omegaSnapRow)
       if (omegaSnapRow?.pl_data) setOmegaPL(omegaSnapRow.pl_data)
       setIazAP(apR.data || [])
+      setIazAPLeases(apLeasesR.data || [])
       setOmegaAR(arR.data || [])
       setIazAR(iazArR.data || [])
       setIazARMeta((iazArMetaR.data || [])[0] || null)
@@ -5614,14 +5678,15 @@ function CashDashboard({ orgId, C }) {
           if (entity === 'iaz') setIazAR(freshAR || [])
           else setOmegaAR(freshAR || [])
           setUploading(null); return
-        } else if (type === 'ap') {
+        } else if (type === 'ap' || type === 'ap_leases') {
+          const apType = type === 'ap' ? 'transactions' : 'leases_contracts'
           const rows = parseAPaging(text)
-          await supabase.from('cashflow_ap').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate)
-          if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
-          sh(rows.length + ' AP vendors loaded ✓')
-          // Reload AP rows directly without changing selected date
-          const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).order('total',{ascending:true})
-          setIazAP(freshAP || [])
+          await supabase.from('cashflow_ap').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).eq('ap_type',apType)
+          if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate, ap_type: apType })))
+          sh(rows.length + (apType === 'leases_contracts' ? ' lease/contract vendors loaded ✓' : ' AP vendors loaded ✓'))
+          const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).eq('ap_type',apType).order('total',{ascending:true})
+          if (apType === 'leases_contracts') setIazAPLeases(freshAP || [])
+          else setIazAP(freshAP || [])
           setUploading(null); return
         } else if (type === 'pl') {
           const parsed = parseOmegaPL(text)
@@ -5809,7 +5874,7 @@ function CashDashboard({ orgId, C }) {
     )
   }
 
-  const EntityCol = ({ title, snap, ap, ar, entity, arMeta, payrollMeta, plData }) => {
+  const EntityCol = ({ title, snap, ap, apLeases, ar, entity, arMeta, payrollMeta, plData }) => {
     const [arEditOpen, setArEditOpen] = useState(false)
     const [arEditForm, setArEditForm] = useState({ st_month: '', st_amount: '' })
     const [arEditSaving, setArEditSaving] = useState(false)
@@ -5836,6 +5901,7 @@ function CashDashboard({ orgId, C }) {
               <UpBtn entity={entity} type="pl" label="P&L" />
               <UpBtn entity={entity} type="ar" label="AR Aging" />
               {entity === 'iaz' && <UpBtn entity={entity} type="ap" label="AP Aging" />}
+              {entity === 'iaz' && <UpBtn entity={entity} type="ap_leases" label="Leases & Contracts" />}
               {entity === 'iaz' && <UpBtn entity={entity} type="payroll" label="Payroll CSV" />}
             </div>
           </div>
@@ -5994,11 +6060,23 @@ function CashDashboard({ orgId, C }) {
             )
           })()}
           {entity === 'iaz' && <>
+            {/* AP — Transactions */}
             <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
-              <span>{ap.length > 0 ? 'Accounts Payable — ' + ap.filter(v=>v.total!==0).length + ' vendors' : 'Accounts Payable'}</span>
-              <UpBtn entity={entity} type="ap" label="AP Aging" />
+              <span>{'Accounts Payable - Transactions' + (ap.length > 0 ? ' — ' + ap.filter(v=>v.total!==0).length + ' vendors' : '')}</span>
+              <UpBtn entity={entity} type="ap" label="Upload CSV" />
             </div>
             {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
+
+            {/* AP — Contracts and Leases */}
+            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:14, display:'flex', alignItems:'center', gap:8 }}>
+              <span>{'Accounts Payable - Contracts and Leases' + ((apLeases||[]).length > 0 ? ' — ' + (apLeases||[]).filter(v=>v.total!==0).length + ' vendors' : '')}</span>
+              <UpBtn entity={entity} type="ap_leases" label="Upload CSV" />
+            </div>
+            {(apLeases||[]).length > 0
+              ? <AgedTable rows={apLeases} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
+              : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No data — upload CSV above.'}</div>
+            }
+
             {/* IAZ PDF Reports — P&L and Balance Sheet — at the bottom */}
             <IAZPDFReports orgId={orgId} C={C} />
           </>}
@@ -6025,7 +6103,7 @@ function CashDashboard({ orgId, C }) {
 
       {!loading && (
         <div style={{ display:'flex', gap:24, alignItems:'flex-start' }}>
-          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} ar={iazAR} entity="iaz" arMeta={iazARMeta} />}
+          {(entityView==='both'||entityView==='iaz') && <EntityCol title="IAZ Corporation" snap={iazData} ap={iazAP} apLeases={iazAPLeases} ar={iazAR} entity="iaz" arMeta={iazARMeta} />}
           {entityView==='both' && <div style={{ width:1, background:C.bdr, alignSelf:'stretch', flexShrink:0 }} />}
           {(entityView==='both'||entityView==='omega') && <EntityCol title="Omega LLC" snap={omegaData} ap={[]} ar={omegaAR} entity="omega" plData={omegaPL} />}
         </div>

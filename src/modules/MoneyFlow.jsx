@@ -5576,7 +5576,6 @@ function CashDashboard({ orgId, C }) {
 
   const parseAPaging = (text) => {
     const rows = []
-    // Split respecting quoted fields (commas inside quotes)
     function splitCSV(line) {
       const result = []
       let cur = '', inQ = false
@@ -5594,11 +5593,30 @@ function CashDashboard({ orgId, C }) {
       return parseFloat(clean) || 0
     }
     const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    // Find the header row — contains 'Vendor' or 'VENDOR'
+    // Find header row — contains 'Vendor' and 'Current'
     let dataStart = -1
+    let colCurr = 1, colD30 = 2, colD60 = 3, colD90 = 4, colOver90 = 5, colTotal = -1
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes('vendor') && lines[i].toLowerCase().includes('current')) {
-        dataStart = i + 1; break
+      const low = lines[i].toLowerCase()
+      if (low.includes('vendor') && low.includes('current')) {
+        // Detect column positions from header
+        const hdr = splitCSV(lines[i]).map(h => h.replace(/"/g,'').toLowerCase().trim())
+        hdr.forEach((h, idx) => {
+          if (idx === 0) return
+          if (h.includes('current')) colCurr = idx
+          else if (h.includes('30') || h === '1-30' || h === '30-jan') colD30 = idx
+          else if (h.includes('60') || h === '31-60') colD60 = idx
+          else if (h.includes('90') && !h.includes('over') && !h.includes('91') && !h.includes('+')) colD90 = idx
+          else if (h.includes('over') || h.includes('91') || h.includes('+')) colOver90 = idx
+          else if (h === 'total' || h === 'balance') colTotal = idx
+        })
+        // If no explicit total column found, use last column
+        if (colTotal < 0) {
+          const hdrParts = splitCSV(lines[i])
+          colTotal = hdrParts.length - 1
+        }
+        dataStart = i + 1
+        break
       }
     }
     if (dataStart < 0) dataStart = 1
@@ -5608,12 +5626,16 @@ function CashDashboard({ orgId, C }) {
       if (!vendor) continue
       const low = vendor.toLowerCase()
       if (['total','totals','a/p aging','as of','friday','monday','tuesday','wednesday','thursday','saturday','sunday'].some(x => low.includes(x))) continue
-      const curr = pv(parts[1]), d30 = pv(parts[2]), d60 = pv(parts[3]), d90 = pv(parts[4]), over90 = pv(parts[5])
-      const total = curr + d30 + d60 + d90 + over90
-      if (total === 0) continue
+      const curr   = pv(parts[colCurr])
+      const d30    = pv(parts[colD30])
+      const d60    = pv(parts[colD60])
+      const d90    = pv(parts[colD90])
+      const over90 = pv(parts[colOver90])
+      // Use the CSV's own total column if available — more reliable than recomputing
+      const total  = colTotal >= 0 && parts[colTotal] ? pv(parts[colTotal]) : (curr + d30 + d60 + d90 + over90)
+      if (total === 0 && curr === 0 && d30 === 0 && d60 === 0 && d90 === 0 && over90 === 0) continue
       rows.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
     }
-    // Sort alphabetically
     rows.sort((a, b) => a.vendor.localeCompare(b.vendor))
     return rows
   }
@@ -6076,28 +6098,31 @@ function CashDashboard({ orgId, C }) {
               </div>
             )
           })()}
-          {entity === 'iaz' && <>
-            {/* AP — Transactions */}
-            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, display:'flex', alignItems:'center', gap:8 }}>
-              <span>{'Accounts Payable - Transactions' + (ap.length > 0 ? ' — ' + ap.filter(v=>v.total!==0).length + ' vendors' : '')}</span>
-              <UpBtn entity={entity} type="ap" label="Upload CSV" />
-            </div>
-            {ap.length > 0 && <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />}
+        </>}
 
-            {/* AP — Contracts and Leases */}
-            <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:14, display:'flex', alignItems:'center', gap:8 }}>
-              <span>{'Accounts Payable - Contracts and Leases' + ((apLeases||[]).length > 0 ? ' — ' + (apLeases||[]).filter(v=>v.total!==0).length + ' vendors' : '')}</span>
-              <UpBtn entity={entity} type="ap_leases" label="Upload CSV" />
-            </div>
-            {(apLeases||[]).length > 0
-              ? <AgedTable rows={apLeases} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
-              : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No data — upload CSV above.'}</div>
-            }
+        {entity === 'iaz' && <>
+          {/* AP — Transactions */}
+          <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:14, display:'flex', alignItems:'center', gap:8 }}>
+            <span>{'Accounts Payable - Transactions' + (ap.length > 0 ? ' — ' + ap.filter(v=>v.total!==0).length + ' vendors' : '')}</span>
+            <UpBtn entity={entity} type="ap" label="Upload CSV" />
+          </div>
+          {ap.length > 0
+            ? <AgedTable rows={ap} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
+            : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:8 }}>{'No data — upload CSV above.'}</div>
+          }
 
-            {/* IAZ PDF Reports — P&L and Balance Sheet — at the bottom */}
-            <IAZPDFReports orgId={orgId} C={C} />
-          </>}
+          {/* AP — Contracts and Leases */}
+          <div style={{ fontSize:9, color:C.g, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:6, marginTop:14, display:'flex', alignItems:'center', gap:8 }}>
+            <span>{'Accounts Payable - Contracts and Leases' + ((apLeases||[]).length > 0 ? ' — ' + (apLeases||[]).filter(v=>v.total!==0).length + ' vendors' : '')}</span>
+            <UpBtn entity={entity} type="ap_leases" label="Upload CSV" />
+          </div>
+          {(apLeases||[]).length > 0
+            ? <AgedTable rows={apLeases} keyField="vendor" labelField="Vendor" defaultSortKey="vendor" />
+            : <div style={{ fontSize:11, color:C.g, fontStyle:'italic', marginBottom:14 }}>{'No data — upload CSV above.'}</div>
+          }
 
+          {/* IAZ PDF Reports — P&L and Balance Sheet — at the bottom */}
+          <IAZPDFReports orgId={orgId} C={C} />
         </>}
       </div>
     )
@@ -6160,29 +6185,36 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   useEffect(() => {
     if (!orgId) return
     setLoading(true)
-    // Get most recent AP snapshot
-    supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).order('snapshot_date', { ascending: false }).limit(1)
-      .then(({ data }) => {
-        if (!data || !data[0]) { setBills([]); setLoading(false); return }
-        const latestDate = data[0].snapshot_date
-        supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
-          .then(async ({ data: apData }) => {
-            const { data: schedData } = await supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
-            const schedMap = {}
-            if (schedData) schedData.forEach(r => { schedMap[r.vendor] = r })
-            setScheduled(schedMap)
-            const rows = (apData || []).filter(r => r.total !== 0).map((r, i) => ({
-              ...r,
-              payAmt: '',
-              marked: false,
-              priority: i,
-              scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
-              notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
-            }))
-            setBills(rows)
-            setLoading(false)
-          })
-      })
+    // Load both ap_types, each from their own most-recent snapshot date
+    Promise.all([
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions').order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return []
+          const { data } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions').eq('snapshot_date', r.data[0].snapshot_date).order('vendor', { ascending: true })
+          return (data || []).map(row => ({ ...row, _source: 'transactions' }))
+        }),
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts').order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return []
+          const { data } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts').eq('snapshot_date', r.data[0].snapshot_date).order('vendor', { ascending: true })
+          return (data || []).map(row => ({ ...row, _source: 'leases_contracts' }))
+        }),
+      supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
+    ]).then(([txRows, lcRows, schedData]) => {
+      const schedMap = {}
+      if (schedData.data) schedData.data.forEach(r => { schedMap[r.vendor] = r })
+      setScheduled(schedMap)
+      const allRows = [...txRows, ...lcRows].filter(r => r.total !== 0).map((r, i) => ({
+        ...r,
+        payAmt: '',
+        marked: false,
+        priority: i,
+        scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
+        notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
+      }))
+      setBills(allRows)
+      setLoading(false)
+    })
   }, [orgId, entity])
 
   const [dragIdx, setDragIdx] = useState(null)
@@ -6193,16 +6225,18 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   const [schedModal, setSchedModal] = useState(null) // null | { vendor, existing: row|null }
 
   const loadSchedPmts = async () => {
+    const today = new Date().toISOString().split('T')[0]
     const { data } = await supabase.from('ap_scheduled_payments')
       .select('*').eq('org_id', orgId).eq('entity', entity)
-      .eq('status', 'pending').order('scheduled_date', { ascending: true })
+      .eq('status', 'pending').gte('scheduled_date', today)
+      .order('scheduled_date', { ascending: true })
     setSchedPmts(data || [])
   }
 
-  // keyed by vendor — most recent pending entry
+  // keyed by vendor — earliest upcoming payment
   const schedPmtMap = {}
   schedPmts.forEach(p => {
-    if (!schedPmtMap[p.vendor] || p.scheduled_date > schedPmtMap[p.vendor].scheduled_date) {
+    if (!schedPmtMap[p.vendor] || p.scheduled_date < schedPmtMap[p.vendor].scheduled_date) {
       schedPmtMap[p.vendor] = p
     }
   })
@@ -6292,67 +6326,6 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   const markedTotal = bills.filter(b => b.marked).reduce((s, b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
   const totalOwed = bills.reduce((s, b) => s + Math.abs(b.total), 0)
 
-  const handleCSVUpload = (file) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const text = e.target.result
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-      const parsed = []
-      const pv = s => parseFloat((s||'').replace(/['"$,]/g,'')) || 0
-      lines.forEach((line, idx) => {
-        if (idx === 0) return
-        const parts = line.split(',').map(s => s.replace(/"/g,'').trim())
-        const vendor = parts[0]
-        if (!vendor || ['vendor','total','totals','a/p'].some(x => vendor.toLowerCase().includes(x))) return
-        const curr=pv(parts[1]), d30=pv(parts[2]), d60=pv(parts[3]), d90=pv(parts[4]), over90=pv(parts[5])
-        const total = curr+d30+d60+d90+over90
-        if (total === 0) return
-        parsed.push({ vendor, current_amt: curr, d30, d60, d90, over90, total })
-      })
-      if (!parsed.length) { sh('No vendors found in file'); return }
-      // Save to Supabase — use today as snapshot date
-      const snapDate = new Date().toISOString().split('T')[0]
-      // Archive existing AP + recon notes before replacing
-      const { data: existing } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
-      if (existing && existing.length) {
-        await supabase.from('cashflow_ap_history').insert(existing.map(r => ({ ...r, archived_at: new Date().toISOString() })))
-        // Archive recon notes linked to these vendors
-        const { data: reconData } = await supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
-        if (reconData && reconData.length) {
-          const reconRows = reconData.map(r => ({
-            org_id: r.org_id, entity: r.entity, vendor: r.vendor,
-            total: (existing.find(b => b.vendor === r.vendor)||{}).total || 0,
-            recon_status: r.recon_status, recon_note: r.recon_note,
-            snapshot_date: snapDate, archived_at: new Date().toISOString(),
-            updated_by: r.updated_by
-          }))
-          await supabase.from('cashflow_ap_recon_history').insert(reconRows)
-        }
-      }
-      await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate)
-      await supabase.from('cashflow_ap').insert(parsed.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate })))
-      // Re-load scheduled notes and merge — scheduled amounts survive the upload
-      const { data: schedData } = await supabase.from('cashflow_ap_notes').select('*').eq('org_id', orgId).eq('entity', entity)
-      const schedMap = {}
-      if (schedData) schedData.forEach(r => { schedMap[r.vendor] = r })
-      setScheduled(schedMap)
-      const rows = parsed.map((r, i) => ({
-        ...r,
-        payAmt: '',
-        marked: false,
-        priority: i,
-        scheduledAmt: schedMap[r.vendor] ? schedMap[r.vendor].scheduled_amt || '' : '',
-        notes: schedMap[r.vendor] ? schedMap[r.vendor].notes || '' : ''
-      }))
-      rows.sort((a, b) => a.vendor.localeCompare(b.vendor))
-      setBills(rows)
-      const scheduledCount = Object.values(schedMap).filter(s => s.scheduled_amt).length
-      sh(parsed.length + ' vendors loaded' + (scheduledCount ? ' — ' + scheduledCount + ' scheduled amounts carried forward' : ''))
-    }
-    reader.readAsText(file)
-  }
-
   return (
     <div>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
@@ -6361,13 +6334,13 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
             <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
         </div>
-        <label style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:5, border:'1px solid '+C.bdr, cursor:'pointer', fontSize:11, color:C.g, fontFamily:'inherit' }}>
-          {'Upload AP Aging CSV'}
-          <input type="file" accept=".csv" style={{ display:'none' }} onChange={ev => handleCSVUpload(ev.target.files[0])} />
-        </label>
-        <button onClick={() => { setCcModal(true); setCcTab('submissions') }} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
-          {'💳 CC Pymts'}
-        </button>
+        <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+          <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Upload CSVs from the Dashboard tab'}</span>
+          <button onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 100) }} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
+          <button onClick={() => { setCcModal(true); setCcTab('submissions') }} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
+            {'💳 CC Pymts'}
+          </button>
+        </div>
       </div>
 
       {ccModal && (
@@ -6437,7 +6410,10 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
             <span style={{ fontSize:11, color:C.g, minWidth:20, textAlign:'right', flexShrink:0 }}>{idx+1}</span>
             <input type="checkbox" checked={b.marked} onChange={() => toggleMark(b.id||idx)} style={{ flexShrink:0, cursor:'pointer', width:14, height:14 }} />
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontWeight:600, fontSize:13 }}>{b.vendor}</div>
+              <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:1 }}>
+                <span style={{ fontWeight:600, fontSize:13 }}>{b.vendor}</span>
+                {b._source && <span style={{ fontSize:8, padding:'1px 6px', borderRadius:99, background:b._source==='leases_contracts'?'rgba(154,106,196,0.18)':'rgba(196,149,106,0.18)', color:b._source==='leases_contracts'?'#9a6ac4':C.go, fontWeight:700 }}>{b._source==='leases_contracts'?'Lease/Contract':'Transaction'}</span>}
+              </div>
               <div style={{ fontSize:9, color:C.g, marginTop:2 }}>
                 {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
                 {b.d30?'1-30d: '+fmt(b.d30)+'  ':''}

@@ -7242,6 +7242,7 @@ function APReconView({ orgId, C, userEmail }) {
   const [schedModal, setSchedModal] = useState(null)
   const [lastRefresh, setLastRefresh] = useState(Date.now())
   const [activeRow, setActiveRow] = useState(null) // 'vendor|apType' of row being edited
+  const [sortByStatus, setSortByStatus] = useState(false)
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
@@ -7397,14 +7398,20 @@ function APReconView({ orgId, C, userEmail }) {
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
 
   const alphaSort = (a, b) => a.vendor.localeCompare(b.vendor)
+  const statusSort = (a, b) => {
+    const ORDER = { '': 0, 'disputed': 1, 'confirmed': 2, 'scheduled': 3, 'paid': 4 }
+    const sa = ORDER[a.recon_status||''] ?? 0
+    const sb = ORDER[b.recon_status||''] ?? 0
+    if (sa !== sb) return sa - sb
+    return a.vendor.localeCompare(b.vendor)
+  }
   const stableSort = (arr) => {
-    // Active row stays in its current position; others sort alpha
+    if (sortByStatus) return [...arr].sort(statusSort)
     if (!activeRow) return [...arr].sort(alphaSort)
     const [activeVendor, activeType] = (activeRow || '|').split('|')
     const activeIdx = arr.findIndex(b => b.vendor === activeVendor && b._source === activeType)
     if (activeIdx < 0) return [...arr].sort(alphaSort)
     const without = arr.filter(b => !(b.vendor === activeVendor && b._source === activeType)).sort(alphaSort)
-    // Reinsert active row at same relative position
     const insertAt = Math.min(activeIdx, without.length)
     without.splice(insertAt, 0, arr[activeIdx])
     return without
@@ -7431,6 +7438,7 @@ function APReconView({ orgId, C, userEmail }) {
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <button onClick={() => { setLastRefresh(Date.now()); loadSchedPmts() }} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
+          <button onClick={() => setSortByStatus(p => !p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(sortByStatus?C.go:C.bdrF), background:sortByStatus?C.gD:'transparent', color:sortByStatus?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{sortByStatus ? 'Sorted by Status' : 'Sort by Status'}</button>
           <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
           <button onClick={() => { if (window.confirm('Archive this review and clear all statuses/notes for next review?')) archiveAndClose() }} style={{ padding:'4px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{'📋 Archive & Close'}</button>
         </div>

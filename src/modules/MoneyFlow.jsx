@@ -7062,15 +7062,18 @@ function APReconView({ orgId, C, userEmail }) {
   }, [orgId, entity])
 
   const loadSchedPmts = async () => {
+    const today = new Date().toISOString().split('T')[0]
     const { data } = await supabase.from('ap_scheduled_payments')
       .select('*').eq('org_id', orgId).eq('entity', entity)
-      .eq('status', 'pending').order('scheduled_date', { ascending: true })
+      .eq('status', 'pending').gte('scheduled_date', today)
+      .order('scheduled_date', { ascending: true })
     setSchedPmts(data || [])
   }
 
+  // Map vendor -> earliest upcoming scheduled payment
   const schedPmtMap = {}
   schedPmts.forEach(p => {
-    if (!schedPmtMap[p.vendor] || p.scheduled_date > schedPmtMap[p.vendor].scheduled_date) {
+    if (!schedPmtMap[p.vendor] || p.scheduled_date < schedPmtMap[p.vendor].scheduled_date) {
       schedPmtMap[p.vendor] = p
     }
   })

@@ -5251,7 +5251,7 @@ function OmegaCSVViewer({ title, raw, C }) {
 // ═══════════════════════════════════════════════════════
 function CashDashboard({ orgId, C }) {
   const [snapshots, setSnapshots] = useState([])
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [selectedDate, setSelectedDate] = useState(null)
   const [iazData, setIazData] = useState(null)
   const [omegaData, setOmegaData] = useState(null)
   const [iazAP, setIazAP] = useState([])
@@ -5266,15 +5266,32 @@ function CashDashboard({ orgId, C }) {
   const [toast, setToast] = useState('')
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3500) }
 
-  // Load available snapshot dates on mount
+  // Load available snapshot dates on mount — also load AP directly if no snapshots yet
   useEffect(() => {
     if (!orgId) return
     supabase.from('cashflow_snapshots')
       .select('snapshot_date,entity')
       .eq('org_id', orgId)
       .order('snapshot_date', { ascending: false })
-      .then(({ data }) => {
-        if (!data || !data.length) { setLoading(false); return }
+      .then(async ({ data }) => {
+        if (!data || !data.length) {
+          const today = new Date().toISOString().split('T')[0]
+          const [apTxR, apLeaseR] = await Promise.all([
+            supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+              if (!r.data || !r.data[0]) return { data: [] }
+              return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
+            }),
+            supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+              if (!r.data || !r.data[0]) return { data: [] }
+              return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
+            }),
+          ])
+          setIazAP(apTxR.data || [])
+          setIazAPLeases(apLeaseR.data || [])
+          setSelectedDate(today)
+          setLoading(false)
+          return
+        }
         const dates = [...new Set(data.map(r => r.snapshot_date))].sort((a,b) => b.localeCompare(a))
         setSnapshots(dates)
         setSelectedDate(dates[0])
@@ -6966,6 +6983,7 @@ function TaskLogView({ orgId, C }) {
 
 function APReconView({ orgId, C, userEmail }) {
   const [entity, setEntity] = useState('iaz')
+  const [apType, setApType] = useState('transactions')
   const [bills, setBills] = useState([])
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
@@ -6997,12 +7015,12 @@ function APReconView({ orgId, C, userEmail }) {
     if (!orgId) return
     setLoading(true)
     Promise.all([
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity)
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
         .order('snapshot_date', { ascending: false }).limit(1)
         .then(async r => {
           if (!r.data || !r.data[0]) return { data: [] }
           const latestDate = r.data[0].snapshot_date
-          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
+          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
         }),
       supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
     ]).then(([apR, reconR]) => {
@@ -7015,19 +7033,19 @@ function APReconView({ orgId, C, userEmail }) {
       setBills(merged)
       setLoading(false)
     })
-  }, [orgId, entity])
+  }, [orgId, entity, apType])
 
   useEffect(() => {
     if (!orgId || !showHistory) return
     supabase.from('cashflow_ap_recon_history').select('*').eq('org_id', orgId).eq('entity', entity)
       .order('archived_at', { ascending: false }).limit(100)
       .then(({ data }) => setHistory(data || []))
-  }, [orgId, entity, showHistory])
+  }, [orgId, entity, showHistory, apType])
 
   useEffect(() => {
     if (!orgId) return
     loadSchedPmts()
-  }, [orgId, entity])
+  }, [orgId, entity, apType])
 
   const loadSchedPmts = async () => {
     const { data } = await supabase.from('ap_scheduled_payments')
@@ -7086,7 +7104,7 @@ function APReconView({ orgId, C, userEmail }) {
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
         <div style={{ display:'flex', gap:4 }}>
           {ENTITIES.map(e => (
             <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
@@ -7095,6 +7113,14 @@ function APReconView({ orgId, C, userEmail }) {
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
         </div>
+      </div>
+      <div style={{ display:'flex', gap:4, marginBottom:16 }}>
+        {[
+          { v: 'transactions', l: 'AP Transactions' },
+          { v: 'leases_contracts', l: 'Leases & Contracts' },
+        ].map(t => (
+          <button key={t.v} onClick={() => setApType(t.v)} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+(apType===t.v?C.go:C.bdrF), background:apType===t.v?C.gD:'transparent', color:apType===t.v?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{t.l}</button>
+        ))}
       </div>
 
       {!showHistory && <>
@@ -7110,7 +7136,7 @@ function APReconView({ orgId, C, userEmail }) {
 
         {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
 
-        {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded. Upload an AP Aging CSV in the Cash Flow tab first.'}</div>}
+        {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded for ' + (apType === 'leases_contracts' ? 'Leases & Contracts' : 'Transactions') + '. Upload a CSV in the Cash Flow tab first.'}</div>}
 
         {!loading && [...bills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b, i) => (
           <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 120px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>

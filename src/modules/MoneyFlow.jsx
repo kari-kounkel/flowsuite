@@ -7034,10 +7034,11 @@ function APReconSubtotalRow({ label, total, color, C }) {
   )
 }
 
-function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, canEditSched, STATUS_COLORS, RECON_STATUSES, SOURCE_COLOR, WARN, POS, NEG }) {
+function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, canEditSched, STATUS_COLORS, RECON_STATUSES, SOURCE_COLOR, WARN, POS, NEG, setActiveRow }) {
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
+  const rowKey = b.vendor + '|' + b._source
   return (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
+    <div onFocus={() => setActiveRow(rowKey)} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setActiveRow(null) }} style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
       <div>
         <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
         <div style={{ fontSize:9, color:C.g, marginTop:1 }}>
@@ -7062,10 +7063,10 @@ function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, c
           {b._source === 'leases_contracts' ? 'Lease/Contract' : 'Transaction'}
         </span>
       </div>
-      <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor,'recon_status',ev.target.value)} style={{ ...inp, width:'100%' }}>
+      <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor, b._source, 'recon_status', ev.target.value)} style={{ ...inp, width:'100%' }}>
         {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
       </select>
-      <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
+      <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor, b._source, 'recon_note', ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
       <div style={{ textAlign:'right' }}>
         {canEditSched && (
           <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
@@ -7240,6 +7241,7 @@ function APReconView({ orgId, C, userEmail }) {
   const [schedPmts, setSchedPmts] = useState([])
   const [schedModal, setSchedModal] = useState(null)
   const [lastRefresh, setLastRefresh] = useState(Date.now())
+  const [activeRow, setActiveRow] = useState(null) // 'vendor|apType' of row being edited
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
@@ -7286,8 +7288,7 @@ function APReconView({ orgId, C, userEmail }) {
     const allRows = [...txRows, ...lcRows]
     const recon = reconR.data || []
     const merged = allRows.map(b => {
-      const r = recon.find(x => x.vendor === b.vendor && (x.ap_type || 'transactions') === b._source) ||
-                recon.find(x => x.vendor === b.vendor) || {}
+      const r = recon.find(x => x.vendor === b.vendor && (x.ap_type || 'transactions') === b._source) || {}
       return { ...b, recon_status: r.recon_status || '', recon_note: r.recon_note || '', recon_id: r.id || null }
     })
     setBills(merged)
@@ -7357,12 +7358,12 @@ function APReconView({ orgId, C, userEmail }) {
     sh('Review archived ✓ — fields cleared for next review')
   }
 
-  const saveRecon = async (vendor, field, val) => {
+  const saveRecon = async (vendor, apType, field, val) => {
     const now = new Date().toISOString()
-    setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
-    const existing = bills.find(b => b.vendor === vendor)
+    setBills(p => p.map(b => b.vendor === vendor && b._source === apType ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
+    const existing = bills.find(b => b.vendor === vendor && b._source === apType)
     const payload = {
-      org_id: orgId, entity, vendor,
+      org_id: orgId, entity, vendor, ap_type: apType,
       recon_status: field === 'recon_status' ? val : (existing?.recon_status || ''),
       recon_note: field === 'recon_note' ? val : (existing?.recon_note || ''),
       updated_at: now,
@@ -7373,7 +7374,7 @@ function APReconView({ orgId, C, userEmail }) {
       await supabase.from('cashflow_ap_recon').update(payload).eq('id', existing.recon_id)
     } else {
       const { data } = await supabase.from('cashflow_ap_recon').insert([payload]).select().single()
-      if (data) setBills(p => p.map(b => b.vendor === vendor ? { ...b, recon_id: data.id } : b))
+      if (data) setBills(p => p.map(b => b.vendor === vendor && b._source === apType ? { ...b, recon_id: data.id } : b))
     }
   }
 
@@ -7396,8 +7397,20 @@ function APReconView({ orgId, C, userEmail }) {
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
 
   const alphaSort = (a, b) => a.vendor.localeCompare(b.vendor)
-  const txBills = bills.filter(b => b._source === 'transactions').sort(alphaSort)
-  const lcBills = bills.filter(b => b._source === 'leases_contracts').sort(alphaSort)
+  const stableSort = (arr) => {
+    // Active row stays in its current position; others sort alpha
+    if (!activeRow) return [...arr].sort(alphaSort)
+    const [activeVendor, activeType] = (activeRow || '|').split('|')
+    const activeIdx = arr.findIndex(b => b.vendor === activeVendor && b._source === activeType)
+    if (activeIdx < 0) return [...arr].sort(alphaSort)
+    const without = arr.filter(b => !(b.vendor === activeVendor && b._source === activeType)).sort(alphaSort)
+    // Reinsert active row at same relative position
+    const insertAt = Math.min(activeIdx, without.length)
+    without.splice(insertAt, 0, arr[activeIdx])
+    return without
+  }
+  const txBills = stableSort(bills.filter(b => b._source === 'transactions'))
+  const lcBills = stableSort(bills.filter(b => b._source === 'leases_contracts'))
   const totalTx = txBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
   const totalLC = lcBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
   const totalOwed = totalTx + totalLC
@@ -7441,13 +7454,13 @@ function APReconView({ orgId, C, userEmail }) {
 
         {!loading && txBills.length > 0 && <>
           <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:C.go, margin:'14px 0 6px' }}>{'AP Transactions'}</div>
-          {txBills.map((b,i) => <APReconBillRow key={'tx_'+b.vendor} b={b} i={i} C={C} fmt={fmt} schedPmtMap={schedPmtMap} saveRecon={saveRecon} setSchedModal={setSchedModal} canEditSched={canEditSched} STATUS_COLORS={STATUS_COLORS} RECON_STATUSES={RECON_STATUSES} SOURCE_COLOR={SOURCE_COLOR} WARN={WARN} POS={POS} NEG={NEG} />)}
+          {txBills.map((b,i) => <APReconBillRow key={'tx_'+b.vendor} b={b} i={i} C={C} fmt={fmt} schedPmtMap={schedPmtMap} saveRecon={saveRecon} setSchedModal={setSchedModal} canEditSched={canEditSched} STATUS_COLORS={STATUS_COLORS} RECON_STATUSES={RECON_STATUSES} SOURCE_COLOR={SOURCE_COLOR} WARN={WARN} POS={POS} NEG={NEG} setActiveRow={setActiveRow} />)}
           <APReconSubtotalRow label="Transactions Total" total={totalTx} color={C.go} C={C} />
         </>}
 
         {!loading && lcBills.length > 0 && <>
           <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:C.am, margin:'14px 0 6px' }}>{'Leases and Contracts'}</div>
-          {lcBills.map((b,i) => <APReconBillRow key={'lc_'+b.vendor} b={b} i={i} C={C} fmt={fmt} schedPmtMap={schedPmtMap} saveRecon={saveRecon} setSchedModal={setSchedModal} canEditSched={canEditSched} STATUS_COLORS={STATUS_COLORS} RECON_STATUSES={RECON_STATUSES} SOURCE_COLOR={SOURCE_COLOR} WARN={WARN} POS={POS} NEG={NEG} />)}
+          {lcBills.map((b,i) => <APReconBillRow key={'lc_'+b.vendor} b={b} i={i} C={C} fmt={fmt} schedPmtMap={schedPmtMap} saveRecon={saveRecon} setSchedModal={setSchedModal} canEditSched={canEditSched} STATUS_COLORS={STATUS_COLORS} RECON_STATUSES={RECON_STATUSES} SOURCE_COLOR={SOURCE_COLOR} WARN={WARN} POS={POS} NEG={NEG} setActiveRow={setActiveRow} />)}
           <APReconSubtotalRow label="Leases and Contracts Total" total={totalLC} color={C.am} C={C} />
         </>}
 

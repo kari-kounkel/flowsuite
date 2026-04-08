@@ -7289,7 +7289,7 @@ function APReconView({ orgId, C, userEmail }) {
     const allRows = [...txRows, ...lcRows]
     const recon = reconR.data || []
     const merged = allRows.map(b => {
-      const r = recon.find(x => x.vendor === b.vendor && (x.ap_type || 'transactions') === b._source) || {}
+      const r = recon.find(x => x.vendor === b.vendor) || {}
       return { ...b, recon_status: r.recon_status || '', recon_note: r.recon_note || '', recon_id: r.id || null }
     })
     setBills(merged)
@@ -7361,7 +7361,7 @@ function APReconView({ orgId, C, userEmail }) {
 
   const saveRecon = async (vendor, apType, field, val) => {
     const now = new Date().toISOString()
-    setBills(p => p.map(b => b.vendor === vendor && b._source === apType ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
+    setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
     const existing = bills.find(b => b.vendor === vendor && b._source === apType)
     const payload = {
       org_id: orgId, entity, vendor, ap_type: apType,
@@ -7371,12 +7371,10 @@ function APReconView({ orgId, C, userEmail }) {
       updated_by: userEmail || 'unknown',
       reviewed_at: field === 'recon_status' && val ? now : (existing?.reviewed_at || null)
     }
-    if (existing?.recon_id) {
-      await supabase.from('cashflow_ap_recon').update(payload).eq('id', existing.recon_id)
-    } else {
-      const { data } = await supabase.from('cashflow_ap_recon').insert([payload]).select().single()
-      if (data) setBills(p => p.map(b => b.vendor === vendor && b._source === apType ? { ...b, recon_id: data.id } : b))
-    }
+    const { data } = await supabase.from('cashflow_ap_recon')
+      .upsert([{ ...payload, ...(existing?.recon_id ? { id: existing.recon_id } : {}) }], { onConflict: 'org_id,entity,vendor' })
+      .select().single()
+    if (data) setBills(p => p.map(b => b.vendor === vendor ? { ...b, recon_id: data.id } : b))
   }
 
   const fmt = n => {

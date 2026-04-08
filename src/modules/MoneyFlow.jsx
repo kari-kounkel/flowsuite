@@ -6421,7 +6421,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
           <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
             <div style={{ fontSize:12, color:C.g }}>{'Total: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Transactions: '}<span style={{ fontWeight:700, color:C.go }}>{fmt(totalTx)}</span></div>
-            <div style={{ fontSize:12, color:C.g }}>{'Leases: '}<span style={{ fontWeight:700, color:'#9a6ac4' }}>{fmt(totalLC)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Leases: '}<span style={{ fontWeight:700, color:C.am }}>{fmt(totalLC)}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Scheduled in bill pay: '}<span style={{ fontWeight:700, color:WARN }}>{fmt(Object.values(scheduled).reduce((s,r)=>s+(parseFloat(r.scheduled_amt)||0),0))}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
             {bills.filter(b=>b.queued).length > 0 && <div style={{ fontSize:12, color:C.g }}>{'Queued: '}<span style={{ fontWeight:700, color:C.go }}>{bills.filter(b=>b.queued).length+' vendors'}</span></div>}
@@ -6448,7 +6448,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:1 }}>
                 <span style={{ fontWeight:600, fontSize:13 }}>{b.vendor}</span>
-                {b._source && <span style={{ fontSize:8, padding:'1px 6px', borderRadius:99, background:b._source==='leases_contracts'?'rgba(154,106,196,0.18)':'rgba(196,149,106,0.18)', color:b._source==='leases_contracts'?'#9a6ac4':C.go, fontWeight:700 }}>{b._source==='leases_contracts'?'Lease/Contract':'Transaction'}</span>}
+                {b._source && <span style={{ fontSize:8, padding:'1px 6px', borderRadius:99, background:b._source==='leases_contracts'?'rgba(180,130,80,0.18)':'rgba(196,149,106,0.18)', color:b._source==='leases_contracts'?C.am:C.go, fontWeight:700 }}>{b._source==='leases_contracts'?'Lease/Contract':'Transaction'}</span>}
               </div>
               <div style={{ fontSize:9, color:C.g, marginTop:2 }}>
                 {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
@@ -6513,7 +6513,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
 // ═══════════════════════════════════════════════════════
 // SCHEDULED PAYMENT MODAL — shared by CashFlow + APRecon
 // ═══════════════════════════════════════════════════════
-function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSaved, onExpired, C, allowVendorEdit }) {
+function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSaved, onExpired, C, allowVendorEdit, vendorList }) {
   const WARN = C.am
   const today = new Date().toISOString().split('T')[0]
   const blank = { vendor: vendor||'', amount: '', scheduled_date: '', payment_type: 'full', series_num: '', series_total: '', notes: '', status: 'pending' }
@@ -6559,7 +6559,12 @@ function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSa
           <div>
             <div style={{ fontSize:9, color:WARN, textTransform:'uppercase', letterSpacing:2, fontWeight:700 }}>Scheduled Payment</div>
             {allowVendorEdit
-              ? <input value={form.vendor||''} onChange={e => setForm(p => ({...p, vendor: e.target.value}))} placeholder="Vendor name..." style={{ fontSize:15, fontWeight:700, color:C.w, background:'transparent', border:'none', borderBottom:'1px solid '+C.bdrF, padding:'2px 0', width:'100%', fontFamily:'inherit', marginTop:4, outline:'none' }} />
+              ? <>
+                  <input list="vendor-list" value={form.vendor||''} onChange={e => setForm(p => ({...p, vendor: e.target.value}))} placeholder="Type or pick vendor..." style={{ fontSize:14, fontWeight:700, color:C.w, background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, padding:'5px 8px', width:'100%', fontFamily:'inherit', marginTop:4, outline:'none', boxSizing:'border-box' }} />
+                  <datalist id="vendor-list">
+                    {(vendorList||[]).map(v => <option key={v} value={v} />)}
+                  </datalist>
+                </>
               : <div style={{ fontSize:16, fontWeight:700, color:C.w, marginTop:2 }}>{form.vendor||vendor}</div>
             }
           </div>
@@ -7013,6 +7018,27 @@ function ScheduledPaymentsTab({ orgId, C, userEmail }) {
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
   const STATUSES = ['pending', 'paid', 'expired', 'all']
 
+  const [vendorList, setVendorList] = useState([])
+
+  const loadVendors = async () => {
+    const [txR, lcR] = await Promise.all([
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions').order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return []
+          const { data } = await supabase.from('cashflow_ap').select('vendor').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions').eq('snapshot_date', r.data[0].snapshot_date)
+          return (data || []).map(x => x.vendor)
+        }),
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts').order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return []
+          const { data } = await supabase.from('cashflow_ap').select('vendor').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts').eq('snapshot_date', r.data[0].snapshot_date)
+          return (data || []).map(x => x.vendor)
+        }),
+    ])
+    const all = [...new Set([...txR, ...lcR])].sort((a,b) => a.localeCompare(b))
+    setVendorList(all)
+  }
+
   const load = async () => {
     setLoading(true)
     let q = supabase.from('ap_scheduled_payments').select('*').eq('org_id', orgId).eq('entity', entity).order('scheduled_date', { ascending: true })
@@ -7022,7 +7048,7 @@ function ScheduledPaymentsTab({ orgId, C, userEmail }) {
     setLoading(false)
   }
 
-  useEffect(() => { if (orgId) load() }, [orgId, entity, filter])
+  useEffect(() => { if (orgId) { load(); loadVendors() } }, [orgId, entity, filter])
 
   const markStatus = async (id, status) => {
     await supabase.from('ap_scheduled_payments').update({ status }).eq('id', id)
@@ -7091,7 +7117,7 @@ function ScheduledPaymentsTab({ orgId, C, userEmail }) {
                   <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99, background:p.status==='paid'?'#22C55E22':p.status==='pending'?WARN+'22':C.g+'22', color:p.status==='paid'?'#22C55E':p.status==='pending'?WARN:C.g, fontWeight:600 }}>{p.status}</span>
                 </div>
                 <div style={{ fontSize:9, color:C.g }}>
-                  {p.ap_type === 'leases_contracts' ? <span style={{ color:'#9a6ac4', fontWeight:700 }}>{'Lease/Contract'}</span> : <span style={{ color:C.go, fontWeight:700 }}>{'Transaction'}</span>}
+                  {p.ap_type === 'leases_contracts' ? <span style={{ color:C.am, fontWeight:700 }}>{'Lease/Contract'}</span> : <span style={{ color:C.go, fontWeight:700 }}>{'Transaction'}</span>}
                 </div>
                 <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
                   {p.status === 'pending' && (
@@ -7119,6 +7145,7 @@ function ScheduledPaymentsTab({ orgId, C, userEmail }) {
           onSaved={() => { load(); setAddModal(null); sh('Saved ✓') }}
           onExpired={() => { load(); setAddModal(null); sh('Marked paid/expired ✓') }}
           allowVendorEdit={true}
+          vendorList={vendorList}
         />
       )}
 
@@ -7148,12 +7175,12 @@ function APReconView({ orgId, C, userEmail }) {
 
   const RECON_STATUSES = [
     { v: '', l: '— Unreviewed' },
-    { v: 'confirmed', l: 'Confirmed' },
-    { v: 'disputed', l: 'Disputed' },
+    { v: 'disputed', l: 'Disputed — balance doesn\'t match records' },
+    { v: 'confirmed', l: 'Confirmed by statement' },
+    { v: 'scheduled', l: 'Scheduled — payment has been scheduled' },
     { v: 'paid', l: 'Paid / Clear' },
-    { v: 'scheduled', l: 'Scheduled' },
-    { v: 'hold', l: 'On Hold' },
   ]
+  const RECON_SORT = { '': 0, 'disputed': 1, 'confirmed': 2, 'scheduled': 3, 'paid': 4 }
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
@@ -7262,15 +7289,22 @@ function APReconView({ orgId, C, userEmail }) {
 
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
 
-  const txBills = bills.filter(b => b._source === 'transactions')
-  const lcBills = bills.filter(b => b._source === 'leases_contracts')
+  const reconSort = (a, b) => {
+    const RECON_SORT = { '': 0, 'disputed': 1, 'confirmed': 2, 'scheduled': 3, 'paid': 4 }
+    const sa = RECON_SORT[a.recon_status||''] ?? 0
+    const sb = RECON_SORT[b.recon_status||''] ?? 0
+    if (sa !== sb) return sa - sb
+    return a.vendor.localeCompare(b.vendor)
+  }
+  const txBills = bills.filter(b => b._source === 'transactions').sort(reconSort)
+  const lcBills = bills.filter(b => b._source === 'leases_contracts').sort(reconSort)
   const totalTx = txBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
   const totalLC = lcBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
   const totalOwed = totalTx + totalLC
   const unreviewed = bills.filter(b => !b.recon_status).length
 
   const SOURCE_LABEL = { transactions: 'AP Transactions', leases_contracts: 'Leases & Contracts' }
-  const SOURCE_COLOR = { transactions: C.go, leases_contracts: '#9a6ac4' }
+  const SOURCE_COLOR = { transactions: C.go, leases_contracts: C.am }
 
   const BillRow = ({ b, i }) => (
     <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
@@ -7340,7 +7374,7 @@ function APReconView({ orgId, C, userEmail }) {
         <div style={{ display:'flex', gap:20, marginBottom:12, flexWrap:'wrap', fontSize:12 }}>
           <span style={{ color:C.g }}>{'Grand Total: '}<strong style={{ color:NEG }}>{fmt(totalOwed)}</strong></span>
           <span style={{ color:C.g }}>{'Transactions: '}<strong style={{ color:C.go }}>{fmt(totalTx)}</strong></span>
-          <span style={{ color:C.g }}>{'Leases/Contracts: '}<strong style={{ color:'#9a6ac4' }}>{fmt(totalLC)}</strong></span>
+          <span style={{ color:C.g }}>{'Leases/Contracts: '}<strong style={{ color:C.am }}>{fmt(totalLC)}</strong></span>
           <span style={{ color:C.g }}>{'Unreviewed: '}<strong style={{ color:unreviewed>0?WARN:POS }}>{unreviewed}</strong></span>
           {['confirmed','disputed','paid','scheduled','hold'].map(s => {
             const count = bills.filter(b => b.recon_status === s).length
@@ -7359,9 +7393,9 @@ function APReconView({ orgId, C, userEmail }) {
         </>}
 
         {!loading && lcBills.length > 0 && <>
-          <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:'#9a6ac4', margin:'14px 0 6px' }}>{'Leases & Contracts'}</div>
+          <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:C.am, margin:'14px 0 6px' }}>{'Leases & Contracts'}</div>
           {[...lcBills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b,i) => <BillRow key={'lc'+i} b={b} i={i} />)}
-          <SubtotalRow label="Leases & Contracts Total" total={totalLC} color={'#9a6ac4'} />
+          <SubtotalRow label="Leases & Contracts Total" total={totalLC} color={C.am} />
         </>}
 
         {!loading && bills.length > 0 && (

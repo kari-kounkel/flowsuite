@@ -5305,12 +5305,12 @@ function CashDashboard({ orgId, C }) {
     Promise.all([
       supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'iaz').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
       supabase.from('cashflow_snapshots').select('*').eq('org_id', orgId).eq('entity', 'omega').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1),
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').order('snapshot_date', { ascending: false }).limit(1).then(async r => {
         if (!r.data || !r.data[0]) return { data: [] }
         return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'transactions').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
       }),
-      // Leases & Contracts AP
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').lte('snapshot_date', selectedDate).order('snapshot_date', { ascending: false }).limit(1).then(async r => {
+      // Leases & Contracts AP — always grab most recent regardless of selected date
+      supabase.from('cashflow_ap').select('snapshot_date').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').order('snapshot_date', { ascending: false }).limit(1).then(async r => {
         if (!r.data || !r.data[0]) return { data: [] }
         return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', 'iaz').eq('ap_type', 'leases_contracts').eq('snapshot_date', r.data[0].snapshot_date).order('total', { ascending: true })
       }),
@@ -5720,10 +5720,33 @@ function CashDashboard({ orgId, C }) {
         } else if (type === 'ap' || type === 'ap_leases') {
           const apType = type === 'ap' ? 'transactions' : 'leases_contracts'
           const rows = parseAPaging(text)
-          await supabase.from('cashflow_ap').delete().eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).eq('ap_type',apType)
+          // Archive existing recon notes for this ap_type before clearing
+          const { data: existingRecon } = await supabase.from('cashflow_ap_recon')
+            .select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
+          if (existingRecon && existingRecon.length) {
+            await supabase.from('cashflow_ap_recon_history').insert(
+              existingRecon.map(r => ({ ...r, archived_at: new Date().toISOString(), id: undefined }))
+            )
+            await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
+          } else {
+            // ap_type column may not exist on recon yet — try vendor-level wipe for this upload type
+            const vendorNames = rows.map(r => r.vendor)
+            if (vendorNames.length) {
+              const { data: vendorRecon } = await supabase.from('cashflow_ap_recon')
+                .select('*').eq('org_id', orgId).eq('entity', entity).in('vendor', vendorNames)
+              if (vendorRecon && vendorRecon.length) {
+                await supabase.from('cashflow_ap_recon_history').insert(
+                  vendorRecon.map(r => ({ ...r, archived_at: new Date().toISOString(), id: undefined }))
+                )
+                await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).in('vendor', vendorNames)
+              }
+            }
+          }
+          // Delete ALL previous ap rows for this type (all dates) then insert fresh
+          await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
           if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate, ap_type: apType })))
-          sh(rows.length + (apType === 'leases_contracts' ? ' lease/contract vendors loaded ✓' : ' AP vendors loaded ✓'))
-          const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id',orgId).eq('entity',entity).eq('snapshot_date',snapDate).eq('ap_type',apType).order('total',{ascending:true})
+          sh(rows.length + (apType === 'leases_contracts' ? ' lease/contract vendors loaded — recon cleared ✓' : ' AP vendors loaded — recon cleared ✓'))
+          const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate).eq('ap_type', apType).order('total', { ascending: true })
           if (apType === 'leases_contracts') setIazAPLeases(freshAP || [])
           else setIazAP(freshAP || [])
           setUploading(null); return

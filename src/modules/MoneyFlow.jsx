@@ -6347,19 +6347,31 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   }
 
   const markedTotal = bills.filter(b => b.marked).reduce((s, b) => s + (parseFloat(b.payAmt) || Math.abs(b.total)), 0)
-  const totalOwed = bills.reduce((s, b) => s + Math.abs(b.total), 0)
+  const txBills = [...bills].filter(b => b._source === 'transactions').sort((a,b) => a.vendor.localeCompare(b.vendor))
+  const lcBills = [...bills].filter(b => b._source === 'leases_contracts').sort((a,b) => a.vendor.localeCompare(b.vendor))
+  const totalTx = txBills.reduce((s,b) => s + Math.abs(b.total), 0)
+  const totalLC = lcBills.reduce((s,b) => s + Math.abs(b.total), 0)
+  const totalOwed = totalTx + totalLC
+  const [sourceFilter, setSourceFilter] = useState('all')
+  const visibleBills = sourceFilter === 'transactions' ? txBills : sourceFilter === 'leases_contracts' ? lcBills : [...txBills, ...lcBills]
 
   return (
     <div>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
-        <div style={{ display:'flex', gap:4 }}>
+        <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
           {ENTITIES.map(e => (
             <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
+          <span style={{ width:1, background:C.bdr, margin:'0 4px' }} />
+          {[
+            { v:'all', l:'All AP' },
+            { v:'transactions', l:'Transactions' },
+            { v:'leases_contracts', l:'Leases & Contracts' },
+          ].map(f => (
+            <button key={f.v} onClick={() => setSourceFilter(f.v)} style={{ padding:'6px 14px', borderRadius:6, border:'1px solid '+(sourceFilter===f.v?C.go:C.bdrF), background:sourceFilter===f.v?C.gD:'transparent', color:sourceFilter===f.v?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{f.l}</button>
+          ))}
         </div>
         <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-          <span style={{ fontSize:10, color:C.g, fontStyle:'italic' }}>{'Upload CSVs from the Dashboard tab'}</span>
-          <button onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 100) }} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
           <button onClick={() => { setCcModal(true); setCcTab('submissions') }} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
             {'💳 CC Pymts'}
           </button>
@@ -6406,12 +6418,13 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
 
       {!loading && bills.length > 0 && <>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:8 }}>
-          <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
-            <div style={{ fontSize:12, color:C.g }}>{'Total owed: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span></div>
+          <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+            <div style={{ fontSize:12, color:C.g }}>{'Total: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Transactions: '}<span style={{ fontWeight:700, color:C.go }}>{fmt(totalTx)}</span></div>
+            <div style={{ fontSize:12, color:C.g }}>{'Leases: '}<span style={{ fontWeight:700, color:'#9a6ac4' }}>{fmt(totalLC)}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Scheduled in bill pay: '}<span style={{ fontWeight:700, color:WARN }}>{fmt(Object.values(scheduled).reduce((s,r)=>s+(parseFloat(r.scheduled_amt)||0),0))}</span></div>
             <div style={{ fontSize:12, color:C.g }}>{'Marked to pay: '}<span style={{ fontWeight:700, color:POS }}>{fmt(markedTotal)}</span></div>
-            <div style={{ fontSize:12, color:C.g }}>{'Net outstanding: '}<span style={{ fontWeight:700, color:NEG }}>{fmt(totalOwed - Object.values(scheduled).reduce((s,r)=>s+(parseFloat(r.scheduled_amt)||0),0) - markedTotal)}</span></div>
-            {bills.filter(b=>b.queued).length > 0 && <div style={{ fontSize:12, color:C.g }}>{'Queued to tasks: '}<span style={{ fontWeight:700, color:C.go }}>{bills.filter(b=>b.queued).length+' vendors'}</span></div>}
+            {bills.filter(b=>b.queued).length > 0 && <div style={{ fontSize:12, color:C.g }}>{'Queued: '}<span style={{ fontWeight:700, color:C.go }}>{bills.filter(b=>b.queued).length+' vendors'}</span></div>}
           </div>
           {bills.filter(b=>b.marked&&!b.queued).length > 0 && (
             <button onClick={pushToTasks} disabled={pushing} style={{ padding:'6px 18px', borderRadius:6, border:'none', background:C.go, color:C.bg, fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>
@@ -6421,7 +6434,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
         </div>
         <div style={{ fontSize:10, color:C.g, marginBottom:10 }}>{'Drag to prioritize. Check to mark for payment. Set a pay date per vendor. Push to Tasks when ready.'}</div>
 
-        {bills.map((b, idx) => (
+        {visibleBills.map((b, idx) => (
           <div key={b.id||idx}
             draggable
             onDragStart={() => onDragStart(idx)}
@@ -6500,10 +6513,10 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
 // ═══════════════════════════════════════════════════════
 // SCHEDULED PAYMENT MODAL — shared by CashFlow + APRecon
 // ═══════════════════════════════════════════════════════
-function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSaved, onExpired, C }) {
+function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSaved, onExpired, C, allowVendorEdit }) {
   const WARN = C.am
   const today = new Date().toISOString().split('T')[0]
-  const blank = { vendor, amount: '', scheduled_date: '', payment_type: 'full', series_num: '', series_total: '', notes: '', status: 'pending' }
+  const blank = { vendor: vendor||'', amount: '', scheduled_date: '', payment_type: 'full', series_num: '', series_total: '', notes: '', status: 'pending' }
   const [form, setForm] = useState(existing ? { ...existing, amount: existing.amount || '', series_num: existing.series_num || '', series_total: existing.series_total || '', notes: existing.notes || '' } : blank)
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -6545,7 +6558,10 @@ function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSa
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
           <div>
             <div style={{ fontSize:9, color:WARN, textTransform:'uppercase', letterSpacing:2, fontWeight:700 }}>Scheduled Payment</div>
-            <div style={{ fontSize:16, fontWeight:700, color:C.w, marginTop:2 }}>{vendor}</div>
+            {allowVendorEdit
+              ? <input value={form.vendor||''} onChange={e => setForm(p => ({...p, vendor: e.target.value}))} placeholder="Vendor name..." style={{ fontSize:15, fontWeight:700, color:C.w, background:'transparent', border:'none', borderBottom:'1px solid '+C.bdrF, padding:'2px 0', width:'100%', fontFamily:'inherit', marginTop:4, outline:'none' }} />
+              : <div style={{ fontSize:16, fontWeight:700, color:C.w, marginTop:2 }}>{form.vendor||vendor}</div>
+            }
           </div>
           <button onClick={onClose} style={{ background:'none', border:'none', color:C.g, cursor:'pointer', fontSize:18 }}>✕</button>
         </div>
@@ -6979,6 +6995,137 @@ function TaskLogView({ orgId, C }) {
   )
 }
 
+
+// ═══════════════════════════════════════════════════════
+// SCHEDULED PAYMENTS TAB — enter, review, manage all AP scheduled payments
+// ═══════════════════════════════════════════════════════
+function ScheduledPaymentsTab({ orgId, C, userEmail }) {
+  const NEG = '#B45055'
+  const WARN = C.am
+  const POS = C.go
+  const [entity, setEntity] = useState('iaz')
+  const [pmts, setPmts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [toast, setToast] = useState('')
+  const [addModal, setAddModal] = useState(null)
+  const [filter, setFilter] = useState('pending')
+  const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+  const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
+  const STATUSES = ['pending', 'paid', 'expired', 'all']
+
+  const load = async () => {
+    setLoading(true)
+    let q = supabase.from('ap_scheduled_payments').select('*').eq('org_id', orgId).eq('entity', entity).order('scheduled_date', { ascending: true })
+    if (filter !== 'all') q = q.eq('status', filter)
+    const { data } = await q
+    setPmts(data || [])
+    setLoading(false)
+  }
+
+  useEffect(() => { if (orgId) load() }, [orgId, entity, filter])
+
+  const markStatus = async (id, status) => {
+    await supabase.from('ap_scheduled_payments').update({ status }).eq('id', id)
+    setPmts(p => p.map(x => x.id === id ? { ...x, status } : x))
+    sh(status === 'paid' ? 'Marked as paid ✓' : 'Updated ✓')
+  }
+
+  const fmt = n => {
+    if (!n) return '—'
+    const abs = Math.abs(Number(n))
+    return '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  const today = new Date().toISOString().split('T')[0]
+  const totalPending = pmts.filter(p => p.status === 'pending').reduce((s,p) => s + (parseFloat(p.amount)||0), 0)
+  const overdue = pmts.filter(p => p.status === 'pending' && p.scheduled_date < today)
+  const upcoming = pmts.filter(p => p.status === 'pending' && p.scheduled_date >= today)
+
+  const inp = { padding:'5px 8px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:5, color:C.w, fontSize:11, fontFamily:'inherit' }
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
+        <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+          {ENTITIES.map(e => (
+            <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
+          ))}
+          <span style={{ width:1, background:C.bdr, margin:'0 4px' }} />
+          {STATUSES.map(s => (
+            <button key={s} onClick={() => setFilter(s)} style={{ padding:'5px 12px', borderRadius:5, border:'1px solid '+(filter===s?C.go:C.bdrF), background:filter===s?C.gD:'transparent', color:filter===s?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit', textTransform:'capitalize' }}>{s}</button>
+          ))}
+        </div>
+        <button onClick={() => setAddModal({ vendor:'', amount:'', scheduled_date:'', payment_type:'full', series_num:'', series_total:'', notes:'' })}
+          style={{ background:C.go, border:'none', color:'#fff', padding:'7px 18px', borderRadius:20, cursor:'pointer', fontSize:12, fontWeight:700, fontFamily:'inherit' }}>
+          {'+ Add Payment'}
+        </button>
+      </div>
+
+      <div style={{ display:'flex', gap:20, marginBottom:16, flexWrap:'wrap', fontSize:12 }}>
+        <span style={{ color:C.g }}>{'Pending total: '}<strong style={{ color:NEG }}>{fmt(totalPending)}</strong></span>
+        {overdue.length > 0 && <span style={{ color:NEG, fontWeight:700 }}>{'⚠ ' + overdue.length + ' overdue'}</span>}
+        <span style={{ color:C.g }}>{'Upcoming: '}<strong style={{ color:WARN }}>{upcoming.length}</strong></span>
+      </div>
+
+      {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
+      {!loading && pmts.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No scheduled payments found.'}</div>}
+
+      {!loading && pmts.length > 0 && (
+        <div>
+          {pmts.map((p, i) => {
+            const isOverdue = p.status === 'pending' && p.scheduled_date < today
+            const seriesLabel = p.series_total > 1 ? ' (' + p.series_num + ' of ' + p.series_total + ')' : ''
+            return (
+              <div key={p.id||i} style={{ display:'grid', gridTemplateColumns:'1fr 100px 110px 110px 100px 140px', gap:8, alignItems:'center', padding:'9px 12px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(isOverdue?NEG+'66':p.status==='paid'?'#22C55E44':C.bdr) }}>
+                <div>
+                  <div style={{ fontWeight:600, fontSize:12 }}>{p.vendor}{seriesLabel}</div>
+                  {p.notes && <div style={{ fontSize:9, color:C.g, marginTop:1 }}>{p.notes}</div>}
+                  <div style={{ fontSize:9, color:C.g, marginTop:1 }}>{p.payment_type === 'partial' ? 'Partial payment' : 'Full payment'}</div>
+                </div>
+                <div style={{ fontWeight:700, fontSize:13, color:NEG, textAlign:'right' }}>{fmt(p.amount)}</div>
+                <div style={{ fontSize:11, color:isOverdue?NEG:C.w, fontWeight:isOverdue?700:400 }}>
+                  {p.scheduled_date ? new Date(p.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}
+                  {isOverdue && <div style={{ fontSize:9, color:NEG, fontWeight:700 }}>{'OVERDUE'}</div>}
+                </div>
+                <div>
+                  <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99, background:p.status==='paid'?'#22C55E22':p.status==='pending'?WARN+'22':C.g+'22', color:p.status==='paid'?'#22C55E':p.status==='pending'?WARN:C.g, fontWeight:600 }}>{p.status}</span>
+                </div>
+                <div style={{ fontSize:9, color:C.g }}>
+                  {p.ap_type === 'leases_contracts' ? <span style={{ color:'#9a6ac4', fontWeight:700 }}>{'Lease/Contract'}</span> : <span style={{ color:C.go, fontWeight:700 }}>{'Transaction'}</span>}
+                </div>
+                <div style={{ display:'flex', gap:4, justifyContent:'flex-end' }}>
+                  {p.status === 'pending' && (
+                    <button onClick={() => markStatus(p.id, 'paid')} style={{ padding:'3px 10px', borderRadius:4, border:'1px solid #22C55E44', background:'transparent', color:'#22C55E', fontSize:10, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
+                      {'✓ Paid'}
+                    </button>
+                  )}
+                  <button onClick={() => setAddModal({ ...p })} style={{ padding:'3px 10px', borderRadius:4, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
+                    {'Edit'}
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {addModal !== null && (
+        <SchedPayModal
+          orgId={orgId} entity={entity} C={C}
+          vendor={addModal.vendor}
+          existing={addModal.id ? addModal : null}
+          allPmts={pmts.filter(p => p.vendor === addModal.vendor)}
+          onClose={() => setAddModal(null)}
+          onSaved={() => { load(); setAddModal(null); sh('Saved ✓') }}
+          onExpired={() => { load(); setAddModal(null); sh('Marked paid/expired ✓') }}
+          allowVendorEdit={true}
+        />
+      )}
+
+      {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}
+    </div>
+  )
+}
 
 function APReconView({ orgId, C, userEmail }) {
   const [entity, setEntity] = useState('iaz')
@@ -7525,6 +7672,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           <div style={{ display: 'flex', gap: 6, marginBottom: 20, borderBottom: `1px solid ${C.bdr}`, paddingBottom: 12 }}>
             {subPill('Tasks', jeSubTab === 'tasks', () => setJeSubTab('tasks'))}
             {subPill('AP Recon', jeSubTab === 'aprecon', () => setJeSubTab('aprecon'))}
+            {subPill('Scheduled Payments', jeSubTab === 'schedpay', () => setJeSubTab('schedpay'))}
             {subPill('IIF Factory', jeSubTab === 'iif', () => setJeSubTab('iif'))}
             {subPill('Recurring JEs', jeSubTab === 'recurring', () => setJeSubTab('recurring'))}
             {subPill('Amortization', jeSubTab === 'amort', () => setJeSubTab('amort'))}
@@ -7598,6 +7746,7 @@ export default function MoneyFlowModule({ orgId, C }) {
           )}
           {jeSubTab === 'tasklog' && <TaskLogView orgId={orgId} C={C} />}
           {jeSubTab === 'aprecon' && <APReconView orgId={orgId} C={C} userEmail={userEmail} />}
+          {jeSubTab === 'schedpay' && <ScheduledPaymentsTab orgId={orgId} C={C} userEmail={userEmail} />}
           {jeSubTab === 'checklist' && <CloseChecklistTab orgId={orgId} C={C} />}
           {jeSubTab === 'iif' && (
             <IIFFactory

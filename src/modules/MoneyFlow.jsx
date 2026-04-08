@@ -6353,7 +6353,7 @@ function CashFlowForecaster({ orgId, C, userEmail }) {
   const totalLC = lcBills.reduce((s,b) => s + Math.abs(b.total), 0)
   const totalOwed = totalTx + totalLC
   const [sourceFilter, setSourceFilter] = useState('all')
-  const visibleBills = sourceFilter === 'transactions' ? txBills : sourceFilter === 'leases_contracts' ? lcBills : [...txBills, ...lcBills]
+  const visibleBills = sourceFilter === 'transactions' ? txBills : sourceFilter === 'leases_contracts' ? lcBills : [...txBills, ...lcBills].sort((a,b) => a.vendor.localeCompare(b.vendor))
 
   return (
     <div>
@@ -6523,7 +6523,7 @@ function SchedPayModal({ orgId, entity, vendor, existing, allPmts, onClose, onSa
   const isAgreement = parseInt(form.series_total) > 1
 
   const handleSave = async () => {
-    if (!form.scheduled_date) return
+    if (!form.scheduled_date || !form.vendor) return
     setSaving(true)
     const payload = {
       org_id: orgId, entity, vendor: form.vendor,
@@ -7331,7 +7331,7 @@ function APReconView({ orgId, C, userEmail }) {
           ))}
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-          <button onClick={() => setLastRefresh(Date.now())} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
+          <button onClick={() => { setLastRefresh(Date.now()); loadSchedPmts() }} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
           <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
         </div>
       </div>

@@ -6983,7 +6983,6 @@ function TaskLogView({ orgId, C }) {
 
 function APReconView({ orgId, C, userEmail }) {
   const [entity, setEntity] = useState('iaz')
-  const [apType, setApType] = useState('transactions')
   const [bills, setBills] = useState([])
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
@@ -6991,6 +6990,7 @@ function APReconView({ orgId, C, userEmail }) {
   const [toast, setToast] = useState('')
   const [schedPmts, setSchedPmts] = useState([])
   const [schedModal, setSchedModal] = useState(null)
+  const [lastRefresh, setLastRefresh] = useState(Date.now())
   const sh = msg => { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   const SCHED_EDITORS = ['kari@karikounkel.com','accounting@mpuptown.com','operationsmanager@mpuptown.com']
@@ -7011,41 +7011,55 @@ function APReconView({ orgId, C, userEmail }) {
 
   const ENTITIES = [{ id: 'iaz', label: 'IAZ Corporation' }, { id: 'omega', label: 'Omega LLC' }]
 
-  useEffect(() => {
+  const loadBills = async () => {
     if (!orgId) return
     setLoading(true)
-    Promise.all([
-      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
+    // Pull both ap_types independently (each gets its own latest snapshot date)
+    const [txR, lcR, reconR] = await Promise.all([
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions')
         .order('snapshot_date', { ascending: false }).limit(1)
         .then(async r => {
           if (!r.data || !r.data[0]) return { data: [] }
           const latestDate = r.data[0].snapshot_date
-          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType).eq('snapshot_date', latestDate).order('vendor', { ascending: true })
+          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'transactions').eq('snapshot_date', latestDate).order('vendor', { ascending: true })
+        }),
+      supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts')
+        .order('snapshot_date', { ascending: false }).limit(1)
+        .then(async r => {
+          if (!r.data || !r.data[0]) return { data: [] }
+          const latestDate = r.data[0].snapshot_date
+          return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', 'leases_contracts').eq('snapshot_date', latestDate).order('vendor', { ascending: true })
         }),
       supabase.from('cashflow_ap_recon').select('*').eq('org_id', orgId).eq('entity', entity)
-    ]).then(([apR, reconR]) => {
-      const ap = apR.data || []
-      const recon = reconR.data || []
-      const merged = ap.map(b => {
-        const r = recon.find(x => x.vendor === b.vendor) || {}
-        return { ...b, recon_status: r.recon_status || '', recon_note: r.recon_note || '', recon_id: r.id || null }
-      })
-      setBills(merged)
-      setLoading(false)
+    ])
+    const txRows = (txR.data || []).map(b => ({ ...b, _source: 'transactions' }))
+    const lcRows = (lcR.data || []).map(b => ({ ...b, _source: 'leases_contracts' }))
+    const allRows = [...txRows, ...lcRows]
+    const recon = reconR.data || []
+    const merged = allRows.map(b => {
+      const r = recon.find(x => x.vendor === b.vendor && (x.ap_type || 'transactions') === b._source) ||
+                recon.find(x => x.vendor === b.vendor) || {}
+      return { ...b, recon_status: r.recon_status || '', recon_note: r.recon_note || '', recon_id: r.id || null }
     })
-  }, [orgId, entity, apType])
+    setBills(merged)
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    loadBills()
+  }, [orgId, entity, lastRefresh])
 
   useEffect(() => {
     if (!orgId || !showHistory) return
     supabase.from('cashflow_ap_recon_history').select('*').eq('org_id', orgId).eq('entity', entity)
       .order('archived_at', { ascending: false }).limit(100)
       .then(({ data }) => setHistory(data || []))
-  }, [orgId, entity, showHistory, apType])
+  }, [orgId, entity, showHistory])
 
   useEffect(() => {
     if (!orgId) return
     loadSchedPmts()
-  }, [orgId, entity, apType])
+  }, [orgId, entity])
 
   const loadSchedPmts = async () => {
     const { data } = await supabase.from('ap_scheduled_payments')
@@ -7099,33 +7113,85 @@ function APReconView({ orgId, C, userEmail }) {
 
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
 
+  const txBills = bills.filter(b => b._source === 'transactions')
+  const lcBills = bills.filter(b => b._source === 'leases_contracts')
+  const totalTx = txBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
+  const totalLC = lcBills.reduce((s,b) => s + Math.abs(b.total||0), 0)
+  const totalOwed = totalTx + totalLC
   const unreviewed = bills.filter(b => !b.recon_status).length
-  const totalOwed = bills.reduce((s,b) => s + Math.abs(b.total||0), 0)
+
+  const SOURCE_LABEL = { transactions: 'AP Transactions', leases_contracts: 'Leases & Contracts' }
+  const SOURCE_COLOR = { transactions: C.go, leases_contracts: '#9a6ac4' }
+
+  const BillRow = ({ b, i }) => (
+    <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
+      <div>
+        <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
+        <div style={{ fontSize:9, color:C.g, marginTop:1 }}>
+          {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
+          {b.d30?'1-30: '+fmt(b.d30)+'  ':''}
+          {b.d60?'31-60: '+fmt(b.d60)+'  ':''}
+          {b.d90?'61-90: '+fmt(b.d90)+'  ':''}
+          {b.over90?'90+: '+fmt(b.over90):''}
+        </div>
+        {schedPmtMap[b.vendor] && (() => {
+          const sp = schedPmtMap[b.vendor]
+          const seriesLabel = sp.series_total > 1 ? ' · '+sp.series_num+'/'+sp.series_total : ''
+          const amtLabel = sp.amount ? ' · $'+parseFloat(sp.amount).toFixed(2) : ''
+          return <div style={{ marginTop:4, display:'inline-flex', alignItems:'center', gap:4, padding:'2px 7px', borderRadius:99, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)', fontSize:9, color:WARN, fontWeight:600 }}>
+            {'📅 '+new Date(sp.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+amtLabel+' · '+(sp.payment_type==='partial'?'Partial':'Full')+seriesLabel}
+          </div>
+        })()}
+      </div>
+      <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right' }}>{fmt(b.total)}</div>
+      <div style={{ textAlign:'center' }}>
+        <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:(SOURCE_COLOR[b._source]||C.g)+'22', color:SOURCE_COLOR[b._source]||C.g, fontWeight:700, whiteSpace:'nowrap' }}>
+          {b._source === 'leases_contracts' ? 'Lease/Contract' : 'Transaction'}
+        </span>
+      </div>
+      <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor,'recon_status',ev.target.value)} style={{ ...inp, width:'100%' }}>
+        {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+      </select>
+      <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
+      <div style={{ textAlign:'right' }}>
+        {canEditSched && (
+          <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
+            style={{ display:'block', width:'100%', marginBottom:4, padding:'3px 0', borderRadius:4, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
+            {schedPmtMap[b.vendor] ? '📅 Edit' : '+ Sched'}
+          </button>
+        )}
+        {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, display:'block', marginBottom:2 }}>{b.recon_status}</span>}
+        {b.reviewed_at && <span style={{ fontSize:9, color:C.g, display:'block' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
+      </div>
+    </div>
+  )
+
+  const SubtotalRow = ({ label, total, color }) => (
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'6px 10px', marginBottom:8, borderRadius:6, background:C.bg2, border:'1px solid '+(color||C.bdr)+'44' }}>
+      <span style={{ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:color||C.g }}>{label}</span>
+      <span style={{ fontSize:13, fontWeight:700, color:NEG }}>{fmt(total)}</span>
+    </div>
+  )
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:8 }}>
         <div style={{ display:'flex', gap:4 }}>
           {ENTITIES.map(e => (
             <button key={e.id} onClick={() => setEntity(e.id)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid '+(entity===e.id?C.go:C.bdrF), background:entity===e.id?C.gD:'transparent', color:entity===e.id?C.go:C.g, fontSize:12, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{e.label}</button>
           ))}
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <button onClick={() => setLastRefresh(Date.now())} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
           <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
         </div>
-      </div>
-      <div style={{ display:'flex', gap:4, marginBottom:16 }}>
-        {[
-          { v: 'transactions', l: 'AP Transactions' },
-          { v: 'leases_contracts', l: 'Leases & Contracts' },
-        ].map(t => (
-          <button key={t.v} onClick={() => setApType(t.v)} style={{ padding:'5px 14px', borderRadius:5, border:'1px solid '+(apType===t.v?C.go:C.bdrF), background:apType===t.v?C.gD:'transparent', color:apType===t.v?C.go:C.g, fontSize:11, fontWeight:600, cursor:'pointer', fontFamily:'inherit' }}>{t.l}</button>
-        ))}
       </div>
 
       {!showHistory && <>
         <div style={{ display:'flex', gap:20, marginBottom:12, flexWrap:'wrap', fontSize:12 }}>
-          <span style={{ color:C.g }}>{'Total owed: '}<strong style={{ color:NEG }}>{fmt(totalOwed)}</strong></span>
+          <span style={{ color:C.g }}>{'Grand Total: '}<strong style={{ color:NEG }}>{fmt(totalOwed)}</strong></span>
+          <span style={{ color:C.g }}>{'Transactions: '}<strong style={{ color:C.go }}>{fmt(totalTx)}</strong></span>
+          <span style={{ color:C.g }}>{'Leases/Contracts: '}<strong style={{ color:'#9a6ac4' }}>{fmt(totalLC)}</strong></span>
           <span style={{ color:C.g }}>{'Unreviewed: '}<strong style={{ color:unreviewed>0?WARN:POS }}>{unreviewed}</strong></span>
           {['confirmed','disputed','paid','scheduled','hold'].map(s => {
             const count = bills.filter(b => b.recon_status === s).length
@@ -7135,46 +7201,26 @@ function APReconView({ orgId, C, userEmail }) {
         </div>
 
         {loading && <div style={{ color:C.g, fontSize:13 }}>{'Loading...'}</div>}
+        {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded. Upload CSVs in the Cash Flow tab first.'}</div>}
 
-        {!loading && bills.length === 0 && <div style={{ color:C.g, fontSize:13, padding:'20px 0' }}>{'No AP data loaded for ' + (apType === 'leases_contracts' ? 'Leases & Contracts' : 'Transactions') + '. Upload a CSV in the Cash Flow tab first.'}</div>}
+        {!loading && txBills.length > 0 && <>
+          <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:C.go, margin:'14px 0 6px' }}>{'AP Transactions'}</div>
+          {[...txBills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b,i) => <BillRow key={'tx'+i} b={b} i={i} />)}
+          <SubtotalRow label="Transactions Total" total={totalTx} color={C.go} />
+        </>}
 
-        {!loading && [...bills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b, i) => (
-          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 120px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
-            <div>
-              <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
-              <div style={{ fontSize:9, color:C.g, marginTop:1 }}>
-                {b.current_amt?'Cur: '+fmt(b.current_amt)+'  ':''}
-                {b.d30?'1-30: '+fmt(b.d30)+'  ':''}
-                {b.d60?'31-60: '+fmt(b.d60)+'  ':''}
-                {b.d90?'61-90: '+fmt(b.d90)+'  ':''}
-                {b.over90?'90+: '+fmt(b.over90):''}
-              </div>
-              {schedPmtMap[b.vendor] && (() => {
-                const sp = schedPmtMap[b.vendor]
-                const seriesLabel = sp.series_total > 1 ? ' · '+sp.series_num+'/'+sp.series_total : ''
-                const amtLabel = sp.amount ? ' · $'+parseFloat(sp.amount).toFixed(2) : ''
-                return <div style={{ marginTop:4, display:'inline-flex', alignItems:'center', gap:4, padding:'2px 7px', borderRadius:99, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.35)', fontSize:9, color:WARN, fontWeight:600 }}>
-                  {'📅 '+new Date(sp.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+amtLabel+' · '+(sp.payment_type==='partial'?'Partial':'Full')+seriesLabel}
-                </div>
-              })()}
-            </div>
-            <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right' }}>{fmt(b.total)}</div>
-            <select value={b.recon_status||''} onChange={ev=>saveRecon(b.vendor,'recon_status',ev.target.value)} style={{ ...inp, width:'100%' }}>
-              {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
-            </select>
-            <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor,'recon_note',ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
-            <div style={{ textAlign:'right' }}>
-              {canEditSched && (
-                <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
-                  style={{ display:'block', width:'100%', marginBottom:4, padding:'3px 0', borderRadius:4, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
-                  {schedPmtMap[b.vendor] ? '📅 Edit' : '+ Sched'}
-                </button>
-              )}
-              {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, display:'block', marginBottom:2 }}>{b.recon_status}</span>}
-              {b.reviewed_at && <span style={{ fontSize:9, color:C.g, display:'block' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
-            </div>
+        {!loading && lcBills.length > 0 && <>
+          <div style={{ fontSize:9, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:'#9a6ac4', margin:'14px 0 6px' }}>{'Leases & Contracts'}</div>
+          {[...lcBills].sort((a,b)=>a.vendor.localeCompare(b.vendor)).map((b,i) => <BillRow key={'lc'+i} b={b} i={i} />)}
+          <SubtotalRow label="Leases & Contracts Total" total={totalLC} color={'#9a6ac4'} />
+        </>}
+
+        {!loading && bills.length > 0 && (
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 12px', borderRadius:7, background:C.bg2, border:'1px solid '+NEG+'44', marginTop:4 }}>
+            <span style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:1, color:NEG }}>{'Grand Total AP'}</span>
+            <span style={{ fontSize:16, fontWeight:700, color:NEG }}>{fmt(totalOwed)}</span>
           </div>
-        ))}
+        )}
       </>}
 
       {showHistory && <>

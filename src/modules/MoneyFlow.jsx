@@ -5720,32 +5720,52 @@ function CashDashboard({ orgId, C }) {
         } else if (type === 'ap' || type === 'ap_leases') {
           const apType = type === 'ap' ? 'transactions' : 'leases_contracts'
           const rows = parseAPaging(text)
-          // Archive existing recon notes for this ap_type before clearing
+          const archivedAt = new Date().toISOString()
+          // Get existing AP rows (current data) and recon notes
+          const { data: existingAP } = await supabase.from('cashflow_ap').select('*')
+            .eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
+            .order('snapshot_date', { ascending: false }).limit(1)
+            .then(async r => {
+              if (!r.data || !r.data[0]) return { data: [] }
+              return supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType).eq('snapshot_date', r.data[0].snapshot_date)
+            })
           const { data: existingRecon } = await supabase.from('cashflow_ap_recon')
-            .select('*').eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
-          if (existingRecon && existingRecon.length) {
-            await supabase.from('cashflow_ap_recon_history').insert(
-              existingRecon.map(r => ({ ...r, archived_at: new Date().toISOString(), id: undefined }))
-            )
-            await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
-          } else {
-            // ap_type column may not exist on recon yet — try vendor-level wipe for this upload type
-            const vendorNames = rows.map(r => r.vendor)
-            if (vendorNames.length) {
-              const { data: vendorRecon } = await supabase.from('cashflow_ap_recon')
-                .select('*').eq('org_id', orgId).eq('entity', entity).in('vendor', vendorNames)
-              if (vendorRecon && vendorRecon.length) {
-                await supabase.from('cashflow_ap_recon_history').insert(
-                  vendorRecon.map(r => ({ ...r, archived_at: new Date().toISOString(), id: undefined }))
-                )
-                await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).in('vendor', vendorNames)
-              }
-            }
+            .select('*').eq('org_id', orgId).eq('entity', entity)
+          const reconMap = {}
+          if (existingRecon) existingRecon.forEach(r => { reconMap[r.vendor] = r })
+          // Archive ALL vendors from current AP data with their recon notes merged in
+          if (existingAP && existingAP.length) {
+            const archiveRows = existingAP.map(ap => ({
+              org_id: orgId,
+              entity,
+              vendor: ap.vendor,
+              total: ap.total,
+              current_amt: ap.current_amt,
+              d30: ap.d30,
+              d60: ap.d60,
+              d90: ap.d90,
+              over90: ap.over90,
+              ap_type: apType,
+              snapshot_date: ap.snapshot_date,
+              recon_status: reconMap[ap.vendor]?.recon_status || '',
+              recon_note: reconMap[ap.vendor]?.recon_note || '',
+              reviewed_at: reconMap[ap.vendor]?.reviewed_at || null,
+              updated_by: reconMap[ap.vendor]?.updated_by || null,
+              archived_at: archivedAt,
+            }))
+            await supabase.from('cashflow_ap_recon_history').insert(archiveRows)
           }
-          // Delete ALL previous ap rows for this type (all dates) then insert fresh
+          // Clear recon notes for this ap_type
+          await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
+          // Also clear by vendor names for backward compat
+          const vendorNames = (existingAP || []).map(r => r.vendor)
+          if (vendorNames.length) {
+            await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity).in('vendor', vendorNames)
+          }
+          // Delete ALL previous ap rows for this type then insert fresh
           await supabase.from('cashflow_ap').delete().eq('org_id', orgId).eq('entity', entity).eq('ap_type', apType)
           if (rows.length) await supabase.from('cashflow_ap').insert(rows.map(r => ({ ...r, org_id: orgId, entity, snapshot_date: snapDate, ap_type: apType })))
-          sh(rows.length + (apType === 'leases_contracts' ? ' lease/contract vendors loaded — recon cleared ✓' : ' AP vendors loaded — recon cleared ✓'))
+          sh(rows.length + (apType === 'leases_contracts' ? ' lease/contract vendors loaded — previous review archived ✓' : ' AP vendors loaded — previous review archived ✓'))
           const { data: freshAP } = await supabase.from('cashflow_ap').select('*').eq('org_id', orgId).eq('entity', entity).eq('snapshot_date', snapDate).eq('ap_type', apType).order('total', { ascending: true })
           if (apType === 'leases_contracts') setIazAPLeases(freshAP || [])
           else setIazAP(freshAP || [])
@@ -7251,6 +7271,36 @@ function APReconView({ orgId, C, userEmail }) {
     }
   })
 
+  const archiveAndClose = async () => {
+    if (!bills.length) { sh('Nothing to archive'); return }
+    const archivedAt = new Date().toISOString()
+    // Archive ALL current bills with their recon status/notes
+    const archiveRows = bills.map(b => ({
+      org_id: orgId,
+      entity,
+      vendor: b.vendor,
+      total: b.total,
+      current_amt: b.current_amt,
+      d30: b.d30,
+      d60: b.d60,
+      d90: b.d90,
+      over90: b.over90,
+      ap_type: b._source || 'transactions',
+      snapshot_date: b.snapshot_date,
+      recon_status: b.recon_status || '',
+      recon_note: b.recon_note || '',
+      reviewed_at: b.reviewed_at || null,
+      updated_by: b.updated_by || null,
+      archived_at: archivedAt,
+    }))
+    await supabase.from('cashflow_ap_recon_history').insert(archiveRows)
+    // Clear all recon notes for this entity
+    await supabase.from('cashflow_ap_recon').delete().eq('org_id', orgId).eq('entity', entity)
+    // Reload fresh
+    await loadBills()
+    sh('Review archived ✓ — fields cleared for next review')
+  }
+
   const saveRecon = async (vendor, field, val) => {
     const now = new Date().toISOString()
     setBills(p => p.map(b => b.vendor === vendor ? { ...b, [field]: val, ...(field==='recon_status'&&val?{reviewed_at:now}:{}) } : b))
@@ -7367,6 +7417,7 @@ function APReconView({ orgId, C, userEmail }) {
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <button onClick={() => { setLastRefresh(Date.now()); loadSchedPmts() }} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+C.bdrF, background:'transparent', color:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{'↻ Refresh'}</button>
           <button onClick={()=>setShowHistory(p=>!p)} style={{ padding:'4px 12px', borderRadius:5, border:'1px solid '+(showHistory?C.go:C.bdrF), background:showHistory?C.gD:'transparent', color:showHistory?C.go:C.g, fontSize:11, cursor:'pointer', fontFamily:'inherit' }}>{showHistory ? 'Hide History' : 'View History'}</button>
+          <button onClick={() => { if (window.confirm('Archive this review and clear all statuses/notes for next review?')) archiveAndClose() }} style={{ padding:'4px 14px', borderRadius:5, border:'1px solid '+C.go, background:C.gD, color:C.go, fontSize:11, fontWeight:700, cursor:'pointer', fontFamily:'inherit' }}>{'📋 Archive & Close'}</button>
         </div>
       </div>
 
@@ -7407,17 +7458,42 @@ function APReconView({ orgId, C, userEmail }) {
       </>}
 
       {showHistory && <>
-        <div style={{ fontSize:11, color:C.g, marginBottom:12 }}>{'Reconciliation notes saved from previous AP uploads.'}</div>
-        {history.length === 0 && <div style={{ color:C.g, fontSize:13 }}>{'No history yet. History saves automatically when you upload a new AP aging file.'}</div>}
-        {history.map((h, i) => (
-          <div key={i} style={{ padding:'8px 12px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+C.bdr, display:'grid', gridTemplateColumns:'1fr 100px 120px 1fr 140px', gap:8, alignItems:'center', fontSize:11 }}>
-            <span style={{ fontWeight:600 }}>{h.vendor}</span>
-            <span style={{ color:h.total<0?POS:C.w, fontWeight:700 }}>{fmt(h.total)}</span>
-            <span style={{ color:STATUS_COLORS[h.recon_status]||C.g, fontWeight:600 }}>{h.recon_status||'unreviewed'}</span>
-            <span style={{ color:C.g }}>{h.recon_note||'—'}</span>
-            <span style={{ color:C.g, fontSize:10 }}>{h.archived_at ? new Date(h.archived_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}</span>
-          </div>
-        ))}
+        <div style={{ fontSize:11, color:C.g, marginBottom:12 }}>{'Past AP reviews — archived automatically on upload or when you click Archive & Close.'}</div>
+        {history.length === 0 && <div style={{ color:C.g, fontSize:13 }}>{'No history yet.'}</div>}
+        {(() => {
+          // Group by archived_at date (to nearest minute)
+          const sessions = {}
+          history.forEach(h => {
+            const key = h.archived_at ? h.archived_at.slice(0,16) : 'unknown'
+            if (!sessions[key]) sessions[key] = []
+            sessions[key].push(h)
+          })
+          return Object.entries(sessions).sort((a,b) => b[0].localeCompare(a[0])).map(([key, rows]) => {
+            const date = key !== 'unknown' ? new Date(key).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}) : 'Unknown date'
+            const totalAmt = rows.reduce((s,r) => s + Math.abs(r.total||0), 0)
+            const reviewed = rows.filter(r => r.recon_status).length
+            return (
+              <div key={key} style={{ marginBottom:16, border:'1px solid '+C.bdr, borderRadius:8, overflow:'hidden' }}>
+                <div style={{ padding:'8px 12px', background:C.bg2, display:'flex', justifyContent:'space-between', alignItems:'center', borderBottom:'1px solid '+C.bdr }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:C.go }}>{date}</div>
+                  <div style={{ display:'flex', gap:16, fontSize:11, color:C.g }}>
+                    <span>{rows.length + ' vendors'}</span>
+                    <span>{reviewed + ' reviewed'}</span>
+                    <span style={{ color:NEG, fontWeight:700 }}>{fmt(totalAmt)}</span>
+                  </div>
+                </div>
+                {rows.sort((a,b) => a.vendor.localeCompare(b.vendor)).map((h,i) => (
+                  <div key={i} style={{ padding:'6px 12px', borderBottom:'1px solid '+C.bdrF, display:'grid', gridTemplateColumns:'1fr 90px 160px 1fr', gap:8, alignItems:'center', fontSize:11 }}>
+                    <span style={{ fontWeight:600, color:C.w }}>{h.vendor}</span>
+                    <span style={{ color:NEG, fontWeight:700, textAlign:'right' }}>{fmt(h.total)}</span>
+                    <span style={{ color:STATUS_COLORS[h.recon_status]||C.g, fontWeight:600 }}>{h.recon_status||'— unreviewed'}</span>
+                    <span style={{ color:C.g }}>{h.recon_note||''}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          })
+        })()}
       </>}
 
       {toast && <div style={{ position:'fixed', bottom:20, right:20, background:C.go, color:C.bg, padding:'10px 18px', borderRadius:8, fontWeight:600, fontSize:13, zIndex:1000 }}>{toast}</div>}

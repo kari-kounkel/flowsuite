@@ -7038,7 +7038,7 @@ function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, c
   const inp = { padding:'3px 7px', background:C.ch, border:'1px solid '+C.bdrF, borderRadius:4, color:C.w, fontSize:11, fontFamily:'inherit' }
   const rowKey = b.vendor + '|' + b._source
   return (
-    <div onFocus={() => setActiveRow(rowKey)} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setActiveRow(null) }} style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 80px', gap:8, alignItems:'center', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
+    <div onFocus={() => setActiveRow(rowKey)} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setActiveRow(null) }} style={{ display:'grid', gridTemplateColumns:'1fr 110px 90px 140px 1fr 100px', gap:8, alignItems:'start', padding:'8px 10px', marginBottom:4, borderRadius:7, background:C.nL, border:'1px solid '+(b.recon_status?STATUS_COLORS[b.recon_status]+'44':C.bdr) }}>
       <div>
         <div style={{ fontWeight:600, fontSize:12 }}>{b.vendor}</div>
         <div style={{ fontSize:9, color:C.g, marginTop:1 }}>
@@ -7057,8 +7057,8 @@ function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, c
           </div>
         })()}
       </div>
-      <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right' }}>{fmt(b.total)}</div>
-      <div style={{ textAlign:'center' }}>
+      <div style={{ fontWeight:700, fontSize:13, color:b.total<0?POS:C.w, textAlign:'right', paddingTop:4 }}>{fmt(b.total)}</div>
+      <div style={{ textAlign:'center', paddingTop:4 }}>
         <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:(SOURCE_COLOR[b._source]||C.g)+'22', color:SOURCE_COLOR[b._source]||C.g, fontWeight:700, whiteSpace:'nowrap' }}>
           {b._source === 'leases_contracts' ? 'Lease/Contract' : 'Transaction'}
         </span>
@@ -7067,15 +7067,15 @@ function APReconBillRow({ b, i, C, fmt, schedPmtMap, saveRecon, setSchedModal, c
         {RECON_STATUSES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
       </select>
       <input value={b.recon_note||''} onChange={ev=>saveRecon(b.vendor, b._source, 'recon_note', ev.target.value)} placeholder="Notes..." style={{ ...inp, width:'100%' }} />
-      <div style={{ textAlign:'right' }}>
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3, paddingTop:2 }}>
         {canEditSched && (
           <button onClick={() => setSchedModal({ vendor: b.vendor, existing: schedPmtMap[b.vendor] || null })}
-            style={{ display:'block', width:'100%', marginBottom:4, padding:'3px 0', borderRadius:4, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600 }}>
-            {schedPmtMap[b.vendor] ? '📅 Edit' : '+ Sched'}
+            style={{ padding:'2px 8px', borderRadius:4, border:'1px solid '+(schedPmtMap[b.vendor]?WARN:C.bdrF), background:'transparent', color:schedPmtMap[b.vendor]?WARN:C.g, fontSize:9, cursor:'pointer', fontFamily:'inherit', fontWeight:600, whiteSpace:'nowrap' }}>
+            {schedPmtMap[b.vendor] ? '📅 Edit Sched' : '+ Sched'}
           </button>
         )}
-        {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, display:'block', marginBottom:2 }}>{b.recon_status}</span>}
-        {b.reviewed_at && <span style={{ fontSize:9, color:C.g, display:'block' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
+        {b.recon_status && <span style={{ fontSize:9, padding:'2px 7px', borderRadius:99, background:STATUS_COLORS[b.recon_status]+'22', color:STATUS_COLORS[b.recon_status], fontWeight:600, whiteSpace:'nowrap' }}>{b.recon_status}</span>}
+        {b.reviewed_at && <span style={{ fontSize:9, color:C.g, whiteSpace:'nowrap' }}>{new Date(b.reviewed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(b.reviewed_at).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>}
       </div>
     </div>
   )

@@ -51,7 +51,7 @@ export default function App({ user, orgCtx, onLogout }) {
     { id: 'scanflow', label: 'ScanFlow', icon: '📦', desc: 'Job Tracking' },
     { id: 'moneyflow', label: 'MoneyFlow', icon: '💰', desc: 'Accounting & AR' },
     { id: 'taskflow', label: 'TaskFlow', icon: '✅', desc: 'Tasks & Priorities' },
-  ].filter(m => role !== 'employee' || !EMPLOYEE_HIDDEN.includes(m.id))
+  ].filter(m => role !== 'viewer' || !EMPLOYEE_HIDDEN.includes(m.id))
 
   return (
     <ThemeCtx.Provider value={{ theme, C, toggleTheme }}>
@@ -148,7 +148,7 @@ export default function App({ user, orgCtx, onLogout }) {
           )}
 
           {orgId && activeModule === 'moneyflow' && enabledModules.includes('moneyflow') && (
-            role === 'employee' ? (
+            role === 'viewer' ? (
               <div style={{ textAlign: 'center', padding: '60px 20px', color: C.g }}>
                 <div style={{ fontSize: 36, marginBottom: 16 }}>🔒</div>
                 <h2 style={{ color: C.go, marginBottom: 8, fontSize: 18 }}>MoneyFlow — Admin Access Only</h2>

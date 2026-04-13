@@ -368,7 +368,7 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
       </div>
 
       {/* MoneyFlow read-only summary banner — admin/manager only */}
-      {userRole !== 'employee' && mfSummary && mfSummary.open > 0 && (
+      {userRole !== 'viewer' && mfSummary && mfSummary.open > 0 && (
         <div style={{
           marginBottom: 14, padding: '10px 14px',
           background: mfSummary.overdue > 0 ? '#3a1a1a' : C.gD,

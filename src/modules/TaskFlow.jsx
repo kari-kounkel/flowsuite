@@ -367,8 +367,8 @@ export default function TaskFlowModule({ orgId, C, user, userRole }) {
         <span style={{ fontSize: 10, color: C.g, marginLeft: 'auto', alignSelf: 'center' }}>{tasks.length} task{tasks.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {/* MoneyFlow read-only summary banner */}
-      {mfSummary && mfSummary.open > 0 && (
+      {/* MoneyFlow read-only summary banner — admin/manager only */}
+      {userRole !== 'employee' && mfSummary && mfSummary.open > 0 && (
         <div style={{
           marginBottom: 14, padding: '10px 14px',
           background: mfSummary.overdue > 0 ? '#3a1a1a' : C.gD,

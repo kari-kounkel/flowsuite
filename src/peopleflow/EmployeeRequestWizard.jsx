@@ -48,7 +48,10 @@ const Field = ({ C, l, req, children, style }) => (
   </div>
 )
 
+const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
+
 export default function EmployeeRequestWizard({ orgId, C, user }) {
+  const isAdmin = ADMIN_EMAILS.includes((user?.email || '').toLowerCase())
   const [employees, setEmployees]         = useState([])
   const [step, setStep]                   = useState(1)   // 1=who, 2=type, 3=details, 4=sign, 5=done
   const [empId, setEmpId]                 = useState('')
@@ -107,7 +110,15 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
       .eq('org_id', orgId)
       .not('status', 'in', '("Terminated","Inactive")')
       .order('last_name')
-      .then(({ data }) => setEmployees(data || []))
+      .then(({ data }) => {
+        const all = data || []
+        setEmployees(all)
+        // Non-admin: auto-select the employee matching the logged-in user's email
+        if (!isAdmin && user?.email) {
+          const match = all.find(e => (e.email || '').toLowerCase() === user.email.toLowerCase())
+          if (match) setEmpId(match.id)
+        }
+      })
   }, [orgId])
 
   // When employee changes, check if they have prior ACH requests (banking on file)
@@ -323,10 +334,16 @@ export default function EmployeeRequestWizard({ orgId, C, user }) {
           <div style={{ fontSize: 16, fontWeight: 700, color: C.w, marginBottom: 4 }}>Who are you?</div>
           <div style={{ fontSize: 12, color: C.g, marginBottom: 18 }}>Select your name to get started.</div>
           <Field C={C} l="Your Name" req>
-            <select value={empId} onChange={e => setEmpId(e.target.value)} style={inp(C)}>
-              <option value="">— Select your name —</option>
-              {employees.map(e => <option key={e.id} value={e.id}>{gn(e)} — {e.dept}</option>)}
-            </select>
+            {isAdmin ? (
+              <select value={empId} onChange={e => setEmpId(e.target.value)} style={inp(C)}>
+                <option value="">— Select your name —</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{gn(e)} — {e.dept}</option>)}
+              </select>
+            ) : (
+              <div style={{ padding: '8px 10px', background: (C.ch || '#111827'), border: `1px solid ${C.bdr || '#374151'}`, borderRadius: 6, fontSize: 12, color: C.w, fontWeight: 600 }}>
+                {employees.find(e => e.id === empId) ? gn(employees.find(e => e.id === empId)) : 'Loading...'}
+              </div>
+            )}
           </Field>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <button onClick={() => setStep(2)} disabled={!canNext1} style={{

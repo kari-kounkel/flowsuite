@@ -16,6 +16,18 @@ export function ScanFlowModule({ darkMode, orgId = 'minuteman', userRole = 'empl
   });
   const theme = getTheme(darkMode);
 
+  if (userRole === 'employee') {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 20px', color: theme.mutedText }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>📦</div>
+        <h2 style={{ color: theme.accent, marginBottom: 8, fontSize: 18 }}>ScanFlow — Coming Soon</h2>
+        <p style={{ fontSize: 13, maxWidth: 360, margin: '0 auto' }}>
+          Employee access to ScanFlow is not currently enabled. Contact your manager or admin for assistance.
+        </p>
+      </div>
+    )
+  }
+
   function switchTab(id) {
     setActiveTab(id);
     try { localStorage.setItem('sf-tab', id) } catch {}

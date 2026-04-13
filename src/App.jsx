@@ -147,7 +147,17 @@ export default function App({ user, orgCtx, onLogout }) {
           )}
 
           {orgId && activeModule === 'moneyflow' && enabledModules.includes('moneyflow') && (
-            <MoneyFlowModule orgId={orgId} C={C} />
+            role === 'employee' ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: C.g }}>
+                <div style={{ fontSize: 36, marginBottom: 16 }}>🔒</div>
+                <h2 style={{ color: C.go, marginBottom: 8, fontSize: 18 }}>MoneyFlow — Admin Access Only</h2>
+                <p style={{ fontSize: 13, maxWidth: 380, margin: '0 auto', lineHeight: 1.6 }}>
+                  MoneyFlow contains financial and accounting data restricted to administrators. Contact your manager if you need access.
+                </p>
+              </div>
+            ) : (
+              <MoneyFlowModule orgId={orgId} C={C} />
+            )
           )}
 
           {activeModule === 'admin' && isSuperAdmin && (

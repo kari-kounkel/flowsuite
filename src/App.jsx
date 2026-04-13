@@ -44,13 +44,14 @@ export default function App({ user, orgCtx, onLogout }) {
   const isSuperAdmin = role === 'super_admin'
 
   // Module definitions
+  const EMPLOYEE_HIDDEN = ['scanflow', 'moneyflow']
   const allModules = [
     { id: 'peopleflow', label: 'PeopleFlow', icon: '👥', desc: 'HR & Team' },
     { id: 'paperflow', label: 'PaperFlow', icon: '📄', desc: 'Contracts & Policies' },
     { id: 'scanflow', label: 'ScanFlow', icon: '📦', desc: 'Job Tracking' },
     { id: 'moneyflow', label: 'MoneyFlow', icon: '💰', desc: 'Accounting & AR' },
     { id: 'taskflow', label: 'TaskFlow', icon: '✅', desc: 'Tasks & Priorities' },
-  ]
+  ].filter(m => role !== 'employee' || !EMPLOYEE_HIDDEN.includes(m.id))
 
   return (
     <ThemeCtx.Provider value={{ theme, C, toggleTheme }}>

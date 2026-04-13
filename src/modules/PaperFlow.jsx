@@ -50,13 +50,14 @@ export default function PaperFlowModule({ orgId, C, user }) {
   const ADMIN_EMAILS = ['kari@karikounkel.com','accounting@mpuptown.com','fbrown@mpuptown.com','operationsmanager@mpuptown.com']
   const isHR = ADMIN_EMAILS.includes(user?.email?.toLowerCase())
 
+  const isViewer = !isHR
   const tabs = [
     { k: 'requests',     l: 'Requests',   i: '📋' },
     ...(isHR ? [{ k: 'hr_dashboard', l: 'HR Dashboard', i: '🔵' }] : []),
-    { k: 'sections',     l: 'Browse',     i: '§' },
-    { k: 'negotiate',    l: 'Negotiate',  i: '✎' },
-    { k: 'push',         l: 'Push',       i: '▶' },
-    { k: 'acks',         l: 'Acks',       i: '✓' },
+    ...(!isViewer ? [{ k: 'sections',  l: 'Browse',     i: '§' }] : []),
+    ...(!isViewer ? [{ k: 'negotiate', l: 'Negotiate',  i: '✎' }] : []),
+    ...(!isViewer ? [{ k: 'push',      l: 'Push',       i: '▶' }] : []),
+    ...(!isViewer ? [{ k: 'acks',      l: 'Acks',       i: '✓' }] : []),
   ]
 
   const saveNote = async (sectionId, text, noteType = 'general') => {

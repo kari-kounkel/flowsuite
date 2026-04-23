@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase.js'
 import { Card, Tag, Btn, fm, dbt, td } from '../theme.jsx'
-import { generateLetterPDF, buildOfferLetterHTML, buildUnionLetterHTML } from './letterHelpers.js'
+import { generateLetterPDF, buildOfferLetterHTML, buildUnionLetterHTML, buildSeparationLetterHTML } from './letterHelpers.js'
 
 // ── Constants ──
 const OBS = [
@@ -2846,6 +2846,7 @@ function EditDisciplineModal({record, onSave, onClose, C, emps, disc, userEmail,
 function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmployee,emps,setEmps,ac,disc,mod,setMod,C,userEmail,userEmpRecord}){
   const [viewSep, setViewSep] = useState(null)
   const [editingSep, setEditingSep] = useState(null)
+  const [letterSep, setLetterSep] = useState(null)
   const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
 
   return(<div>
@@ -2929,6 +2930,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
               }
             }}} style={{background:'transparent',color:'#EF4444',border:'1px solid #EF4444',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↺ Undo Recall</button>}
             <button onClick={(e)=>{e.stopPropagation();setEditingSep(s);setMod('separation')}} style={{background:'transparent',color:C.go,border:'1px solid '+C.go,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>✏️ Edit</button>
+            <button onClick={(e)=>{e.stopPropagation();setLetterSep({sep:s,emp:emp})}} style={{background:'transparent',color:C.bl,border:'1px solid '+C.bl,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>📄 Letter</button>
 
           </div>
         </div>}
@@ -2943,6 +2945,8 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
       userEmail={userEmail} userEmpRecord={userEmpRecord} setEmps={setEmps}
       sep={editingSep}
     />}
+
+    {letterSep&&<SeparationLetterModal sep={letterSep.sep} emp={letterSep.emp} onClose={()=>setLetterSep(null)} C={C}/>}
 
   </div>)
 }
@@ -3123,6 +3127,81 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
       </div>
     </div>
   </div>)
+}
+
+// ── Separation Letter Modal ──
+function SeparationLetterModal({sep, emp, onClose, C}) {
+  const sepTypeLabel = (SEPARATION_TYPES.find(t=>t.v===sep.separation_type)?.l) || sep.separation_type || ''
+  const defaultBodyByType = {
+    termination_cause: 'At this time, we are ending your employment with the company. This decision has been made after review of performance expectations and is effective immediately.\n\nYour final paycheck will be processed following your departure today and deposited to your account within 24 hours, as required by Minnesota law. Please return all company property before leaving the premises.\n\nWe appreciate the time and effort you have contributed and wish you the best in your future endeavors.\n\nIf you have questions regarding your final pay, benefits continuation, or related matters, you may contact the office directly.',
+    layoff: 'Due to current business conditions, we are placing you on layoff status effective {effective_date}. This is a temporary separation, not a termination, and you remain eligible for recall as work becomes available.\n\nYour seniority and benefit eligibility clocks will be frozen during this period per the terms of our collective bargaining agreement.\n\nInformation regarding final pay, benefits continuation (COBRA), and unemployment insurance will be provided separately.',
+    voluntary_resignation: 'This letter confirms the voluntary resignation you submitted, effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property on or before your last day.\n\nThank you for your contributions during your time with the company. We wish you well in your next chapter.',
+    job_abandonment: 'You have been absent from your scheduled shifts without contact or authorization, which our policy defines as job abandonment. As of {effective_date}, your employment has been separated.\n\nYour final paycheck will be processed in accordance with Minnesota law. Please arrange to return any company property promptly.',
+    retirement: 'Congratulations on your retirement, effective {effective_date}.\n\nThank you for your years of service and the contributions you have made. Information regarding final pay, accrued benefits, and any applicable pension or retirement plan details will be provided separately.\n\nWe wish you all the best in this next season.'
+  }
+
+  const [f, setF] = useState({
+    company: 'Minuteman Press Uptown',
+    emp_name: sep.employee_name || (emp ? gn(emp) : ''),
+    preferred_name: emp?.preferred_name || '',
+    role: emp?.role || '',
+    dept: emp?.dept || '',
+    hire_date: emp?.hire_date || '',
+    effective_date: sep.effective_date || new Date().toISOString().split('T')[0],
+    final_paycheck_notes: sep.final_paycheck_notes || '',
+    body: defaultBodyByType[sep.separation_type] || 'Your employment with the company has been separated effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property promptly.'
+  })
+  const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const resolvedBody = f.body
+    .replace(/{effective_date}/g, f.effective_date ? fm(f.effective_date) : '[EFFECTIVE DATE]')
+    .replace(/{emp_name}/g, f.emp_name || '[EMPLOYEE]')
+    .replace(/{role}/g, f.role || '[ROLE]')
+    .replace(/\n/g, '<br/>')
+
+  const handleGenerate = () => {
+    const html = buildSeparationLetterHTML(f, resolvedBody, fm, sepTypeLabel)
+    generateLetterPDF(html, 'Separation Letter -- '+f.emp_name)
+  }
+
+  const inp = {width:'100%',padding:'6px 8px',background:C.ch,border:'1px solid '+C.bdr,borderRadius:6,color:C.w,fontSize:12,boxSizing:'border-box',fontFamily:'inherit'}
+  const lbl = {fontSize:10,color:C.g,textTransform:'uppercase',display:'block',marginBottom:3}
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.bg2,borderRadius:12,padding:24,width:560,maxHeight:'88vh',overflowY:'auto',border:'1px solid '+C.bdr}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+          <div>
+            <div style={{fontSize:9,color:C.bl,textTransform:'uppercase',letterSpacing:2}}>FlowSuite PeopleFlow</div>
+            <h3 style={{margin:'2px 0 0',fontSize:16}}>Separation Letter — {f.emp_name}</h3>
+            <div style={{fontSize:11,color:C.g,marginTop:2}}>{sepTypeLabel}</div>
+          </div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:C.g,cursor:'pointer',fontSize:18}}>✕</button>
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12,marginTop:12}}>
+          <div><label style={lbl}>Company Name</label><input value={f.company} onChange={e=>up('company',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Employee Name</label><input value={f.emp_name} onChange={e=>up('emp_name',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Preferred (Salutation)</label><input value={f.preferred_name} onChange={e=>up('preferred_name',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Effective Date</label><input type="date" value={f.effective_date} onChange={e=>up('effective_date',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Role</label><input value={f.role} onChange={e=>up('role',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Department</label><input value={f.dept} onChange={e=>up('dept',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Hire Date</label><input type="date" value={f.hire_date} onChange={e=>up('hire_date',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Final Paycheck Notes</label><input value={f.final_paycheck_notes} onChange={e=>up('final_paycheck_notes',e.target.value)} style={inp}/></div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={lbl}>Letter Body — placeholders: {'{effective_date}'} {'{emp_name}'} {'{role}'}</label>
+          <textarea value={f.body} onChange={e=>up('body',e.target.value)} rows={12} style={{...inp,resize:'vertical',lineHeight:1.6,fontFamily:'Georgia, serif'}}/>
+        </div>
+
+        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+          <Btn gold small onClick={handleGenerate} C={C}>Generate PDF →</Btn>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function OnbView({ac,onb,docs,toggleOnb,toggleDoc,updateOnbDate,updateDocMeta,orgId,C}){

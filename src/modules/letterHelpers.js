@@ -35,6 +35,29 @@ export const buildOfferLetterHTML = (f, resolvedBody, fm) => {
     + '</div>'
 }
 
+export const buildSeparationLetterHTML = (f, resolvedBody, fm, sepTypeLabel) => {
+  return '<div class="letterhead"><div class="company">' + f.company + '</div><div class="meta">Employee Separation Notice</div></div>'
+    + '<p><strong>Date:</strong> ' + fm(f.effective_date) + '</p>'
+    + '<p><strong>To:</strong> ' + f.emp_name + '</p>'
+    + '<p><strong>Re:</strong> Separation of Employment</p><br/>'
+    + '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12px;border:1px solid #ddd">'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:35%;border:1px solid #ddd">Employee</td><td style="padding:6px 10px;border:1px solid #ddd">' + f.emp_name + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Position</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.role || '--') + (f.dept ? ' &middot; ' + f.dept : '') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Hire Date</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.hire_date ? fm(f.hire_date) : '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Separation Type</td><td style="padding:6px 10px;border:1px solid #ddd">' + (sepTypeLabel || '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Effective Date</td><td style="padding:6px 10px;border:1px solid #ddd"><strong>' + fm(f.effective_date) + '</strong></td></tr>'
+    + (f.final_paycheck_notes ? '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Final Paycheck</td><td style="padding:6px 10px;border:1px solid #ddd">' + f.final_paycheck_notes + '</td></tr>' : '')
+    + '</table>'
+    + '<p>Dear ' + (f.preferred_name || f.emp_name) + ',</p>'
+    + '<div class="body">' + resolvedBody + '</div>'
+    + '<div class="signature-block">'
+    + '<p>Sincerely,</p><br/><br/>'
+    + '<p>_______________________________<br/>Authorized Signature &middot; ' + f.company + '</p><br/><br/>'
+    + '<p>_______________________________<br/>' + f.emp_name + ' &middot; Employee Acknowledgment</p>'
+    + '<p>Date: _______________</p>'
+    + '</div>'
+}
+
 export const buildUnionLetterHTML = (f, startDate, seniority, resolvedBody, fm, UNION_CONTACTS) => {
   const today = new Date().toISOString().split('T')[0]
   return '<div class="letterhead"><div class="company">' + f.company + '</div><div class="meta">Union Membership Notification</div></div>'

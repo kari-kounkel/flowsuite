@@ -3159,6 +3159,16 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
   })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
+  const [sigs, setSigs] = useState({
+    authorized: {name:'',date:''},
+    employee: {name:'',date:''},
+    witness1: {name:'',date:''},
+    witness2: {name:'',date:''}
+  })
+  const setSigName = (role, name) => setSigs(p => ({...p, [role]: {...p[role], name}}))
+  const signNow = (role) => setSigs(p => ({...p, [role]: {name: p[role].name, date: new Date().toISOString().split('T')[0]}}))
+  const clearSig = (role) => setSigs(p => ({...p, [role]: {name:'', date:''}}))
+
   const resolvedBody = f.body
     .replace(/{effective_date}/g, f.effective_date ? fm(f.effective_date) : '[EFFECTIVE DATE]')
     .replace(/{emp_name}/g, f.emp_name || '[EMPLOYEE]')
@@ -3166,7 +3176,7 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
     .replace(/\n/g, '<br/>')
 
   const handleGenerate = () => {
-    const html = buildSeparationLetterHTML(f, resolvedBody, fm, sepTypeLabel, MINUTEMAN_LOGO)
+    const html = buildSeparationLetterHTML(f, resolvedBody, fm, sepTypeLabel, MINUTEMAN_LOGO, sigs)
     generateLetterPDF(html, 'Separation Letter -- '+f.emp_name)
   }
 
@@ -3199,6 +3209,39 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
         <div style={{marginBottom:14}}>
           <label style={lbl}>Letter Body — placeholders: {'{effective_date}'} {'{emp_name}'} {'{role}'}</label>
           <textarea value={f.body} onChange={e=>up('body',e.target.value)} rows={12} style={{...inp,resize:'vertical',lineHeight:1.6,fontFamily:'Georgia, serif'}}/>
+        </div>
+
+        <div style={{marginBottom:14,padding:'12px 14px',background:C.ch,borderRadius:8,border:'1px solid '+C.bdr}}>
+          <div style={{fontSize:10,color:C.g,textTransform:'uppercase',letterSpacing:1,fontWeight:700,marginBottom:8}}>✎ Digital Signatures — Type name, then Sign</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            {[
+              {k:'authorized',l:'Authorized · '+f.company},
+              {k:'employee',l:f.emp_name+' · Acknowledgment'},
+              {k:'witness1',l:'Witness 1'},
+              {k:'witness2',l:'Witness 2'}
+            ].map(s => (
+              <div key={s.k} style={{padding:8,background:C.bg2,borderRadius:6,border:'1px solid '+C.bdr}}>
+                <div style={{fontSize:9,color:C.g,marginBottom:4}}>{s.l}</div>
+                <input
+                  value={sigs[s.k].name}
+                  onChange={e=>setSigName(s.k,e.target.value)}
+                  placeholder="Type full name"
+                  style={{...inp,fontFamily:"'Brush Script MT','Segoe Script',cursive",fontStyle:'italic',fontSize:18,padding:'4px 6px'}}
+                />
+                <div style={{display:'flex',gap:4,marginTop:4,alignItems:'center'}}>
+                  {sigs[s.k].date ? (
+                    <>
+                      <span style={{fontSize:10,color:'#22C55E',flex:1}}>✓ Signed {fm(sigs[s.k].date)}</span>
+                      <button onClick={()=>clearSig(s.k)} style={{background:'transparent',border:'1px solid '+C.bdr,color:C.g,padding:'2px 8px',borderRadius:4,fontSize:10,cursor:'pointer',fontFamily:'inherit'}}>Clear</button>
+                    </>
+                  ) : (
+                    <button onClick={()=>signNow(s.k)} disabled={!sigs[s.k].name.trim()} style={{background:sigs[s.k].name.trim()?C.go:C.bdr,color:sigs[s.k].name.trim()?'#000':C.g,border:'none',padding:'3px 10px',borderRadius:4,fontSize:10,fontWeight:700,cursor:sigs[s.k].name.trim()?'pointer':'not-allowed',fontFamily:'inherit'}}>Sign Now</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:9,color:C.g,marginTop:6,fontStyle:'italic'}}>Typed names appear in the printed letter in script font. "Sign Now" stamps today's date.</div>
         </div>
 
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>

@@ -35,8 +35,9 @@ export const buildOfferLetterHTML = (f, resolvedBody, fm) => {
     + '</div>'
 }
 
-export const buildSeparationLetterHTML = (f, resolvedBody, fm, sepTypeLabel) => {
-  return '<div class="letterhead"><div class="company">' + f.company + '</div><div class="meta">Employee Separation Notice</div></div>'
+export const buildSeparationLetterHTML = (f, resolvedBody, fm, sepTypeLabel, logo) => {
+  const logoImg = logo ? '<img src="' + logo + '" alt="' + f.company + '" style="height:64px;width:auto;display:block;margin-bottom:10px"/>' : ''
+  return '<div class="letterhead">' + logoImg + '<div class="company">' + f.company + '</div><div class="meta">Employee Separation Notice</div></div>'
     + '<p><strong>Date:</strong> ' + fm(f.effective_date) + '</p>'
     + '<p><strong>To:</strong> ' + f.emp_name + '</p>'
     + '<p><strong>Re:</strong> Separation of Employment</p><br/>'
@@ -54,7 +55,36 @@ export const buildSeparationLetterHTML = (f, resolvedBody, fm, sepTypeLabel) => 
     + '<p>Sincerely,</p><br/><br/>'
     + '<p>_______________________________<br/>Authorized Signature &middot; ' + f.company + '</p><br/><br/>'
     + '<p>_______________________________<br/>' + f.emp_name + ' &middot; Employee Acknowledgment</p>'
+    + '<p>Date: _______________</p><br/>'
+    + '<p style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;margin-top:24px">Witnesses</p>'
+    + '<p>_______________________________<br/>Witness 1 &middot; Print Name &amp; Signature</p>'
+    + '<p>Date: _______________</p><br/>'
+    + '<p>_______________________________<br/>Witness 2 &middot; Print Name &amp; Signature</p>'
     + '<p>Date: _______________</p>'
+    + '</div>'
+}
+
+export const buildUnionSeparationLetterHTML = (f, resolvedBody, fm, UNION_CONTACTS, sepTypeLabel, logo) => {
+  const today = new Date().toISOString().split('T')[0]
+  const logoImg = logo ? '<img src="' + logo + '" alt="' + f.company + '" style="height:64px;width:auto;display:block;margin-bottom:10px"/>' : ''
+  return '<div class="letterhead">' + logoImg + '<div class="company">' + f.company + '</div><div class="meta">Union Separation Notice — Cease Processing</div></div>'
+    + '<p><strong>Date:</strong> ' + fm(today) + '</p>'
+    + '<p><strong>To:</strong> ' + UNION_CONTACTS.ruth.name + ' (' + UNION_CONTACTS.ruth.role + ') &amp; ' + UNION_CONTACTS.marty.name + ' (' + UNION_CONTACTS.marty.role + ')</p>'
+    + '<p><strong>Re:</strong> Separation of ' + f.emp_name + ' — Please Cease Membership Processing</p><br/>'
+    + '<table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12px;border:1px solid #ddd">'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;width:40%;border:1px solid #ddd">Employee</td><td style="padding:6px 10px;border:1px solid #ddd">' + f.emp_name + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Role</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.role || '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Department</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.dept || '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Union Status at Separation</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.union_status || '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Original Hire Date</td><td style="padding:6px 10px;border:1px solid #ddd">' + (f.hire_date ? fm(f.hire_date) : '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Separation Type</td><td style="padding:6px 10px;border:1px solid #ddd">' + (sepTypeLabel || '--') + '</td></tr>'
+    + '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Separation Effective</td><td style="padding:6px 10px;border:1px solid #ddd"><strong>' + fm(f.effective_date) + '</strong></td></tr>'
+    + (f.seniority_date ? '<tr><td style="padding:6px 10px;background:#f5f5f5;font-weight:bold;border:1px solid #ddd">Seniority Date (if applicable)</td><td style="padding:6px 10px;border:1px solid #ddd">' + fm(f.seniority_date) + '</td></tr>' : '')
+    + '</table>'
+    + '<div class="body">' + resolvedBody + '</div>'
+    + '<div class="signature-block">'
+    + '<p>Sincerely,</p><br/><br/>'
+    + '<p>_______________________________<br/>Authorized Signature &middot; ' + f.company + '</p>'
     + '</div>'
 }
 

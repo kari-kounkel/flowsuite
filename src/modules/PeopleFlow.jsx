@@ -2850,6 +2850,68 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
   const [editingSep, setEditingSep] = useState(null)
   const [letterSep, setLetterSep] = useState(null)
   const [unionSep, setUnionSep] = useState(null)
+  const [uploadingSepId, setUploadingSepId] = useState(null)
+  const fileInputRef = useRef(null)
+  const pendingSepRef = useRef(null)
+
+  const triggerUpload = (sep) => {
+    pendingSepRef.current = sep
+    fileInputRef.current?.click()
+  }
+
+  const onFileSelected = async (e) => {
+    const file = e.target.files?.[0]
+    const sep = pendingSepRef.current
+    e.target.value = ''
+    if (!file || !sep) return
+    setUploadingSepId(sep.id)
+    try {
+      const ts = Date.now()
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = 'separations/' + sep.id + '/' + ts + '_' + safeName
+      const {error: upErr} = await supabase.storage.from('flowsuite-files').upload(path, file)
+      if (upErr) { alert('Upload failed: ' + upErr.message); return }
+      const {data: urlData} = supabase.storage.from('flowsuite-files').getPublicUrl(path)
+      const newAttachment = {
+        name: file.name, path,
+        url: urlData?.publicUrl || path,
+        size: file.size, type: file.type,
+        uploaded_at: new Date().toISOString(),
+        uploaded_by: userEmpRecord ? gn(userEmpRecord) : (userEmail || '')
+      }
+      let existing = []
+      try { existing = typeof sep.attachments === 'string' ? JSON.parse(sep.attachments) : (sep.attachments || []) } catch(e) {}
+      const updated = [...existing, newAttachment]
+      const {error: dbErr} = await supabase.from('separations').update({attachments: JSON.stringify(updated)}).eq('id', sep.id)
+      if (dbErr) { alert('Saved to storage but database update failed: ' + dbErr.message); return }
+      setSeparations(p => p.map(x => x.id === sep.id ? {...x, attachments: JSON.stringify(updated)} : x))
+    } catch (err) {
+      console.error('Upload error:', err)
+      alert('Upload failed: ' + (err.message || err))
+    } finally {
+      setUploadingSepId(null)
+      pendingSepRef.current = null
+    }
+  }
+
+  const removeAttachment = async (sep, index) => {
+    if (!confirm('Remove this attachment? The file will be deleted.')) return
+    let atts = []
+    try { atts = typeof sep.attachments === 'string' ? JSON.parse(sep.attachments) : (sep.attachments || []) } catch(e) {}
+    const toRemove = atts[index]
+    if (!toRemove) return
+    if (toRemove.path) await supabase.storage.from('flowsuite-files').remove([toRemove.path])
+    const updated = atts.filter((_, i) => i !== index)
+    await supabase.from('separations').update({attachments: updated.length ? JSON.stringify(updated) : null}).eq('id', sep.id)
+    setSeparations(p => p.map(x => x.id === sep.id ? {...x, attachments: updated.length ? JSON.stringify(updated) : null} : x))
+  }
+
+  const updateSepField = async (sepId, changes) => {
+    const {error} = await supabase.from('separations').update(changes).eq('id', sepId)
+    if (error) { alert('Save failed: ' + error.message); return false }
+    setSeparations(p => p.map(x => x.id === sepId ? {...x, ...changes} : x))
+    return true
+  }
   const sorted = [...separations].sort((a,b) => new Date(b.effective_date||b.created_at) - new Date(a.effective_date||a.created_at))
 
   return(<div>
@@ -2862,6 +2924,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
       const st=SEPARATION_TYPES.find(t=>t.v===s.separation_type)
       const emp=emps.find(e=>e.id===s.employee_id)
       const isRecalled = s.status === 'recalled'
+      const reasonPreview = s.reason ? (s.reason.split('\n')[0].slice(0, 90) + (s.reason.length > 90 || s.reason.includes('\n') ? '…' : '')) : '—'
       return <div key={s.id} onClick={()=>setViewSep(viewSep?.id===s.id?null:s)} style={{cursor:'pointer'}}>
         <Card C={C} style={{marginBottom:6,padding:'10px 14px',opacity:isRecalled?0.6:1}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -2869,7 +2932,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
             <b style={{fontSize:13}}>{s.employee_name||'—'}</b>{' '}
             <Tag c={st?.c||C.g}>{st?.l||s.separation_type}</Tag>
             {isRecalled && <span style={{display:'inline-block',padding:'1px 6px',borderRadius:99,fontSize:8,fontWeight:700,marginLeft:4,background:'rgba(34,197,94,0.15)',color:'#22C55E',border:'1px solid #22C55E'}}>Recalled {fm(s.recall_date)}</span>}
-            <div style={{fontSize:11,color:C.g}}>{s.reason||'—'}</div>
+            <div style={{fontSize:11,color:C.g}}>{reasonPreview}</div>
           </div>
           <div style={{textAlign:'right',flexShrink:0}}>
             <div style={{fontSize:10,color:C.g}}>{fm(s.effective_date||s.created_at)}</div>
@@ -2921,8 +2984,27 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
             })()}
           </div>}
 
+          {/* Attachments (signed letters, scanned documents) */}
+          {(()=>{
+            let atts = []
+            try { atts = typeof s.attachments === 'string' ? JSON.parse(s.attachments) : (s.attachments || []) } catch(e) {}
+            if (atts.length === 0) return null
+            return <div style={{fontSize:11,marginTop:8,marginBottom:6}}>
+              <span style={{color:C.g,fontSize:9,textTransform:'uppercase'}}>📎 Signed Documents ({atts.length})</span>
+              <div style={{display:'flex',flexDirection:'column',gap:4,marginTop:4}}>
+                {atts.map((a,i) => (
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 8px',background:'rgba(14,165,233,0.06)',border:'1px solid '+C.bdr,borderRadius:4}}>
+                    <a href={a.url} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} style={{fontSize:11,color:C.bl,textDecoration:'none',flex:1}}>📄 {a.name}</a>
+                    <span style={{color:C.g,fontSize:9}}>{a.uploaded_at ? fm(a.uploaded_at.split('T')[0]) : ''}</span>
+                    <button onClick={(e)=>{e.stopPropagation();removeAttachment(s,i)}} style={{background:'transparent',border:'none',color:'#EF4444',cursor:'pointer',fontSize:10,padding:'2px 4px'}}>✕</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          })()}
+
           {/* Action buttons */}
-          <div style={{display:'flex',gap:6,marginTop:10}}>
+          <div style={{display:'flex',gap:6,marginTop:10,flexWrap:'wrap'}}>
             {st?.hasRecall && !isRecalled && <button onClick={(e)=>{e.stopPropagation();if(confirm('Recall this employee? This will set their status back to Active and resume all probation clocks.'))recallEmployee(s)}} style={{background:'#22C55E',color:'#fff',border:'none',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>↩ Recall Employee</button>}
             {isRecalled && <button onClick={async(e)=>{e.stopPropagation();if(confirm('Undo recall? This will set the employee back to Laid Off.')){
               await supabase.from('separations').update({status:'active',recall_date:null}).eq('id',s.id)
@@ -2935,6 +3017,7 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
             <button onClick={(e)=>{e.stopPropagation();setEditingSep(s);setMod('separation')}} style={{background:'transparent',color:C.go,border:'1px solid '+C.go,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>✏️ Edit</button>
             <button onClick={(e)=>{e.stopPropagation();setLetterSep({sep:s,emp:emp})}} style={{background:'transparent',color:C.bl,border:'1px solid '+C.bl,padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>📄 Letter</button>
             <button onClick={(e)=>{e.stopPropagation();setUnionSep({sep:s,emp:emp})}} style={{background:'transparent',color:'#6366F1',border:'1px solid #6366F1',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:'pointer',fontFamily:'inherit',fontWeight:600}}>⚐ Union Notice</button>
+            <button onClick={(e)=>{e.stopPropagation();triggerUpload(s)}} disabled={uploadingSepId===s.id} style={{background:'transparent',color:'#22C55E',border:'1px solid #22C55E',padding:'6px 14px',borderRadius:6,fontSize:11,cursor:uploadingSepId===s.id?'wait':'pointer',fontFamily:'inherit',fontWeight:600,opacity:uploadingSepId===s.id?0.5:1}}>{uploadingSepId===s.id?'⏳ Uploading…':'📎 Upload Signed'}</button>
 
           </div>
         </div>}
@@ -2950,9 +3033,11 @@ function SeparationsSubView({separations,setSeparations,saveSeparation,recallEmp
       sep={editingSep}
     />}
 
-    {letterSep&&<SeparationLetterModal sep={letterSep.sep} emp={letterSep.emp} onClose={()=>setLetterSep(null)} C={C}/>}
+    {letterSep&&<SeparationLetterModal sep={letterSep.sep} emp={letterSep.emp} onClose={()=>setLetterSep(null)} onUpdate={updateSepField} C={C}/>}
 
     {unionSep&&<UnionSeparationLetterModal sep={unionSep.sep} emp={unionSep.emp} onClose={()=>setUnionSep(null)} C={C}/>}
+
+    <input ref={fileInputRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={onFileSelected}/>
 
   </div>)
 }
@@ -3136,7 +3221,7 @@ function SeparationFormModal({onSave,onClose,C,emps,allEmps,disc,userEmail,userE
 }
 
 // ── Separation Letter Modal ──
-function SeparationLetterModal({sep, emp, onClose, C}) {
+function SeparationLetterModal({sep, emp, onClose, onUpdate, C}) {
   const sepTypeLabel = (SEPARATION_TYPES.find(t=>t.v===sep.separation_type)?.l) || sep.separation_type || ''
   const defaultBodyByType = {
     termination_cause: 'At this time, we are ending your employment with the company. This decision has been made after review of performance expectations and is effective immediately.\n\nYour final paycheck will be processed following your departure today and deposited to your account within 24 hours, as required by Minnesota law. Please return all company property before leaving the premises.\n\nWe appreciate the time and effort you have contributed and wish you the best in your future endeavors.\n\nIf you have questions regarding your final pay, benefits continuation, or related matters, you may contact the office directly.',
@@ -3155,9 +3240,21 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
     hire_date: emp?.hire_date || '',
     effective_date: sep.effective_date || new Date().toISOString().split('T')[0],
     final_paycheck_notes: sep.final_paycheck_notes || '',
-    body: defaultBodyByType[sep.separation_type] || 'Your employment with the company has been separated effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property promptly.'
+    body: sep.letter_body || defaultBodyByType[sep.separation_type] || 'Your employment with the company has been separated effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property promptly.'
   })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
+
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [lastSavedBody, setLastSavedBody] = useState(sep.letter_body || null)
+  const isDirty = f.body !== (lastSavedBody || defaultBodyByType[sep.separation_type] || '')
+
+  const saveDraft = async () => {
+    if (!onUpdate) return
+    setSavingDraft(true)
+    const ok = await onUpdate(sep.id, {letter_body: f.body})
+    if (ok) setLastSavedBody(f.body)
+    setSavingDraft(false)
+  }
 
   const [sigs, setSigs] = useState({
     authorized: {name:'',date:''},
@@ -3175,7 +3272,11 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
     .replace(/{role}/g, f.role || '[ROLE]')
     .replace(/\n/g, '<br/>')
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    if (onUpdate && f.body !== lastSavedBody) {
+      await onUpdate(sep.id, {letter_body: f.body})
+      setLastSavedBody(f.body)
+    }
     const html = buildSeparationLetterHTML(f, resolvedBody, fm, sepTypeLabel, MINUTEMAN_LOGO, sigs)
     generateLetterPDF(html, 'Separation Letter -- '+f.emp_name)
   }
@@ -3244,9 +3345,15 @@ function SeparationLetterModal({sep, emp, onClose, C}) {
           <div style={{fontSize:9,color:C.g,marginTop:6,fontStyle:'italic'}}>Typed names appear in the printed letter in script font. "Sign Now" stamps today's date.</div>
         </div>
 
-        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
-          <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
-          <Btn gold small onClick={handleGenerate} C={C}>Generate PDF →</Btn>
+        <div style={{display:'flex',gap:8,justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{fontSize:10,color:isDirty?C.am:C.g,fontStyle:'italic'}}>
+            {isDirty ? '● Unsaved changes to body' : (lastSavedBody ? '✓ Body saved' : 'Using default template')}
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <Btn ghost small onClick={onClose} C={C}>Cancel</Btn>
+            <Btn ghost small onClick={saveDraft} C={C}>{savingDraft ? 'Saving…' : '💾 Save Draft'}</Btn>
+            <Btn gold small onClick={handleGenerate} C={C}>Generate PDF →</Btn>
+          </div>
         </div>
       </div>
     </div>

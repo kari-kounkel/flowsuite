@@ -3240,13 +3240,21 @@ function SeparationLetterModal({sep, emp, onClose, onUpdate, C}) {
     hire_date: emp?.hire_date || '',
     effective_date: sep.effective_date || new Date().toISOString().split('T')[0],
     final_paycheck_notes: sep.final_paycheck_notes || '',
-    body: sep.letter_body || defaultBodyByType[sep.separation_type] || 'Your employment with the company has been separated effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property promptly.'
+    cobra_notes: sep.cobra_notes || '',
+    prepared_by: sep.prepared_by || '',
+    body: sep.letter_body || sep.reason || defaultBodyByType[sep.separation_type] || 'Your employment with the company has been separated effective {effective_date}.\n\nYour final paycheck will be issued in accordance with Minnesota law. Please return all company property promptly.'
   })
   const up = (k,v) => setF(p=>({...p,[k]:v}))
 
+  const syncFromForm = () => {
+    if (!sep.reason) { alert('No reason recorded on the separation form.'); return }
+    if (f.body && f.body !== sep.reason && !confirm('Replace the current letter body with the Reason from the separation form?')) return
+    up('body', sep.reason)
+  }
+
   const [savingDraft, setSavingDraft] = useState(false)
   const [lastSavedBody, setLastSavedBody] = useState(sep.letter_body || null)
-  const isDirty = f.body !== (lastSavedBody || defaultBodyByType[sep.separation_type] || '')
+  const isDirty = f.body !== (lastSavedBody || sep.reason || defaultBodyByType[sep.separation_type] || '')
 
   const saveDraft = async () => {
     if (!onUpdate) return
@@ -3304,11 +3312,16 @@ function SeparationLetterModal({sep, emp, onClose, onUpdate, C}) {
           <div><label style={lbl}>Role</label><input value={f.role} onChange={e=>up('role',e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Department</label><input value={f.dept} onChange={e=>up('dept',e.target.value)} style={inp}/></div>
           <div><label style={lbl}>Hire Date</label><input type="date" value={f.hire_date} onChange={e=>up('hire_date',e.target.value)} style={inp}/></div>
-          <div><label style={lbl}>Final Paycheck Notes</label><input value={f.final_paycheck_notes} onChange={e=>up('final_paycheck_notes',e.target.value)} style={inp}/></div>
+          <div><label style={lbl}>Prepared By</label><input value={f.prepared_by} onChange={e=>up('prepared_by',e.target.value)} style={inp}/></div>
+          <div style={{gridColumn:'1/-1'}}><label style={lbl}>Final Paycheck Notes</label><input value={f.final_paycheck_notes} onChange={e=>up('final_paycheck_notes',e.target.value)} style={inp}/></div>
+          <div style={{gridColumn:'1/-1'}}><label style={lbl}>COBRA / Benefits Notes</label><input value={f.cobra_notes} onChange={e=>up('cobra_notes',e.target.value)} style={inp}/></div>
         </div>
 
         <div style={{marginBottom:14}}>
-          <label style={lbl}>Letter Body — placeholders: {'{effective_date}'} {'{emp_name}'} {'{role}'}</label>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+            <label style={{...lbl,marginBottom:0}}>Letter Body — placeholders: {'{effective_date}'} {'{emp_name}'} {'{role}'}</label>
+            <button onClick={syncFromForm} disabled={!sep.reason} style={{background:'transparent',color:sep.reason?C.bl:C.g,border:'1px solid '+(sep.reason?C.bl:C.bdr),padding:'2px 8px',borderRadius:4,fontSize:10,cursor:sep.reason?'pointer':'not-allowed',fontFamily:'inherit',fontWeight:600}}>⟲ Sync from form Reason</button>
+          </div>
           <textarea value={f.body} onChange={e=>up('body',e.target.value)} rows={12} style={{...inp,resize:'vertical',lineHeight:1.6,fontFamily:'Georgia, serif'}}/>
         </div>
 

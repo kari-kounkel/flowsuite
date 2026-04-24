@@ -85,7 +85,7 @@ export const buildSeparationLetterHTML = (f, resolvedBody, fm, sepTypeLabel, log
     + '<p>Dear ' + (f.preferred_name || f.emp_name) + ',</p>'
     + '<div class="body">' + resolvedBody + '</div>'
     + '<p>Sincerely,</p>'
-    + (f.prepared_by ? '<p style="font-size:11px;color:#555;margin-top:-2px">Prepared by ' + f.prepared_by + '</p>' : '')'
+    + (f.prepared_by ? '<p style="font-size:11px;color:#555;margin-top:-2px">Prepared by ' + f.prepared_by + '</p>' : '')
     + '<div class="signature-block">'
     +   '<table class="sig-grid">'
     +     '<tr>' + sigCell('Authorized Signature · ' + f.company, sigs.authorized) + sigCell(f.emp_name + ' · Employee Acknowledgment', sigs.employee) + '</tr>'
